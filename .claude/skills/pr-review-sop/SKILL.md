@@ -29,14 +29,13 @@ MISMATCH handling: don't build it, don't merge it. **Pitch the item to the maint
 4. **After every push to any branch:** run `gh run list --branch {branch} --limit 1` and verify CI passes. If CI fails, fix immediately - do NOT leave broken CI for the user to discover. This applies to every `git push` in the session, not just merges.
 5. **End of each dev round (batch merged to `experimental`, awaiting soak):** create a task in the user's Personal CRM (`mcp__claude_ai_Personal_CRM__crm_create_task`, load via ToolSearch) titled "Promote Gmail-MCP experimental→main if soak clean", due ~1 week out (or whatever fits the round's size). The user tracks promotions there, not in GitHub. (Arty directive 2026-07-11.)
 
-## npm & MCP Registry Releases
+## Distribution
 
-Published as **@artymclabin/gmail-mcp** on npm + **io.github.ArtyMcLabin/Gmail-MCP-Server** on the official MCP Registry.
+This downstream fork is not a separate npm, MCP Registry, or Smithery distribution. The package and registry metadata describe the upstream release and remain only for source compatibility.
 
-- **Tags are cut from `main` ONLY.** Pushing a `v*` tag triggers `.github/workflows/publish.yml` -> npm publish. Never tag `experimental` (incident 2026-07-11: v1.2.0/v1.2.1 tagged off experimental put unsoaked staging code on npm as `latest`; resolved by same-day promotion).
-- **Release procedure (at promotion):** merge `experimental`->`main` -> bump version in package.json + package-lock.json + server.json (both `version` fields) -> commit on main -> `git tag vX.Y.Z && git push origin vX.Y.Z` -> verify the "Publish release" workflow is green. The tag push publishes EVERYWHERE automatically: npm -> official MCP Registry (OIDC, no interactive login) -> Smithery (.mcpb bundle built in CI from `mcpb-manifest.json`, version-synced via jq). No manual `mcp-publisher` or `smithery` steps needed. First automated exercise: next release after 2026-07-11 - watch it end-to-end once.
-- `mcpName` in package.json must always equal `name` in server.json (registry ownership validation).
-- **NPM_TOKEN secret** rotation is tracked in the maintainer's PRIVATE task tracker (Personal CRM) - 🚨 NEVER document token/auth posture details (expiry dates, 2FA state, token types) in this public repo, including GitHub issues (incident 2026-07-11: such an issue was created and had to be deleted - supply-chain recon risk).
+- Do not create or push release tags from this fork.
+- Do not publish the upstream package or registry identities from this fork.
+- Direct users who need the published package or general upstream support to `ArtyMcLabin/Gmail-MCP-Server`.
 
 ## PR Review Checklist (All Steps Mandatory)
 

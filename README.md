@@ -84,7 +84,7 @@ npm install
 npm run build
 ```
 
-> **Note**: The `npx @gongrzhe/server-gmail-autoauth-mcp` commands found in older docs reference the [unmaintained upstream fork](https://github.com/GongRzhe/Gmail-MCP-Server). This fork is published as [`@artymclabin/gmail-mcp`](https://www.npmjs.com/package/@artymclabin/gmail-mcp).
+> **Note**: The `npx @gongrzhe/server-gmail-autoauth-mcp` commands found in older docs reference the [unmaintained upstream fork](https://github.com/GongRzhe/Gmail-MCP-Server). The maintained upstream package is [`@artymclabin/gmail-mcp`](https://www.npmjs.com/package/@artymclabin/gmail-mcp); install this downstream fork from source to use its additions.
 
 ### Setting up Google Cloud credentials
 
