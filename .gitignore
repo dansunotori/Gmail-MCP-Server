@@ -36,3 +36,4 @@ credentials.json
 # Local scratch (browser-agent screenshots etc.)
 tmp/
 .codex-review/
+.claude/skills/gitnexus/
