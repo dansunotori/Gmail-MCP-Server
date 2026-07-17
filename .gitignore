@@ -26,6 +26,7 @@ dist/
 Thumbs.db
 
 # Project specific
+.worktrees/
 mcp-config.json
 gcp-oauth.keys.json
 .calendar-mcp/
@@ -34,3 +35,4 @@ credentials.json
 .gcp-oauth.keys.json
 # Local scratch (browser-agent screenshots etc.)
 tmp/
+.codex-review/

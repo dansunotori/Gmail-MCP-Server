@@ -20,8 +20,11 @@ import { createFilter, listFilters, getFilter, deleteFilter, filterTemplates, Gm
 import { parseEmailAddresses, filterOutEmail, addRePrefix, buildReferencesHeader, buildReplyAllRecipients } from "./reply-all-helpers.js";
 import { DEFAULT_SCOPES, scopeNamesToUrls, parseScopes, validateScopes, hasScope, getAvailableScopeNames } from "./scopes.js";
 import { toolDefinitions, toMcpTools, getToolByName, SendEmailSchema, ReadEmailSchema, SearchEmailsSchema, ModifyEmailSchema, DeleteEmailSchema, BatchModifyEmailsSchema, ReportPhishingSchema, BatchReportPhishingSchema, BatchDeleteEmailsSchema, CreateLabelSchema, UpdateLabelSchema, DeleteLabelSchema, GetOrCreateLabelSchema, CreateFilterSchema, GetFilterSchema, DeleteFilterSchema, CreateFilterFromTemplateSchema, DownloadAttachmentSchema, ReplyAllSchema, GetThreadSchema, ListInboxThreadsSchema, GetInboxWithThreadsSchema, DownloadEmailSchema, ModifyThreadSchema, SendDraftSchema, DeleteDraftSchema, UpdateDraftSchema } from "./tools.js";
+import { BatchGetGmailIndexMetadataSchema, GetGmailProfileSchema, ListGmailAddedHistorySchema, ListGmailMessageIdsSchema } from "./tools.js";
 import { gmailMessageToJson, emailToTxt, emailToHtml, EmailAttachment } from "./email-export.js";
 import { resolveToolPrefix } from "./tool-prefix.js";
+import { getGmailProfile, listGmailAddedHistory, listGmailMessageIds, structuredResult } from "./gmail-sync.js";
+import { batchGetGmailIndexMetadata } from "./gmail-batch.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -583,6 +586,28 @@ async function main() {
 
         try {
             switch (name) {
+                case "get_gmail_profile": {
+                    GetGmailProfileSchema.parse(args ?? {});
+                    return structuredResult({ ...await getGmailProfile(gmail) });
+                }
+
+                case "list_gmail_message_ids": {
+                    const validatedArgs = ListGmailMessageIdsSchema.parse(args ?? {});
+                    return structuredResult({ ...await listGmailMessageIds(gmail, validatedArgs) });
+                }
+
+                case "list_gmail_added_history": {
+                    const validatedArgs = ListGmailAddedHistorySchema.parse(args);
+                    return structuredResult({ ...await listGmailAddedHistory(gmail, validatedArgs) });
+                }
+
+                case "batch_get_gmail_index_metadata": {
+                    const validatedArgs = BatchGetGmailIndexMetadataSchema.parse(args);
+                    return structuredResult({
+                        ...await batchGetGmailIndexMetadata(oauth2Client, validatedArgs.messageIds),
+                    });
+                }
+
                 case "send_email":
                 case "draft_email": {
                     const validatedArgs = SendEmailSchema.parse(args);
@@ -1733,6 +1758,7 @@ async function main() {
             }
         } catch (error: any) {
             return {
+                isError: true,
                 content: [
                     {
                         type: "text",

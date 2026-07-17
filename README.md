@@ -1,24 +1,22 @@
-# Gmail MCP Server (Actively Maintained Fork)
+# Gmail MCP Server — downstream fork
 
-**Installation:** `npx @artymclabin/gmail-mcp auth` - or just tell your Claude to install the MCP from this repo (`https://github.com/ArtyMcLabin/Gmail-MCP-Server`) and let it set up. Prefer manual steps? See [Installation & Authentication](#installation--authentication).
+This repository is a public downstream fork of [ArtyMcLabin/Gmail-MCP-Server](https://github.com/ArtyMcLabin/Gmail-MCP-Server). It carries a small set of general-purpose indexing extensions while preserving the maintained upstream server and its attribution.
+
+This fork is not a separate npm or MCP Registry distribution. For the published package, registry listing, general support, and upstream development, use [ArtyMcLabin/Gmail-MCP-Server](https://github.com/ArtyMcLabin/Gmail-MCP-Server). To use the downstream additions, install from source as described below.
 
 [![CI](https://github.com/ArtyMcLabin/Gmail-MCP-Server/actions/workflows/ci.yml/badge.svg)](https://github.com/ArtyMcLabin/Gmail-MCP-Server/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/@artymclabin/gmail-mcp)](https://www.npmjs.com/package/@artymclabin/gmail-mcp)
 
-Also on the [official MCP Registry](https://registry.modelcontextprotocol.io) (`io.github.ArtyMcLabin/Gmail-MCP-Server`) and [Smithery](https://smithery.ai/servers/rawceo/gmail-mcp).
+The maintained upstream package is also available through the [official MCP Registry](https://registry.modelcontextprotocol.io) (`io.github.ArtyMcLabin/Gmail-MCP-Server`) and [Smithery](https://smithery.ai/servers/rawceo/gmail-mcp).
 
-> **This is an actively maintained fork of [GongRzhe/Gmail-MCP-Server](https://github.com/GongRzhe/Gmail-MCP-Server).**
->
-> The original repository has been unmaintained since August 2025 - 7+ months with zero maintainer activity and 72+ unmerged pull requests. I use this MCP server daily as part of my Claude Code workflow and depend on it working correctly, so I picked it up.
->
-> **Pull requests are welcome.** If you've been sitting on fixes or features with nowhere to submit them, this is the place.
+## Downstream additions
 
-## Philosophy
+- Four read-only structured tools for deterministic mailbox indexing without returning message content
+- Gmail batch metadata requests for up to 50 messages, with bounded retry handling
+- Compatibility with the plain response-header objects returned by live Gaxios requests
 
-This fork is **lean and pragmatic**. It's a local stdio MCP server - you run it on your own machine, and your LLM client already has shell + filesystem access. So the threat model is "don't leak credentials to third parties, don't break the Gmail surface" - not "defend a hosted multi-tenant service". I keep dependencies minimal. I use this daily in my own Claude Code workflow - if I wouldn't run it or maintain it myself, it doesn't go in.
+## Inherited upstream features
 
-There's a downstream fork that took this in the **maximalist** direction. I'm not affiliated with its maintainer and I don't track its security or features - use it at your own risk: **[klodr/gmail-mcp](https://github.com/klodr/gmail-mcp)**. If that's the philosophy you want, go check it out. PRs welcome here as always.
-
-### What this fork adds
+The following capabilities come from the maintained upstream fork:
 
 - **Fixed reply threading** - auto-resolves `In-Reply-To` and `References` headers so email replies land in the correct thread instead of creating orphaned messages ([upstream PR #91](https://github.com/GongRzhe/Gmail-MCP-Server/pull/91), still pending)
 - **Send-as alias support** - optional `from` parameter for multi-identity email management (send from any configured Gmail alias)
@@ -37,10 +35,6 @@ There's a downstream fork that took this in the **maximalist** direction. I'm no
 - **Durable OAuth sessions** - `refresh_token` is persisted across restarts, ending the hourly re-auth loop ([PR #35](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/35) by [@BrentBaccala](https://github.com/BrentBaccala))
 - **Custom OAuth callback port** - the auth listener derives port and path from your callback URL instead of hardcoding 3000 ([PR #41](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/41) by [@soapergem](https://github.com/soapergem))
 - **Safe permanent-delete gating** - `delete_email`/`batch_delete_emails` require the opt-in `gmail.full` scope (which also satisfies all other mail scopes), so default auth stays least-privilege ([PR #39](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/39) by [@caioribeiroclw-pixel](https://github.com/caioribeiroclw-pixel))
-
-All features are production-tested in daily use.
-
-[![Star History Chart](https://api.star-history.com/svg?repos=ArtyMcLabin/Gmail-MCP-Server&type=Date)](https://star-history.com/#ArtyMcLabin/Gmail-MCP-Server&Date)
 
 ---
 
@@ -75,7 +69,7 @@ A Model Context Protocol (MCP) server for Gmail integration in Claude Desktop wi
 
 ## Installation & Authentication
 
-### Installing from npm (recommended)
+### Installing the maintained upstream package from npm
 
 ```bash
 npx @artymclabin/gmail-mcp auth
@@ -84,7 +78,7 @@ npx @artymclabin/gmail-mcp auth
 ### Installing from source
 
 ```bash
-git clone https://github.com/ArtyMcLabin/Gmail-MCP-Server.git
+git clone https://github.com/dansunotori/Gmail-MCP-Server.git
 cd Gmail-MCP-Server
 npm install
 npm run build
@@ -282,7 +276,7 @@ The server automatically filters available tools based on your authorized scopes
 
 | Tools | Required Scope (any) |
 |-------|---------------------|
-| `read_email`, `search_emails`, `download_attachment` | `gmail.readonly` or `gmail.modify` |
+| `read_email`, `search_emails`, `download_attachment`, `get_thread`, `list_inbox_threads`, `get_inbox_with_threads`, `download_email`, `get_gmail_profile`, `list_gmail_message_ids`, `list_gmail_added_history`, `batch_get_gmail_index_metadata` | `gmail.readonly` or `gmail.modify` |
 | `list_email_labels` | `gmail.readonly`, `gmail.modify`, or `gmail.labels` |
 | `send_email`, `draft_email`, `reply_all`, `send_draft` | `gmail.modify`, `gmail.compose`, or `gmail.send` |
 | `delete_draft`, `update_draft` | `gmail.modify` or `gmail.compose` |
@@ -322,11 +316,19 @@ Then add to your Claude Code MCP settings (`~/.claude/mcp_settings.json` or proj
 }
 ```
 
-With read-only scopes, only these 4 tools will be available to Claude:
+With a read-only Gmail scope, these 12 tools will be available to Claude. The scope prevents Gmail mutations, but `download_attachment` and `download_email` can still write files to paths you provide locally.
 - `read_email` - Read email content
 - `search_emails` - Search your inbox
 - `list_email_labels` - List available labels
 - `download_attachment` - Download attachments
+- `get_thread` - Read every message in a thread
+- `list_inbox_threads` - List matching threads
+- `get_inbox_with_threads` - List and optionally expand matching threads
+- `download_email` - Save an email to a local file
+- `get_gmail_profile` - Read the current Gmail history cursor
+- `list_gmail_message_ids` - List message IDs, excluding spam and trash
+- `list_gmail_added_history` - List message-added events after a history cursor
+- `batch_get_gmail_index_metadata` - Fetch ID, internal date, and labels for up to 50 messages
 
 ### Full Access Configuration
 
@@ -347,7 +349,7 @@ node dist/index.js auth --scopes=gmail.modify,gmail.settings.basic
 }
 ```
 
-This enables all 23 tools including sending emails, managing labels, creating filters, reply-all, thread operations, phishing reports, and batch operations.
+This enables every tool except the two permanent-delete tools, which require the separate `gmail.full` scope.
 
 ### Running multiple instances (tool-name prefix)
 
@@ -375,6 +377,19 @@ The `auth` subcommand runs before the server starts and is unaffected - invoke i
 ## Available Tools
 
 The server provides the following tools that can be used through Claude Desktop:
+
+### Structured index synchronisation tools
+
+These four read-only tools support deterministic mailbox indexing without returning email content:
+
+| Tool | Input | Structured output |
+|-|-|-|
+| `get_gmail_profile` | `{}` | Gmail `historyId` |
+| `list_gmail_message_ids` | Optional `pageToken`; `maxResults` from 1 to 500 | Message IDs and optional next-page token; spam and trash are excluded |
+| `list_gmail_added_history` | `startHistoryId`; optional `pageToken`; `maxResults` from 1 to 500 | Added message IDs, next-page token, and current history ID, or an explicit expired-cursor result |
+| `batch_get_gmail_index_metadata` | 1 to 50 `messageIds` | Each message's ID, Gmail `internalDate`, and label IDs, plus IDs deleted before retrieval |
+
+The tools never request or return subjects, addresses, snippets, headers, bodies, attachments, or raw message content. Metadata batches retry only Gmail HTTP 429 and 5xx responses, with a maximum of three attempts.
 
 ### 1. Send Email (`send_email`)
 

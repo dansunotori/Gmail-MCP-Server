@@ -218,6 +218,67 @@ export const ReplyAllSchema = z.object({
   inlineImages: z.array(InlineImageSchema).optional().describe("Images embedded inline in the HTML body, each referenced from htmlBody as <img src=\"cid:CID\">. Requires htmlBody to be set."),
 });
 
+const NonEmptyString = z.string().min(1);
+
+export const GetGmailProfileSchema = z.object({}).strict();
+
+export const ListGmailMessageIdsSchema = z.object({
+  pageToken: NonEmptyString.optional(),
+  maxResults: z.number().int().min(1).max(500).default(500),
+}).strict();
+
+export const ListGmailAddedHistorySchema = z.object({
+  startHistoryId: NonEmptyString,
+  pageToken: NonEmptyString.optional(),
+  maxResults: z.number().int().min(1).max(500).default(500),
+}).strict();
+
+export const BatchGetGmailIndexMetadataSchema = z.object({
+  messageIds: z.array(NonEmptyString).min(1).max(50),
+}).strict();
+
+export const GmailProfileOutputSchema = z.object({
+  historyId: NonEmptyString,
+}).strict();
+
+export const GmailMessageIdsOutputSchema = z.object({
+  messageIds: z.array(NonEmptyString),
+  nextPageToken: NonEmptyString.optional(),
+}).strict();
+
+export const GmailAddedHistoryOutputSchema = z.object({
+  status: z.enum(['ok', 'cursor_expired']),
+  messageIds: z.array(NonEmptyString).optional(),
+  nextPageToken: NonEmptyString.optional(),
+  historyId: NonEmptyString.optional(),
+  startHistoryId: NonEmptyString.optional(),
+}).strict().superRefine((value, context) => {
+  const valid = value.status === 'ok'
+    ? value.messageIds !== undefined
+      && value.historyId !== undefined
+      && value.startHistoryId === undefined
+    : value.startHistoryId !== undefined
+      && value.messageIds === undefined
+      && value.historyId === undefined
+      && value.nextPageToken === undefined;
+
+  if (!valid) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Invalid Gmail history result',
+    });
+  }
+});
+
+export const GmailIndexMetadataOutputSchema = z.object({
+  messages: z.array(z.object({
+    id: NonEmptyString,
+    internalDate: z.string().regex(/^\d+$/),
+    labelIds: z.array(NonEmptyString),
+  }).strict()),
+  missingMessageIds: z.array(NonEmptyString),
+}).strict();
+
 // Tool definition type
 export interface ToolAnnotations {
   title: string;
@@ -231,6 +292,7 @@ export interface ToolDefinition {
   name: string;
   description: string;
   schema: z.ZodType<any>;
+  outputSchema?: z.ZodType<any>;
   scopes: string[]; // Any of these scopes grants access
   annotations: ToolAnnotations;
 }
@@ -238,6 +300,38 @@ export interface ToolDefinition {
 // Tool registry with scope requirements
 export const toolDefinitions: ToolDefinition[] = [
   // Read-only email operations
+  {
+    name: "get_gmail_profile",
+    description: "Returns the current Gmail history cursor without mailbox content",
+    schema: GetGmailProfileSchema,
+    outputSchema: GmailProfileOutputSchema,
+    scopes: ["gmail.readonly", "gmail.modify"],
+    annotations: { title: "Get Gmail Profile", readOnlyHint: true },
+  },
+  {
+    name: "list_gmail_message_ids",
+    description: "Lists Gmail message IDs while excluding spam and trash",
+    schema: ListGmailMessageIdsSchema,
+    outputSchema: GmailMessageIdsOutputSchema,
+    scopes: ["gmail.readonly", "gmail.modify"],
+    annotations: { title: "List Gmail Message IDs", readOnlyHint: true },
+  },
+  {
+    name: "list_gmail_added_history",
+    description: "Lists message-added history after a Gmail history cursor",
+    schema: ListGmailAddedHistorySchema,
+    outputSchema: GmailAddedHistoryOutputSchema,
+    scopes: ["gmail.readonly", "gmail.modify"],
+    annotations: { title: "List Gmail Added History", readOnlyHint: true },
+  },
+  {
+    name: "batch_get_gmail_index_metadata",
+    description: "Returns only Gmail message IDs, internal dates, and labels for indexing",
+    schema: BatchGetGmailIndexMetadataSchema,
+    outputSchema: GmailIndexMetadataOutputSchema,
+    scopes: ["gmail.readonly", "gmail.modify"],
+    annotations: { title: "Batch Get Gmail Index Metadata", readOnlyHint: true },
+  },
   {
     name: "read_email",
     description: "Retrieves the content of a specific email",
@@ -466,6 +560,7 @@ export function toMcpTools(tools: ToolDefinition[]) {
     name: tool.name,
     description: tool.description,
     inputSchema: zodToJsonSchema(tool.schema),
+    ...(tool.outputSchema ? { outputSchema: zodToJsonSchema(tool.outputSchema) } : {}),
     annotations: tool.annotations,
   }));
 }

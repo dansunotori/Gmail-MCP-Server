@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "auth": "node dist/index.js auth",
-    "test": "vitest run",
+    "test": "vitest run --exclude '.worktrees/**'",
     "test:watch": "vitest",
     "lockfile:lint": "lockfile-lint --path package-lock.json --type npm --validate-https --allowed-hosts npm",
     "prepare": "npm run build",
@@ -41,17 +41,17 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ArtyMcLabin/Gmail-MCP-Server.git"
+    "url": "git+https://github.com/dansunotori/Gmail-MCP-Server.git"
   },
   "bugs": {
-    "url": "https://github.com/ArtyMcLabin/Gmail-MCP-Server/issues"
+    "url": "https://github.com/dansunotori/Gmail-MCP-Server/issues"
   },
-  "homepage": "https://github.com/ArtyMcLabin/Gmail-MCP-Server#readme",
+  "homepage": "https://github.com/dansunotori/Gmail-MCP-Server#readme",
   "publishConfig": {
     "access": "public"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
