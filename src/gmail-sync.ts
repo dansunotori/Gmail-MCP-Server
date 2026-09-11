@@ -30,6 +30,146 @@ function hasResponseStatus(error: unknown, status: number): boolean {
     && response.status === status;
 }
 
+const AUTH_REASONS = new Set([
+  'invalid_grant',
+  'invalid_token',
+  'authError',
+  'unauthorized',
+  'insufficientPermissions',
+  'forbidden',
+  'ACCESS_TOKEN_SCOPE_INSUFFICIENT',
+]);
+
+const RATE_LIMIT_REASONS = new Set([
+  'quotaExceeded',
+  'rateLimitExceeded',
+  'userRateLimitExceeded',
+  'dailyLimitExceeded',
+]);
+
+export class GmailRequestError extends Error {
+  readonly code?: string;
+  readonly status?: number;
+  readonly reason?: string;
+  readonly cause: unknown;
+
+  constructor(
+    message: string,
+    options: { code?: string; status?: number; reason?: string; cause?: unknown } = {},
+  ) {
+    super(message);
+    this.name = 'GmailRequestError';
+    this.code = options.code;
+    this.status = options.status;
+    this.reason = options.reason;
+    this.cause = options.cause;
+  }
+}
+
+type ErrorRecord = {
+  message?: unknown;
+  code?: unknown;
+  errors?: Array<{ reason?: unknown }>;
+  response?: {
+    status?: unknown;
+    data?: { error?: unknown };
+  };
+};
+
+function asRecord(error: unknown): ErrorRecord | undefined {
+  return typeof error === 'object' && error !== null ? error as ErrorRecord : undefined;
+}
+
+// The reference script's first choice for a failure string is `error.code`; gaxios sets it
+// to the HTTP status as a string, Node sets it to a network code such as ECONNRESET.
+function readCode(record: ErrorRecord | undefined): string | undefined {
+  const code = record?.code;
+  if (typeof code === 'string' && code !== '') {
+    return code;
+  }
+  if (typeof code === 'number' && code !== 0) {
+    return String(code);
+  }
+  return undefined;
+}
+
+function readStatus(record: ErrorRecord | undefined): number | undefined {
+  const status = record?.response?.status;
+  if (typeof status === 'number') {
+    return status;
+  }
+  const code = record?.code;
+  if (typeof code === 'number') {
+    return code;
+  }
+  if (typeof code === 'string' && /^\d{3}$/.test(code)) {
+    return Number(code);
+  }
+  return undefined;
+}
+
+function readReason(record: ErrorRecord | undefined): string | undefined {
+  const topLevel = record?.errors?.[0]?.reason;
+  if (typeof topLevel === 'string') {
+    return topLevel;
+  }
+  const dataError = record?.response?.data?.error;
+  if (typeof dataError === 'string') {
+    return dataError;
+  }
+  if (typeof dataError === 'object' && dataError !== null) {
+    const nested = (dataError as { errors?: Array<{ reason?: unknown }> }).errors?.[0]?.reason;
+    if (typeof nested === 'string') {
+      return nested;
+    }
+  }
+  return undefined;
+}
+
+export function toGmailRequestError(error: unknown): GmailRequestError {
+  if (error instanceof GmailRequestError) {
+    return error;
+  }
+  const record = asRecord(error);
+  const message = typeof record?.message === 'string' ? record.message : String(error);
+  return new GmailRequestError(message, {
+    code: readCode(record),
+    status: readStatus(record),
+    reason: readReason(record),
+    cause: error,
+  });
+}
+
+// Reproduces the reference script's `error.code || error.response?.status || error.name`
+// so manifest failure strings are byte-identical. Works the same on a raw error and on a
+// GmailRequestError wrapper, because the wrapper keeps `code` and `cause`. `reason` is
+// deliberately not consulted here.
+export function failureCode(error: unknown): string {
+  const wrapped = toGmailRequestError(error);
+  if (wrapped.code !== undefined) {
+    return wrapped.code;
+  }
+  if (wrapped.status !== undefined) {
+    return String(wrapped.status);
+  }
+  const original = wrapped.cause instanceof Error ? wrapped.cause : error;
+  return original instanceof Error ? original.name : wrapped.name;
+}
+
+export function isAuthError(error: unknown): boolean {
+  const wrapped = toGmailRequestError(error);
+  if (wrapped.status === 401) {
+    return true;
+  }
+  if (wrapped.reason !== undefined && AUTH_REASONS.has(wrapped.reason)) {
+    return true;
+  }
+  if (wrapped.status === 403) {
+    return wrapped.reason === undefined || !RATE_LIMIT_REASONS.has(wrapped.reason);
+  }
+  return false;
+}
+
 export async function getGmailProfile(gmail: gmail_v1.Gmail) {
   const response = await gmail.users.getProfile({
     userId: 'me',

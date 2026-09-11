@@ -2,10 +2,14 @@ import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import fs from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  GmailRequestError,
+  failureCode,
   getGmailProfile,
+  isAuthError,
   listGmailAddedHistory,
   listGmailMessageIds,
   structuredResult,
+  toGmailRequestError,
 } from './gmail-sync.js';
 import { hasScope } from './scopes.js';
 import {
@@ -292,5 +296,92 @@ describe('Gmail sync server wiring', () => {
   it('marks shared tool failures as MCP error results', () => {
     const source = fs.readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     expect(source).toMatch(/catch \(error: any\)[\s\S]*?isError: true/);
+  });
+});
+
+function httpError(status: number, reason?: string) {
+  return Object.assign(new Error(`HTTP ${status}`), {
+    response: {
+      status,
+      data: reason ? { error: { errors: [{ reason }] } } : {},
+    },
+  });
+}
+
+describe('GmailRequestError helpers', () => {
+  it('extracts status and reason from a googleapis-shaped error', () => {
+    const wrapped = toGmailRequestError(httpError(429, 'rateLimitExceeded'));
+    expect(wrapped).toBeInstanceOf(GmailRequestError);
+    expect(wrapped.status).toBe(429);
+    expect(wrapped.reason).toBe('rateLimitExceeded');
+    expect(wrapped.code).toBeUndefined();
+    expect(wrapped.message).toBe('HTTP 429');
+    expect(wrapped.cause).toBeInstanceOf(Error);
+  });
+
+  it('keeps the original code on the wrapper', () => {
+    expect(toGmailRequestError(Object.assign(new Error('reset'), { code: 'ECONNRESET' })).code).toBe('ECONNRESET');
+    expect(toGmailRequestError(Object.assign(new Error('gaxios'), { code: '429', response: { status: 429 } })).code).toBe('429');
+    expect(toGmailRequestError(Object.assign(new Error('zero'), { code: 0 })).code).toBeUndefined();
+  });
+
+  it('reads a top-level errors array and a string response error', () => {
+    const topLevel = Object.assign(new Error('x'), { errors: [{ reason: 'authError' }] });
+    expect(toGmailRequestError(topLevel).reason).toBe('authError');
+
+    const oauth = Object.assign(new Error('bad grant'), {
+      response: { status: 400, data: { error: 'invalid_grant' } },
+    });
+    expect(toGmailRequestError(oauth).reason).toBe('invalid_grant');
+  });
+
+  it('passes an existing GmailRequestError through unchanged', () => {
+    const original = new GmailRequestError('already', { status: 500 });
+    expect(toGmailRequestError(original)).toBe(original);
+  });
+
+  it('wraps a plain Error with neither status nor reason', () => {
+    const wrapped = toGmailRequestError(new Error('plain'));
+    expect(wrapped.status).toBeUndefined();
+    expect(wrapped.reason).toBeUndefined();
+    expect(wrapped.message).toBe('plain');
+  });
+
+  it('renders failureCode exactly as the reference: code, then status, then name', () => {
+    expect(failureCode(Object.assign(new Error('reset'), { code: 'ECONNRESET' }))).toBe('ECONNRESET');
+    expect(failureCode(Object.assign(new Error('gaxios'), { code: '429', response: { status: 429 } }))).toBe('429');
+    expect(failureCode(httpError(404))).toBe('404');
+    expect(failureCode(Object.assign(new Error('zero'), { code: 0, response: { status: 500 } }))).toBe('500');
+    expect(failureCode(new TypeError('boom'))).toBe('TypeError');
+    expect(failureCode(Object.assign(new Error('x'), { errors: [{ reason: 'backendError' }] }))).toBe('Error');
+  });
+
+  it('renders the same failureCode through a GmailRequestError wrapper', () => {
+    expect(failureCode(toGmailRequestError(Object.assign(new Error('reset'), { code: 'ECONNRESET' })))).toBe('ECONNRESET');
+    expect(failureCode(toGmailRequestError(httpError(503)))).toBe('503');
+    expect(failureCode(toGmailRequestError(new TypeError('boom')))).toBe('TypeError');
+    expect(failureCode(toGmailRequestError(Object.assign(new Error('x'), { errors: [{ reason: 'backendError' }] })))).toBe('Error');
+  });
+
+  it('treats 401, auth reasons, and non-quota 403 as auth errors', () => {
+    expect(isAuthError(httpError(401))).toBe(true);
+    for (const reason of [
+      'invalid_grant', 'invalid_token', 'authError', 'unauthorized',
+      'insufficientPermissions', 'forbidden', 'ACCESS_TOKEN_SCOPE_INSUFFICIENT',
+    ]) {
+      expect(isAuthError(httpError(400, reason))).toBe(true);
+    }
+    expect(isAuthError(httpError(403, 'insufficientPermissions'))).toBe(true);
+    expect(isAuthError(httpError(403, 'somethingElse'))).toBe(true);
+    expect(isAuthError(httpError(403))).toBe(true);
+  });
+
+  it('does not treat rate limits, 404, 429, or plain errors as auth errors', () => {
+    for (const reason of ['quotaExceeded', 'rateLimitExceeded', 'userRateLimitExceeded', 'dailyLimitExceeded']) {
+      expect(isAuthError(httpError(403, reason))).toBe(false);
+    }
+    expect(isAuthError(httpError(404))).toBe(false);
+    expect(isAuthError(httpError(429))).toBe(false);
+    expect(isAuthError(new Error('network'))).toBe(false);
   });
 });
