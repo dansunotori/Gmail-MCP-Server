@@ -4,8 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   GmailRequestError,
   failureCode,
+  getGmailEmailAddress,
   getGmailProfile,
   isAuthError,
+  listAllGmailMessageIds,
   listGmailAddedHistory,
   listGmailMessageIds,
   structuredResult,
@@ -383,5 +385,131 @@ describe('GmailRequestError helpers', () => {
     expect(isAuthError(httpError(404))).toBe(false);
     expect(isAuthError(httpError(429))).toBe(false);
     expect(isAuthError(new Error('network'))).toBe(false);
+  });
+});
+
+function pagedList(pages: Array<{ ids: string[]; next?: string } | Error>) {
+  return vi.fn(async (params: { pageToken?: string }) => {
+    const index = params.pageToken ? Number(params.pageToken.slice('page-'.length)) : 0;
+    const page = pages[index];
+    if (page instanceof Error) {
+      throw page;
+    }
+    return {
+      data: {
+        messages: page.ids.map(id => ({ id })),
+        ...(page.next ? { nextPageToken: page.next } : {}),
+      },
+    };
+  });
+}
+
+describe('listAllGmailMessageIds', () => {
+  const options = { query: 'after:1 -in:spam -in:trash', includeSpamTrash: true };
+
+  it('follows every page, deduplicates, and reports pages and completion', async () => {
+    const listMessages = pagedList([
+      { ids: ['a', 'b'], next: 'page-1' },
+      { ids: ['b', 'c'], next: 'page-2' },
+      { ids: ['d'] },
+    ]);
+    const result = await listAllGmailMessageIds(gmailWith({ listMessages }) as never, options);
+
+    expect(result).toEqual({ ids: ['a', 'b', 'c', 'd'], pages: 3, hasMore: false, complete: true });
+    expect(listMessages).toHaveBeenNthCalledWith(1, {
+      userId: 'me',
+      q: options.query,
+      includeSpamTrash: true,
+      maxResults: 500,
+      pageToken: undefined,
+      fields: 'messages/id,nextPageToken',
+    });
+    expect(listMessages).toHaveBeenNthCalledWith(2, expect.objectContaining({ pageToken: 'page-1' }));
+  });
+
+  it('caps a single oversized page at the limit and reports more', async () => {
+    const ids = Array.from({ length: 300 }, (_, index) => `m${index}`);
+    const listMessages = pagedList([{ ids }]);
+    const result = await listAllGmailMessageIds(gmailWith({ listMessages }) as never, { ...options, limit: 250 });
+
+    expect(result.ids).toHaveLength(250);
+    expect(result.hasMore).toBe(true);
+    expect(result.complete).toBe(true);
+    expect(listMessages).toHaveBeenCalledWith(expect.objectContaining({ maxResults: 250 }));
+  });
+
+  it('reports more when the limit lands on a page boundary with a token', async () => {
+    const listMessages = pagedList([
+      { ids: ['a', 'b'], next: 'page-1' },
+      { ids: ['c'] },
+    ]);
+    const result = await listAllGmailMessageIds(gmailWith({ listMessages }) as never, { ...options, limit: 2 });
+
+    expect(result).toEqual({ ids: ['a', 'b'], pages: 1, hasMore: true, complete: true });
+    expect(listMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports no more when fewer IDs exist than the limit', async () => {
+    const listMessages = pagedList([{ ids: ['a', 'b'] }]);
+    const result = await listAllGmailMessageIds(gmailWith({ listMessages }) as never, { ...options, limit: 250 });
+
+    expect(result).toEqual({ ids: ['a', 'b'], pages: 1, hasMore: false, complete: true });
+  });
+
+  it('requests only the remaining budget on later pages', async () => {
+    const listMessages = pagedList([
+      { ids: ['a', 'b', 'c'], next: 'page-1' },
+      { ids: ['d', 'e'] },
+    ]);
+    await listAllGmailMessageIds(gmailWith({ listMessages }) as never, { ...options, limit: 4 });
+
+    expect(listMessages).toHaveBeenNthCalledWith(1, expect.objectContaining({ maxResults: 4 }));
+    expect(listMessages).toHaveBeenNthCalledWith(2, expect.objectContaining({ maxResults: 1 }));
+  });
+
+  it('returns a partial result when a later page fails with a non-auth error', async () => {
+    const failure = httpError(503);
+    const listMessages = pagedList([{ ids: ['a'], next: 'page-1' }, failure]);
+    const result = await listAllGmailMessageIds(gmailWith({ listMessages }) as never, options);
+
+    expect(result.ids).toEqual(['a']);
+    expect(result.pages).toBe(1);
+    expect(result.complete).toBe(false);
+    expect(result.hasMore).toBe(false);
+    expect(result.error).toBeInstanceOf(GmailRequestError);
+    expect(result.error?.status).toBe(503);
+  });
+
+  it('keeps a network error code on a partial result', async () => {
+    const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+    const listMessages = pagedList([{ ids: ['a'], next: 'page-1' }, reset]);
+    const result = await listAllGmailMessageIds(gmailWith({ listMessages }) as never, options);
+
+    expect(result.complete).toBe(false);
+    expect(result.error?.code).toBe('ECONNRESET');
+    expect(failureCode(result.error)).toBe('ECONNRESET');
+  });
+
+  it('rejects on a 401 on a later page and on any first-page failure', async () => {
+    const unauthorised = httpError(401);
+    const later = pagedList([{ ids: ['a'], next: 'page-1' }, unauthorised]);
+    await expect(listAllGmailMessageIds(gmailWith({ listMessages: later }) as never, options)).rejects.toBe(unauthorised);
+
+    const first = new Error('network');
+    const firstPage = pagedList([first]);
+    await expect(listAllGmailMessageIds(gmailWith({ listMessages: firstPage }) as never, options)).rejects.toBe(first);
+  });
+});
+
+describe('getGmailEmailAddress', () => {
+  it('requests only the address and returns it', async () => {
+    const getProfile = vi.fn().mockResolvedValue({ data: { emailAddress: 'me@example.com' } });
+    await expect(getGmailEmailAddress(gmailWith({ getProfile }) as never)).resolves.toBe('me@example.com');
+    expect(getProfile).toHaveBeenCalledWith({ userId: 'me', fields: 'emailAddress' });
+  });
+
+  it('fails when Gmail omits the address', async () => {
+    const gmail = gmailWith({ getProfile: vi.fn().mockResolvedValue({ data: {} }) });
+    await expect(getGmailEmailAddress(gmail as never)).rejects.toThrow('emailAddress');
   });
 });

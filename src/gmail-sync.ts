@@ -207,6 +207,82 @@ export async function listGmailMessageIds(
   });
 }
 
+export interface ListAllMessageIdsOptions {
+  query: string;
+  includeSpamTrash: boolean;
+  limit?: number;
+}
+
+export interface ListAllMessageIdsResult {
+  ids: string[];
+  pages: number;
+  hasMore: boolean;
+  complete: boolean;
+  error?: GmailRequestError;
+}
+
+export async function listAllGmailMessageIds(
+  gmail: gmail_v1.Gmail,
+  options: ListAllMessageIdsOptions,
+): Promise<ListAllMessageIdsResult> {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  let pageToken: string | undefined;
+  let pages = 0;
+
+  do {
+    const maxResults = options.limit === undefined
+      ? 500
+      : Math.min(500, options.limit - ids.length);
+    let response;
+    try {
+      response = await gmail.users.messages.list({
+        userId: 'me',
+        q: options.query,
+        includeSpamTrash: options.includeSpamTrash,
+        maxResults,
+        pageToken,
+        fields: 'messages/id,nextPageToken',
+      });
+    } catch (error) {
+      if (pages === 0 || isAuthError(error)) {
+        throw error;
+      }
+      return { ids, pages, hasMore: false, complete: false, error: toGmailRequestError(error) };
+    }
+    pages += 1;
+
+    let discarded = false;
+    for (const message of response.data.messages ?? []) {
+      const id = requiredId(message.id, 'message id');
+      if (seen.has(id)) {
+        continue;
+      }
+      if (options.limit !== undefined && ids.length >= options.limit) {
+        discarded = true;
+        break;
+      }
+      seen.add(id);
+      ids.push(id);
+    }
+
+    pageToken = response.data.nextPageToken ?? undefined;
+    if (options.limit !== undefined && ids.length >= options.limit) {
+      return { ids, pages, hasMore: discarded || pageToken !== undefined, complete: true };
+    }
+  } while (pageToken);
+
+  return { ids, pages, hasMore: false, complete: true };
+}
+
+export async function getGmailEmailAddress(gmail: gmail_v1.Gmail): Promise<string> {
+  const response = await gmail.users.getProfile({
+    userId: 'me',
+    fields: 'emailAddress',
+  });
+  return requiredId(response.data.emailAddress, 'emailAddress');
+}
+
 export async function listGmailAddedHistory(
   gmail: gmail_v1.Gmail,
   input: ListAddedHistoryInput,
