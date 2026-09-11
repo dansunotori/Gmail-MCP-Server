@@ -45,7 +45,7 @@ which takes the Gmail client for deferred body parts.
 | `headerValue(headers, name)` | Case-insensitive lookup; empty string when absent. |
 | `extractMessageParts(payload)` | Returns `{ text, html, attachments, deferredBodies }`. Rules, in order per part: an `attachmentId` part with mime `text/plain` or `text/html` and no filename is a deferred body; any other `attachmentId` part is an attachment `{ filename, mimeType, size, attachmentId }`; a part with `body.data` and a filename is an attachment `{ filename, mimeType, size, inlineBase64 }`; a `text/plain` part with data appends to `text`; a `text/html` part with data appends to `html`. Recurse into `parts` after handling the part itself. |
 | `htmlToText(html)` | The reference's regex chain, copied verbatim and in the same order. |
-| `resolveMessageBody(gmail, messageId, payload)` | Runs the walk, fetches each deferred body with `users.messages.attachments.get`, appends decoded data to `text` or `html` by mime, and returns `{ text, html, body, attachments, failures }`. `body` is `text.trim()` when non-empty, else `htmlToText(html)`. Each fetch failure adds `{ code: 'body-part-fetch:<failureCode>', error: GmailRequestError }` to `failures`, so the tool writes `code` into the manifest and the CLI can throw `error` with its status intact. An `isAuthError` failure rethrows instead. |
+| `resolveMessageBody(gmail, messageId, payload)` | Runs the walk, fetches each deferred body with `users.messages.attachments.get`, appends decoded data to `text` or `html` by mime, and returns `{ text, html, body, attachments, failures }`. `body` is `text.trim()` when non-empty, else `htmlToText(html)`. Each fetch failure adds `{ code: 'body-part-fetch: <failureCode>', error: GmailRequestError }` to `failures` (note the space after the colon, exactly as the reference's `body-part-fetch: ${…}` template), so the tool writes `code` into the manifest and the CLI can throw `error` with its status intact. An `isAuthError` failure rethrows instead. |
 
 The existing `extractEmailContent` and `extractAttachments` in `src/index.ts` stay as they are.
 Their semantics differ from the reference (they never defer bodies and they list every
@@ -75,12 +75,20 @@ page propagates.
 returns the string, throwing if the response omits it.
 
 `GmailRequestError` is an `Error` subclass exported from `src/gmail-sync.ts` with
-`status?: number`, `reason?: string`, and `cause: unknown`. `toGmailRequestError(error)`
-wraps any googleapis error, reading status through the same logic as `responseStatus` in
-`src/gmail-batch.ts` and reason from `error.errors?.[0]?.reason` or
+`code?: string`, `status?: number`, `reason?: string`, and `cause: unknown`.
+`toGmailRequestError(error)` wraps any googleapis error, reading `code` from a truthy
+`error.code` (as a string), status through the same logic as `responseStatus` in
+`src/gmail-batch.ts`, and reason from `error.errors?.[0]?.reason` or
 `error.response?.data?.error?.errors?.[0]?.reason`; a `GmailRequestError` passes through
-unchanged. `failureCode(error)` renders the manifest string the reference used: `status`,
-else `reason`, else `error.name`. Every helper in this design that catches and re-reports an
+unchanged. Keeping `code` on the wrapper is what lets a network failure such as
+`ECONNRESET` on a later listing page survive the wrap and still render as `ECONNRESET` in
+the manifest. `failureCode(error)` renders the manifest string exactly as the reference did
+(`error.code || error.response?.status || error.name`): a truthy `error.code` first, as a
+string (gaxios sets it to the HTTP status such as `429`, or to a network code such as
+`ECONNRESET`), else the HTTP status, else `error.name`, with no other fallback, so the
+manifest strings are byte-identical to the reference's. The `reason` field on the wrapper
+exists for `isAuthError` and the CLI exit-code map, not for manifest strings. Every helper in
+this design that catches and re-reports an
 error keeps the `GmailRequestError` object alongside any string it derives, so no caller has
 to parse a string to learn the status.
 
@@ -264,8 +272,23 @@ a separate fix. The definition goes after `batch_get_gmail_index_metadata` in
 6. **Partial listing.** The reference aborts the whole run when any listing page fails. The
    tool keeps going with the partial list and reports `listingComplete: false`, as the source
    document's rule of throwing only before the first success requires.
-7. **Annotation.** `readOnlyHint` is false, not true as the source document asks, for the
-   reason given under schema and registration.
+7. **Annotation.** `readOnlyHint` is false. The source document originally asked for true
+   and was amended on 2026-09-11 to false, for the reason given under schema and
+   registration; the two documents now agree, and this entry records the change of
+   requirement for the PA repository's benefit rather than a live difference.
+8. **Authentication failures throw.** The reference's per-message `catch` records every
+   `messages.get` and body-part failure, including a 401 or an insufficient-scope 403, and
+   carries on. The tool rethrows any failure that `isAuthError` recognises, from the message
+   loop, the body-part fetch, and the cross-check listings, because the source document
+   requires auth failures to throw and a run with dead credentials must not end as
+   `incomplete`.
+9. **Output publication.** The reference deletes only `messages/`, then writes
+   `manifest.json` and `window-metadata.json` directly, manifest first. The tool deletes both
+   metadata files before it touches `messages/`, and then publishes `window-metadata.json`
+   first and `manifest.json` last, each by writing `messages/.publish-<name>` and renaming
+   it into place. The file contents are the same; only the deletion and the write order and
+   atomicity differ, so that a failed run can never leave a stale manifest beside a fresh or
+   partial `messages/`.
 
 ## Testing
 
@@ -303,8 +326,9 @@ a separate fix. The definition goes after `batch_get_gmail_index_metadata` in
     `incomplete`, `truncated: true`, `listingComplete: false`, the failure entry present,
     nothing written, existing `messages/` untouched.
 17. A 401 on page two of the window listing rejects `batchFetchWindow`; nothing is written.
-18. A 401 from `messages.get` mid-run rejects; files written before it remain (the caller
-    re-runs), and `manifest.json` is absent.
+18. A 401 from `messages.get` mid-run rejects; `manifest.json` and `window-metadata.json`
+    are absent, and `messages/` is empty because every fetch completes before any message
+    file is written (the caller re-runs).
 19. A 401 from a deferred body fetch rejects.
 20. A 401 from the spam cross-check listing rejects even though message files are on disk;
     `manifest.json` is absent so the run cannot be mistaken for complete.
@@ -315,8 +339,9 @@ a separate fix. The definition goes after `batch_get_gmail_index_metadata` in
     absent.
 22. Rerun failure with all three outputs already present from a previous successful run: a
     401 from `messages.get` on the second message rejects; afterwards `manifest.json` and
-    `window-metadata.json` are absent, the old `messages/` content is gone, and only the
-    first new message file exists.
+    `window-metadata.json` are absent and `messages/` exists but is empty, because the old
+    content was removed in step 6 and no new file is written until every fetch has
+    completed.
 23. Truncated rerun with all three outputs already present: all three remain byte-for-byte
     unchanged, because the truncation path returns before step 6.
 24. Final-write failure: with `fs.writeFileSync` stubbed to throw on
@@ -333,12 +358,20 @@ a separate fix. The definition goes after `batch_get_gmail_index_metadata` in
 
 `src/message-body.test.ts` covers `extractMessageParts` for each of the five part rules and
 nesting, `htmlToText` for each regex line, and `resolveMessageBody` for deferred fetch
-success, a 429 failure recorded as `{ code: 'body-part-fetch:429', error }` with
+success, a 429 failure recorded as `{ code: 'body-part-fetch: 429', error }` with
 `error.status === 429`, and 401 rethrown.
 
 `src/gmail-sync.test.ts` also covers `toGmailRequestError` (status and reason extracted from
 a googleapis-shaped error, pass-through of an existing instance, plain `Error` yielding
-neither) and `failureCode` (status, then reason, then name).
+neither) and `failureCode` (`code` first, including a non-numeric `ECONNRESET`, then status,
+then name; an error with only a `reason` renders as `Error`, exactly as the reference would).
+
+The handler body lives in `src/batch-fetch-window.ts` as
+`handleBatchFetchWindow(gmail, args: unknown)`, which parses with `BatchFetchWindowSchema`,
+calls `batchFetchWindow`, and wraps with `structuredResult`; `src/index.ts` only delegates to
+it. The test suite exercises `handleBatchFetchWindow` directly (rejects bad input with a zod
+error, returns `structuredContent` and matching `content[0].text` for a valid run), and the
+smoke run exercises the real MCP dispatch through `dist/index.js` over stdio.
 
 `src/gmail-sync.test.ts` (extended) covers `listAllGmailMessageIds`: unlimited three-page
 run returns every ID with `hasMore: false`; `limit: 250` against a single page of 300 IDs
@@ -362,6 +395,8 @@ The full existing suite must pass unchanged.
 - Tool registered, typed, tested, documented; `npm test` and `npm run build` succeed; `dist/`
   rebuilt.
 - Smoke run against the real mailbox with `output_dir` under a scratch directory and a
-  watermark within the last day; the returned summary is pasted in the report with the status
-  and, if `incomplete`, the reason.
-- Every deviation listed above is repeated in the implementation report.
+  watermark within the last day; the returned summary is pasted in the report with
+  `emailAddress` replaced and the `triage` array replaced by its length, since triage lines
+  carry senders and subjects. The status and, if `incomplete`, the `failures` and
+  `crossCheck` fields are included as returned.
+- Every one of the nine deviations listed above is repeated in the implementation report.

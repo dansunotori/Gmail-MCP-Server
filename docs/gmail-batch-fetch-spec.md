@@ -186,4 +186,8 @@ and its output.
   bug in the reference while reproducing it, say so and do not silently "fix" it; describe it so
   the PA repository can decide.
 
-Do not commit. Leave the working tree for review.
+Commit policy (amended 2026-09-11 by Sasha's instruction to follow the brainstorming,
+writing-plans and subagent-driven-development skills in full): each implementation task ends
+in its own commit on `experimental`, and review happens through git history rather than an
+uncommitted working tree. The original text here said "Do not commit. Leave the working tree
+for review."
