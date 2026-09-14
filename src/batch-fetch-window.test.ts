@@ -393,3 +393,21 @@ describe('batchFetchWindow: body resolution', () => {
     expect(readJson(path.join(dir, 'messages', '001.json')).body).toBe('Hello\nthere\nlink [https://x.test]& done');
   });
 });
+
+describe('batchFetchWindow: numbering width', () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('widens padding to four digits when more than 999 messages survive', async () => {
+    const ids = Array.from({ length: 1000 }, (_, index) => `m${index}`);
+    const messages = Object.fromEntries(ids.map((id, index) => [id, message(id, BOUNDARY + index)]));
+    const gmail = fakeGmail({ lists: windowOnly(ids), messages });
+    await run(gmail, dir);
+
+    const files = fs.readdirSync(path.join(dir, 'messages')).sort();
+    expect(files).toHaveLength(1000);
+    expect(files[0]).toBe('0001.json');
+    expect(files[999]).toBe('1000.json');
+  });
+});

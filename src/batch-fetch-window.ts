@@ -109,7 +109,7 @@ export async function batchFetchWindow(
   }
 
   kept.sort((left, right) => left.internal - right.internal);
-  const width = 3;
+  const width = Math.max(3, String(kept.length).length);
   const manifestMessages: ManifestEntry[] = [];
   const metadataMessages: Array<Record<string, unknown>> = [];
 
