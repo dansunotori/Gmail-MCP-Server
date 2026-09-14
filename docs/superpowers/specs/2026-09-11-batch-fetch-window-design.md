@@ -219,7 +219,10 @@ array of `{ id, error }`, `crossCheck` optional, `triage` as an array of strings
 
 Tool definition: name `batch_fetch_window`, description "Downloads every message received
 since a watermark into a local directory with manifest and cross-check; deletes and recreates
-`messages/` under `output_dir`", scopes `["gmail.readonly", "gmail.modify"]`, annotations
+`messages/` under `output_dir` unless the listing exceeds `max_messages`, in which case nothing
+is written and earlier outputs remain" (the `output_dir` field description carries the same
+qualification, because a truncated result can coexist with stale outputs from an earlier
+window and the caller must check `truncated` before trusting the files), scopes `["gmail.readonly", "gmail.modify"]`, annotations
 `{ title: "Batch Fetch Window", readOnlyHint: false, destructiveHint: true, idempotentHint: false }`.
 The source document originally asked for `readOnlyHint: true` because the mailbox is never
 modified; it was amended on 2026-09-11 to match this design, because the MCP SDK defines the
@@ -289,6 +292,42 @@ a separate fix. The definition goes after `batch_get_gmail_index_metadata` in
    it into place. The file contents are the same; only the deletion and the write order and
    atomicity differ, so that a failed run can never leave a stale manifest beside a fresh or
    partial `messages/`.
+10. **Numbering width.** The reference pads every file name to three digits
+    (`String(index + 1).padStart(3, '0')`), so a run of 1000 or more messages mixes
+    `001.json` … `999.json` with `1000.json` and a lexical directory listing no longer sorts
+    by index. The tool computes the width once as `Math.max(3, String(kept.length).length)`,
+    so every file in a run has the same width (`0001.json` … `1000.json`). Runs under 1000
+    messages are byte-identical to the reference.
+11. **Cross-check listing failures.** The reference calls `listAll` for the three cross-check
+    queries with no `catch`, so any failure there aborts the whole script after the message
+    files were written and before the manifest is; the operator sees exit code 1 and no
+    manifest. The tool records the failure as `{ id: 'cross-check:<query>', error }`, keeps
+    the message files, writes the manifest, and reports `status: 'incomplete'` (auth
+    failures still throw, per deviation 8), because the files on disk are valid and only
+    their verification is missing.
+12. **`max_messages` and truncation.** The reference has no cap: it downloads every listed
+    message. The tool takes `max_messages` (default 2000) and, above it, downloads and
+    writes nothing, leaves any previous `messages/`, `manifest.json` and
+    `window-metadata.json` untouched, and returns `truncated: true` with the true `listed`
+    count so the caller can choose a new cap or a nearer watermark.
+13. **`cross_check` switch.** The reference always runs the three cross-check listings. The
+    tool takes `cross_check` (default true) and skips them, omitting `crossCheck` from the
+    result and the manifest, when it is false.
+14. **Result shape and location.** The reference writes under a fixed `runs/gmail/`, prints
+    the summary to stdout with a `messages` array of triage strings, and signals problems
+    through the exit code (2 for failures or an inconsistent cross-check). The tool writes
+    under the caller's `output_dir`, returns the summary as the MCP result with `triage`
+    (the same strings) and a `status` field (`ok`, `incomplete`, `truncated`), and adds
+    `truncated`, `listingComplete` and `maxMessages` to both the result and the manifest.
+    Every field the reference wrote to the manifest is still written with the same name and
+    value.
+15. **List request field mask.** Every `users.messages.list` call sends
+    `fields: 'messages/id,nextPageToken'`; the reference sent no field mask. The IDs and
+    page tokens received are identical; only the response payload is smaller.
+16. **Profile request field mask.** `getGmailEmailAddress` calls `users.getProfile` with
+    `fields: 'emailAddress'`; the reference called it with no field mask and read
+    `emailAddress` from the full profile. The address obtained is identical; only the
+    response payload is smaller.
 
 ## Testing
 
@@ -399,4 +438,4 @@ The full existing suite must pass unchanged.
   `emailAddress` replaced and the `triage` array replaced by its length, since triage lines
   carry senders and subjects. The status and, if `incomplete`, the `failures` and
   `crossCheck` fields are included as returned.
-- Every one of the nine deviations listed above is repeated in the implementation report.
+- Every one of the sixteen deviations listed above is repeated in the implementation report.
