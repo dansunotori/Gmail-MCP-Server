@@ -411,3 +411,93 @@ describe('batchFetchWindow: numbering width', () => {
     expect(files[999]).toBe('1000.json');
   });
 });
+
+describe('batchFetchWindow: per-message failures', () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('records one messages.get failure with its status and still writes the rest', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a', 'bad', 'c']),
+      messages: { a: message('a', BOUNDARY + 1), bad: httpError(500), c: message('c', BOUNDARY + 2) },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.status).toBe('incomplete');
+    expect(result.failures).toEqual([{ id: 'bad', error: '500' }]);
+    expect(result.inWindow).toBe(2);
+    expect(result.belowBoundaryOrExcluded).toBe(0);
+    expect(readJson(path.join(dir, 'manifest.json')).failures).toEqual([{ id: 'bad', error: '500' }]);
+    expect(fs.readdirSync(path.join(dir, 'messages')).sort()).toEqual(['001.json', '002.json']);
+  });
+
+  it('reports status ok with no failures for a clean run', async () => {
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    const result = await run(gmail, dir);
+
+    expect(result.status).toBe('ok');
+    expect(result.failures).toEqual([]);
+  });
+
+  it('rejects on a 401 from messages.get and leaves no files', async () => {
+    const unauthorised = httpError(401);
+    const gmail = fakeGmail({
+      lists: windowOnly(['a', 'b']),
+      messages: { a: message('a', BOUNDARY + 1), b: unauthorised },
+    });
+    await expect(run(gmail, dir)).rejects.toBe(unauthorised);
+    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'window-metadata.json'))).toBe(false);
+    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual([]);
+  });
+
+  it('rejects on a 403 insufficientPermissions from messages.get', async () => {
+    const forbidden = httpError(403, 'insufficientPermissions');
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: forbidden } });
+    await expect(run(gmail, dir)).rejects.toBe(forbidden);
+    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
+  });
+
+  // Regression guard: passes already, because Task 2's lister rethrows auth errors on any page.
+  it('rejects on a 401 on window page two and writes nothing', async () => {
+    const unauthorised = httpError(401);
+    const gmail = fakeGmail({ lists: { [WINDOW_QUERY]: [{ ids: ['a'] }, unauthorised] } });
+    await expect(run(gmail, dir)).rejects.toBe(unauthorised);
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+});
+
+describe('batchFetchWindow: body-part failures', () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('records a body-part failure by code and still writes the message', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a']),
+      messages: {
+        a: message('a', BOUNDARY + 1, {
+          payload: { mimeType: 'text/plain', headers: [], body: { attachmentId: 'big' } },
+        }),
+      },
+      attachments: { big: httpError(429) },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.status).toBe('incomplete');
+    expect(result.failures).toEqual([{ id: 'a', error: 'body-part-fetch: 429' }]);
+    expect(readJson(path.join(dir, 'messages', '001.json')).body).toBe('');
+  });
+
+  // Regression guard: passes already, because Task 3's resolveMessageBody rethrows auth errors.
+  it('rejects on a 401 from a deferred body fetch', async () => {
+    const unauthorised = httpError(401);
+    const gmail = fakeGmail({
+      lists: windowOnly(['a']),
+      messages: { a: message('a', BOUNDARY + 1, { payload: { mimeType: 'text/plain', headers: [], body: { attachmentId: 'big' } } }) },
+      attachments: { big: unauthorised },
+    });
+    await expect(run(gmail, dir)).rejects.toBe(unauthorised);
+  });
+});

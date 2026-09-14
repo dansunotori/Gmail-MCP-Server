@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { gmail_v1 } from 'googleapis';
-import { getGmailEmailAddress, listAllGmailMessageIds } from './gmail-sync.js';
+import { failureCode, getGmailEmailAddress, isAuthError, listAllGmailMessageIds } from './gmail-sync.js';
 import { headerValue, resolveMessageBody, type MessageHeader, type MessagePart } from './message-body.js';
 
 export interface BatchFetchWindowInput {
@@ -11,7 +11,10 @@ export interface BatchFetchWindowInput {
   output_dir: string;
 }
 
+type Failure = { id: string; error: string };
+
 export interface BatchFetchWindowResult {
+  status: 'ok' | 'incomplete';
   checkedAt: string;
   emailAddress: string;
   watermark: string;
@@ -21,6 +24,7 @@ export interface BatchFetchWindowResult {
   listed: number;
   inWindow: number;
   belowBoundaryOrExcluded: number;
+  failures: Failure[];
   triage: string[];
 }
 
@@ -66,6 +70,7 @@ export async function batchFetchWindow(
   const windowQuery = `after:${epoch - 1} -in:spam -in:trash`;
 
   const emailAddress = await getGmailEmailAddress(gmail);
+  const failures: Failure[] = [];
   const windowList = await listAllGmailMessageIds(gmail, { query: windowQuery, includeSpamTrash: true });
   // A listing that stopped early cannot be reported by this result, so it is refused
   // rather than passed off as a complete window.
@@ -98,7 +103,16 @@ export async function batchFetchWindow(
   const kept: KeptMessage[] = [];
   let belowBoundaryOrExcluded = 0;
   for (const id of windowList.ids) {
-    const data = (await gmail.users.messages.get({ userId: 'me', id, format: 'full' })).data;
+    let data: gmail_v1.Schema$Message;
+    try {
+      data = (await gmail.users.messages.get({ userId: 'me', id, format: 'full' })).data;
+    } catch (error) {
+      if (isAuthError(error)) {
+        throw error;
+      }
+      failures.push({ id, error: failureCode(error) });
+      continue;
+    }
     const internal = Number(data.internalDate);
     const labels = data.labelIds ?? [];
     if (internal < boundaryMs || labels.includes('SPAM') || labels.includes('TRASH')) {
@@ -117,6 +131,9 @@ export async function batchFetchWindow(
     const id = data.id ?? '';
     const headers = (data.payload?.headers ?? []) as MessageHeader[];
     const resolved = await resolveMessageBody(gmail, id, data.payload as MessagePart | undefined);
+    for (const failure of resolved.failures) {
+      failures.push({ id, error: failure.code });
+    }
     const body = resolved.body;
     const attachments = resolved.attachments;
     const from = headerValue(headers, 'From');
@@ -161,6 +178,7 @@ export async function batchFetchWindow(
     ...base,
     inWindow: kept.length,
     belowBoundaryOrExcluded,
+    failures,
   };
 
   publishJson(messagesDir, windowMetadataPath, {
@@ -175,5 +193,6 @@ export async function batchFetchWindow(
   const triage = manifestMessages.map(entry =>
     [entry.file, entry.from, entry.subject, entry.dateHeader, `${entry.attachments} att`].join(' | ')
   );
-  return { ...summary, triage };
+  const status = failures.length > 0 ? 'incomplete' : 'ok';
+  return { ...summary, status, triage };
 }
