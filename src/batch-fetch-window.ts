@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { gmail_v1 } from 'googleapis';
 import { getGmailEmailAddress, listAllGmailMessageIds } from './gmail-sync.js';
-import { extractMessageParts, headerValue, type MessageHeader, type MessagePart } from './message-body.js';
+import { headerValue, resolveMessageBody, type MessageHeader, type MessagePart } from './message-body.js';
 
 export interface BatchFetchWindowInput {
   // ISO 8601 timestamp with an explicit zone; the window is inclusive of this instant.
@@ -116,9 +116,9 @@ export async function batchFetchWindow(
   for (const [index, { data, labels }] of kept.entries()) {
     const id = data.id ?? '';
     const headers = (data.payload?.headers ?? []) as MessageHeader[];
-    const parts = extractMessageParts(data.payload as MessagePart | undefined);
-    const body = parts.text.trim();
-    const attachments = parts.attachments;
+    const resolved = await resolveMessageBody(gmail, id, data.payload as MessagePart | undefined);
+    const body = resolved.body;
+    const attachments = resolved.attachments;
     const from = headerValue(headers, 'From');
     const subject = headerValue(headers, 'Subject');
     const dateHeader = headerValue(headers, 'Date');

@@ -348,3 +348,48 @@ describe('batchFetchWindow: boundary and label filtering', () => {
     expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual(['001.json']);
   });
 });
+
+describe('batchFetchWindow: body resolution', () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('fetches a large body delivered through attachmentId', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a']),
+      messages: {
+        a: message('a', BOUNDARY + 1, {
+          payload: {
+            mimeType: 'text/plain',
+            headers: [{ name: 'From', value: 'a@example.com' }],
+            body: { attachmentId: 'big', size: 9 },
+          },
+        }),
+      },
+      attachments: { big: b64('the large body') },
+    });
+    await run(gmail, dir);
+
+    expect(gmail.attachmentsGet).toHaveBeenCalledWith({ userId: 'me', messageId: 'a', id: 'big' });
+    expect(readJson(path.join(dir, 'messages', '001.json')).body).toBe('the large body');
+  });
+
+  it('converts an HTML-only message to plain text with the reference rules', async () => {
+    const html = '<style>p{}</style><p>Hello<br>there</p><a href="https://x.test">link</a>&amp;&nbsp;done';
+    const gmail = fakeGmail({
+      lists: windowOnly(['a']),
+      messages: {
+        a: message('a', BOUNDARY + 1, {
+          payload: {
+            mimeType: 'text/html',
+            headers: [{ name: 'From', value: 'a@example.com' }],
+            body: { data: b64(html) },
+          },
+        }),
+      },
+    });
+    await run(gmail, dir);
+
+    expect(readJson(path.join(dir, 'messages', '001.json')).body).toBe('Hello\nthere\nlink [https://x.test]& done');
+  });
+});
