@@ -314,3 +314,37 @@ describe('batchFetchWindow: owned paths and atomic publication', () => {
     expect(fs.readdirSync(path.join(dir, 'messages')).filter(name => name.startsWith('.publish-'))).toEqual([]);
   });
 });
+
+describe('batchFetchWindow: boundary and label filtering', () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('includes the exact boundary and excludes one millisecond before it', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['on', 'before']),
+      messages: { on: message('on', BOUNDARY), before: message('before', BOUNDARY - 1) },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.inWindow).toBe(1);
+    expect(result.belowBoundaryOrExcluded).toBe(1);
+    expect(readJson(path.join(dir, 'manifest.json')).belowBoundaryOrExcluded).toBe(1);
+    expect(readJson(path.join(dir, 'messages', '001.json')).id).toBe('on');
+  });
+
+  it('skips a listed message labelled SPAM', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['s', 'a']),
+      messages: {
+        s: message('s', BOUNDARY + 1, { labelIds: ['SPAM'] }),
+        a: message('a', BOUNDARY + 2),
+      },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.inWindow).toBe(1);
+    expect(result.belowBoundaryOrExcluded).toBe(1);
+    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual(['001.json']);
+  });
+});

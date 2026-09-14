@@ -20,6 +20,7 @@ export interface BatchFetchWindowResult {
   pages: number;
   listed: number;
   inWindow: number;
+  belowBoundaryOrExcluded: number;
   triage: string[];
 }
 
@@ -95,9 +96,16 @@ export async function batchFetchWindow(
   fs.mkdirSync(messagesDir);
 
   const kept: KeptMessage[] = [];
+  let belowBoundaryOrExcluded = 0;
   for (const id of windowList.ids) {
     const data = (await gmail.users.messages.get({ userId: 'me', id, format: 'full' })).data;
-    kept.push({ data, internal: Number(data.internalDate), labels: data.labelIds ?? [] });
+    const internal = Number(data.internalDate);
+    const labels = data.labelIds ?? [];
+    if (internal < boundaryMs || labels.includes('SPAM') || labels.includes('TRASH')) {
+      belowBoundaryOrExcluded += 1;
+      continue;
+    }
+    kept.push({ data, internal, labels });
   }
 
   kept.sort((left, right) => left.internal - right.internal);
@@ -152,6 +160,7 @@ export async function batchFetchWindow(
     checkedAt: now().toISOString(),
     ...base,
     inWindow: kept.length,
+    belowBoundaryOrExcluded,
   };
 
   publishJson(messagesDir, windowMetadataPath, {
