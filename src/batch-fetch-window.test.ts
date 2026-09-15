@@ -236,6 +236,35 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     expect(fs.readdirSync(dir)).toEqual([]);
   });
 
+  it('keeps window-metadata headers case-insensitively while preserving their original casing', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a']),
+      messages: {
+        a: message('a', BOUNDARY + 1, {
+          payload: {
+            mimeType: 'text/plain',
+            headers: [
+              { name: 'from', value: 'a@example.com' },
+              { name: 'SUBJECT', value: 'Subject a' },
+              { name: 'X-Other', value: 'dropped' },
+            ],
+            body: { data: b64('body of a') },
+          },
+        }),
+      },
+    });
+    const result = await run(gmail, dir);
+
+    expect(readJson(path.join(dir, 'window-metadata.json')).messages[0].headers).toEqual([
+      { name: 'from', value: 'a@example.com' },
+      { name: 'SUBJECT', value: 'Subject a' },
+    ]);
+    const written = readJson(path.join(dir, 'messages', '001.json'));
+    expect(written.from).toBe('a@example.com');
+    expect(written.subject).toBe('Subject a');
+    expect(result.inWindow).toBe(1);
+  });
+
 });
 
 describe('batchFetchWindow: owned paths and atomic publication', () => {
@@ -266,8 +295,10 @@ describe('batchFetchWindow: owned paths and atomic publication', () => {
 
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
     expect(fs.existsSync(path.join(dir, 'window-metadata.json'))).toBe(false);
-    // Every fetch completes before any message file is written, so the failed rerun leaves
-    // messages/ present but empty: the old content was removed, and nothing new was written.
+    // Every messages.get completes before any message file is written; only a later
+    // body-part fetch can fail after some files exist, and no manifest is written in that
+    // case either, so the failed rerun leaves messages/ present but empty: the old content
+    // was removed, and nothing new was written.
     expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual([]);
   });
 
@@ -344,6 +375,23 @@ describe('batchFetchWindow: boundary and label filtering', () => {
       lists: windowOnly(['s', 'a']),
       messages: {
         s: message('s', BOUNDARY + 1, { labelIds: ['SPAM'] }),
+        a: message('a', BOUNDARY + 2),
+      },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.inWindow).toBe(1);
+    expect(result.belowBoundaryOrExcluded).toBe(1);
+    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual(['001.json']);
+  });
+
+  // Regression guard: passes already, because the kept-message filter already excludes
+  // TRASH alongside SPAM; it protects that exclusion against future changes to the filter.
+  it('skips a listed message labelled TRASH', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['t', 'a']),
+      messages: {
+        t: message('t', BOUNDARY + 1, { labelIds: ['TRASH'] }),
         a: message('a', BOUNDARY + 2),
       },
     });
@@ -436,6 +484,7 @@ describe('batchFetchWindow: per-message failures', () => {
     expect(result.belowBoundaryOrExcluded).toBe(0);
     expect(readJson(path.join(dir, 'manifest.json')).failures).toEqual([{ id: 'bad', error: '500' }]);
     expect(fs.readdirSync(path.join(dir, 'messages')).sort()).toEqual(['001.json', '002.json']);
+    expect(result.crossCheck).toEqual({ window: 3, spam: 0, trash: 0, anywhere: 3, unexplainedIds: [], consistent: true });
   });
 
   it('reports status ok with no failures for a clean run', async () => {

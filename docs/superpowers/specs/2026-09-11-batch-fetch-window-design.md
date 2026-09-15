@@ -348,8 +348,9 @@ These are the decisions a consumer can rely on; each is pinned by a test.
     nothing written, existing `messages/` untouched.
 17. A 401 on page two of the window listing rejects `batchFetchWindow`; nothing is written.
 18. A 401 from `messages.get` mid-run rejects; `manifest.json` and `window-metadata.json`
-    are absent, and `messages/` is empty because every fetch completes before any message
-    file is written (the caller re-runs).
+    are absent, and `messages/` is empty because every `messages.get` completes before any
+    message file is written; only a later body-part fetch can fail after some files exist,
+    and no manifest exists in that case either (the caller re-runs).
 19. A 401 from a deferred body fetch rejects.
 20. A 401 from the spam cross-check listing rejects even though message files are on disk;
     `manifest.json` is absent so the run cannot be mistaken for complete.
@@ -361,7 +362,7 @@ These are the decisions a consumer can rely on; each is pinned by a test.
 22. Rerun failure with all three outputs already present from a previous successful run: a
     401 from `messages.get` on the second message rejects; afterwards `manifest.json` and
     `window-metadata.json` are absent and `messages/` exists but is empty, because the old
-    content was removed in step 6 and no new file is written until every fetch has
+    content was removed in step 6 and no new file is written until every `messages.get` has
     completed.
 23. Truncated rerun with all three outputs already present: all three remain byte-for-byte
     unchanged, because the truncation path returns before step 6.

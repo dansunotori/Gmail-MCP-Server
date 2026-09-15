@@ -28,7 +28,7 @@ type ManifestEntry = {
   attachments: number;
 };
 
-const METADATA_HEADERS = new Set(['From', 'To', 'Subject', 'Date']);
+const METADATA_HEADERS = new Set(['from', 'to', 'subject', 'date']);
 
 function writeJson(target: string, value: unknown): void {
   fs.writeFileSync(target, JSON.stringify(value, null, 2) + '\n');
@@ -94,7 +94,7 @@ export async function batchFetchWindow(
     return BatchFetchWindowOutputSchema.parse({
       checkedAt: now().toISOString(),
       ...base,
-      status: failures.length > 0 ? 'incomplete' : 'truncated',
+      status: failures.length > 0 || !windowList.complete ? 'incomplete' : 'truncated',
       truncated: true,
       inWindow: 0,
       belowBoundaryOrExcluded: 0,
@@ -184,7 +184,7 @@ export async function batchFetchWindow(
       id,
       internalDate: data.internalDate,
       labelIds: labels,
-      headers: headers.filter(header => METADATA_HEADERS.has(header.name ?? '')),
+      headers: headers.filter(header => METADATA_HEADERS.has((header.name ?? '').toLowerCase())),
     });
   }
 
@@ -228,7 +228,7 @@ export async function batchFetchWindow(
   const triage = manifestMessages.map(entry =>
     [entry.file, entry.from, entry.subject, entry.dateHeader, `${entry.attachments} att`].join(' | ')
   );
-  const status = failures.length > 0 || (crossCheck !== undefined && !crossCheck.consistent)
+  const status = failures.length > 0 || !windowList.complete || (crossCheck !== undefined && !crossCheck.consistent)
     ? 'incomplete'
     : 'ok';
   return BatchFetchWindowOutputSchema.parse({ ...summary, status, triage });
@@ -240,5 +240,5 @@ export async function handleBatchFetchWindow(
   now: () => Date = () => new Date(),
 ) {
   const validatedArgs = BatchFetchWindowSchema.parse(args);
-  return structuredResult({ ...await batchFetchWindow(gmail, validatedArgs, now) });
+  return structuredResult(await batchFetchWindow(gmail, validatedArgs, now));
 }
