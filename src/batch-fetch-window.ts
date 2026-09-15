@@ -1,49 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { gmail_v1 } from 'googleapis';
-import { failureCode, getGmailEmailAddress, isAuthError, listAllGmailMessageIds } from './gmail-sync.js';
+import { z } from 'zod';
+import { failureCode, getGmailEmailAddress, isAuthError, listAllGmailMessageIds, structuredResult } from './gmail-sync.js';
 import { headerValue, resolveMessageBody, type MessageHeader, type MessagePart } from './message-body.js';
+import { BatchFetchWindowOutputSchema, BatchFetchWindowSchema } from './tools.js';
 
-export interface BatchFetchWindowInput {
-  // ISO 8601 timestamp with an explicit zone; the window is inclusive of this instant.
-  watermark: string;
-  // Absolute directory that receives messages/, manifest.json and window-metadata.json.
-  output_dir: string;
-  // Also list spam, trash and in:anywhere since the watermark to detect silently dropped messages.
-  cross_check: boolean;
-  // Hard cap on listed IDs; above it nothing is downloaded and the result is truncated.
-  max_messages: number;
-}
-
-export interface CrossCheck {
-  window: number;
-  spam: number;
-  trash: number;
-  anywhere: number;
-  unexplainedIds: string[];
-  consistent: boolean;
-}
+export type BatchFetchWindowInput = z.infer<typeof BatchFetchWindowSchema>;
+export type BatchFetchWindowResult = z.infer<typeof BatchFetchWindowOutputSchema>;
 
 type Failure = { id: string; error: string };
-
-export interface BatchFetchWindowResult {
-  status: 'ok' | 'incomplete' | 'truncated';
-  checkedAt: string;
-  emailAddress: string;
-  watermark: string;
-  boundaryMs: number;
-  query: string;
-  pages: number;
-  listed: number;
-  inWindow: number;
-  belowBoundaryOrExcluded: number;
-  truncated: boolean;
-  listingComplete: boolean;
-  maxMessages: number;
-  failures: Failure[];
-  crossCheck?: CrossCheck;
-  triage: string[];
-}
 
 type KeptMessage = {
   data: gmail_v1.Schema$Message;
@@ -125,7 +91,7 @@ export async function batchFetchWindow(
   };
 
   if (windowList.ids.length > input.max_messages) {
-    return {
+    return BatchFetchWindowOutputSchema.parse({
       checkedAt: now().toISOString(),
       ...base,
       status: failures.length > 0 ? 'incomplete' : 'truncated',
@@ -134,7 +100,7 @@ export async function batchFetchWindow(
       belowBoundaryOrExcluded: 0,
       failures,
       triage: [],
-    };
+    });
   }
 
   const outputDir = input.output_dir;
@@ -222,7 +188,7 @@ export async function batchFetchWindow(
     });
   }
 
-  let crossCheck: CrossCheck | undefined;
+  let crossCheck: BatchFetchWindowResult['crossCheck'];
   if (input.cross_check) {
     const spam = await crossCheckListing(gmail, `after:${epoch - 1} in:spam`, failures);
     const trash = await crossCheckListing(gmail, `after:${epoch - 1} in:trash`, failures);
@@ -265,5 +231,14 @@ export async function batchFetchWindow(
   const status = failures.length > 0 || (crossCheck !== undefined && !crossCheck.consistent)
     ? 'incomplete'
     : 'ok';
-  return { ...summary, status, triage };
+  return BatchFetchWindowOutputSchema.parse({ ...summary, status, triage });
+}
+
+export async function handleBatchFetchWindow(
+  gmail: gmail_v1.Gmail,
+  args: unknown,
+  now: () => Date = () => new Date(),
+) {
+  const validatedArgs = BatchFetchWindowSchema.parse(args);
+  return structuredResult({ ...await batchFetchWindow(gmail, validatedArgs, now) });
 }

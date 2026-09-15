@@ -25,6 +25,7 @@ import { gmailMessageToJson, emailToTxt, emailToHtml, EmailAttachment } from "./
 import { resolveToolPrefix } from "./tool-prefix.js";
 import { getGmailProfile, listGmailAddedHistory, listGmailMessageIds, structuredResult } from "./gmail-sync.js";
 import { batchGetGmailIndexMetadata } from "./gmail-batch.js";
+import { handleBatchFetchWindow } from "./batch-fetch-window.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -606,6 +607,10 @@ async function main() {
                     return structuredResult({
                         ...await batchGetGmailIndexMetadata(oauth2Client, validatedArgs.messageIds),
                     });
+                }
+
+                case "batch_fetch_window": {
+                    return await handleBatchFetchWindow(gmail, args);
                 }
 
                 case "send_email":

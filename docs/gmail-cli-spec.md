@@ -9,6 +9,10 @@ implementing — the output contracts below are deliberately parallel.
 Requested by Sasha on 2026-09-08 for the PA task-tracker process (figaro-pa-predecessor repo),
 which needs scripted "list every message since watermark" and "read message in full" operations.
 
+Note (2026-09-11): the routine PA pass now uses the `batch_fetch_window` MCP tool (see
+`docs/superpowers/specs/2026-09-11-batch-fetch-window-design.md`); the CLIs below remain
+optional, for targeted reads.
+
 ## Non-negotiables
 
 - JSON on stdout on success; diagnostics and progress on stderr; on failure stdout stays empty and

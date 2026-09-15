@@ -1,3 +1,4 @@
+import path from "node:path";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
@@ -279,6 +280,81 @@ export const GmailIndexMetadataOutputSchema = z.object({
   missingMessageIds: z.array(NonEmptyString),
 }).strict();
 
+const WATERMARK_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+
+export const BatchFetchWindowSchema = z.object({
+  watermark: z.string().superRefine((value, context) => {
+    const match = WATERMARK_PATTERN.exec(value);
+    if (!match) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'watermark must be an ISO 8601 timestamp with an explicit Z or +HH:MM/-HH:MM zone suffix',
+      });
+      return;
+    }
+    // Date.parse silently rolls invalid calendar values (e.g. 2026-02-30) into the next
+    // month instead of rejecting them, so validate the calendar fields explicitly before
+    // trusting Date.parse for the actual instant.
+    const [, year, month, day, hour, minute, second] = match;
+    const y = Number(year);
+    const mo = Number(month);
+    const d = Number(day);
+    const h = Number(hour);
+    const mi = Number(minute);
+    const s = Number(second);
+    const roundTrip = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
+    const isValidCalendarDate = roundTrip.getUTCFullYear() === y
+      && roundTrip.getUTCMonth() === mo - 1
+      && roundTrip.getUTCDate() === d
+      && roundTrip.getUTCHours() === h
+      && roundTrip.getUTCMinutes() === mi
+      && roundTrip.getUTCSeconds() === s;
+    if (!isValidCalendarDate || !Number.isFinite(Date.parse(value))) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'watermark is not a valid date' });
+    }
+  }).describe("ISO 8601 UTC timestamp with an explicit zone, e.g. 2026-09-10T14:03:22Z; the window is inclusive of this instant"),
+  output_dir: z.string().refine(value => path.isAbsolute(value), {
+    message: 'output_dir must be an absolute path',
+  }).describe("Absolute directory; unless the result is truncated, the tool deletes and recreates messages/ and overwrites manifest.json and window-metadata.json inside it. A truncated run writes nothing and leaves earlier outputs in place, so check `truncated` before trusting the files"),
+  max_messages: z.number().int().min(1).default(2000)
+    .describe("Hard cap on listed IDs; above it nothing is downloaded and the result is truncated"),
+  cross_check: z.boolean().default(true)
+    .describe("Also list spam, trash and in:anywhere since the watermark to detect silently dropped messages"),
+}).strict();
+
+const BatchFetchFailureSchema = z.object({
+  id: NonEmptyString,
+  error: z.string(),
+}).strict();
+
+const BatchFetchCrossCheckSchema = z.object({
+  window: z.number().int().min(0),
+  spam: z.number().int().min(0),
+  trash: z.number().int().min(0),
+  anywhere: z.number().int().min(0),
+  unexplainedIds: z.array(NonEmptyString),
+  consistent: z.boolean(),
+}).strict();
+
+export const BatchFetchWindowOutputSchema = z.object({
+  status: z.enum(['ok', 'incomplete', 'truncated']),
+  checkedAt: NonEmptyString,
+  emailAddress: NonEmptyString,
+  watermark: NonEmptyString,
+  boundaryMs: z.number().int(),
+  query: NonEmptyString,
+  pages: z.number().int().min(0),
+  listed: z.number().int().min(0),
+  inWindow: z.number().int().min(0),
+  belowBoundaryOrExcluded: z.number().int().min(0),
+  truncated: z.boolean(),
+  listingComplete: z.boolean(),
+  maxMessages: z.number().int().min(1),
+  failures: z.array(BatchFetchFailureSchema),
+  crossCheck: BatchFetchCrossCheckSchema.optional(),
+  triage: z.array(z.string()),
+}).strict();
+
 // Tool definition type
 export interface ToolAnnotations {
   title: string;
@@ -331,6 +407,14 @@ export const toolDefinitions: ToolDefinition[] = [
     outputSchema: GmailIndexMetadataOutputSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Batch Get Gmail Index Metadata", readOnlyHint: true },
+  },
+  {
+    name: "batch_fetch_window",
+    description: "Downloads every message received since a watermark into a local directory with manifest and cross-check; deletes and recreates messages/ under output_dir unless the listing exceeds max_messages, in which case nothing is written and earlier outputs remain",
+    schema: BatchFetchWindowSchema,
+    outputSchema: BatchFetchWindowOutputSchema,
+    scopes: ["gmail.readonly", "gmail.modify"],
+    annotations: { title: "Batch Fetch Window", readOnlyHint: false, destructiveHint: true, idempotentHint: false },
   },
   {
     name: "read_email",

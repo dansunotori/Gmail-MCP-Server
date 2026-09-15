@@ -276,7 +276,7 @@ The server automatically filters available tools based on your authorized scopes
 
 | Tools | Required Scope (any) |
 |-------|---------------------|
-| `read_email`, `search_emails`, `download_attachment`, `get_thread`, `list_inbox_threads`, `get_inbox_with_threads`, `download_email`, `get_gmail_profile`, `list_gmail_message_ids`, `list_gmail_added_history`, `batch_get_gmail_index_metadata` | `gmail.readonly` or `gmail.modify` |
+| `read_email`, `search_emails`, `download_attachment`, `get_thread`, `list_inbox_threads`, `get_inbox_with_threads`, `download_email`, `get_gmail_profile`, `list_gmail_message_ids`, `list_gmail_added_history`, `batch_get_gmail_index_metadata`, `batch_fetch_window` | `gmail.readonly` or `gmail.modify` |
 | `list_email_labels` | `gmail.readonly`, `gmail.modify`, or `gmail.labels` |
 | `send_email`, `draft_email`, `reply_all`, `send_draft` | `gmail.modify`, `gmail.compose`, or `gmail.send` |
 | `delete_draft`, `update_draft` | `gmail.modify` or `gmail.compose` |
@@ -316,7 +316,7 @@ Then add to your Claude Code MCP settings (`~/.claude/mcp_settings.json` or proj
 }
 ```
 
-With a read-only Gmail scope, these 12 tools will be available to Claude. The scope prevents Gmail mutations, but `download_attachment` and `download_email` can still write files to paths you provide locally.
+With a read-only Gmail scope, these 13 tools will be available to Claude. The scope prevents Gmail mutations, but `download_attachment`, `download_email` and `batch_fetch_window` can still write files to paths you provide locally.
 - `read_email` - Read email content
 - `search_emails` - Search your inbox
 - `list_email_labels` - List available labels
@@ -329,6 +329,7 @@ With a read-only Gmail scope, these 12 tools will be available to Claude. The sc
 - `list_gmail_message_ids` - List message IDs, excluding spam and trash
 - `list_gmail_added_history` - List message-added events after a history cursor
 - `batch_get_gmail_index_metadata` - Fetch ID, internal date, and labels for up to 50 messages
+- `batch_fetch_window` - Download every message since a watermark into a local directory with manifest and cross-check
 
 ### Full Access Configuration
 
@@ -380,7 +381,7 @@ The server provides the following tools that can be used through Claude Desktop:
 
 ### Structured index synchronisation tools
 
-These four read-only tools support deterministic mailbox indexing without returning email content:
+These tools support deterministic mailbox indexing:
 
 | Tool | Input | Structured output |
 |-|-|-|
@@ -388,8 +389,9 @@ These four read-only tools support deterministic mailbox indexing without return
 | `list_gmail_message_ids` | Optional `pageToken`; `maxResults` from 1 to 500 | Message IDs and optional next-page token; spam and trash are excluded |
 | `list_gmail_added_history` | `startHistoryId`; optional `pageToken`; `maxResults` from 1 to 500 | Added message IDs, next-page token, and current history ID, or an explicit expired-cursor result |
 | `batch_get_gmail_index_metadata` | 1 to 50 `messageIds` | Each message's ID, Gmail `internalDate`, and label IDs, plus IDs deleted before retrieval |
+| `batch_fetch_window` | `watermark` (ISO 8601 with zone); `output_dir` (absolute); optional `max_messages` (default 2000); optional `cross_check` (default true) | Status (`ok`, `incomplete`, `truncated`), counts, failures, cross-check summary and a triage list; writes `messages/NNN.json`, `manifest.json` and `window-metadata.json` under `output_dir` (nothing when `truncated`) |
 
-The tools never request or return subjects, addresses, snippets, headers, bodies, attachments, or raw message content. Metadata batches retry only Gmail HTTP 429 and 5xx responses, with a maximum of three attempts.
+The first four tools never request or return subjects, addresses, snippets, headers, bodies, attachments, or raw message content. Metadata batches retry only Gmail HTTP 429 and 5xx responses, with a maximum of three attempts. `batch_fetch_window` is the exception: it downloads full messages to disk and returns only headers in its triage lines. On every run that is not truncated it deletes and recreates `messages/` and overwrites the two JSON files under `output_dir`; a truncated result (listing above `max_messages`) writes nothing and leaves any earlier outputs in place, so check `truncated` before trusting the files. It touches nothing else in `output_dir` and reports `readOnlyHint: false` because of those writes.
 
 ### 1. Send Email (`send_email`)
 

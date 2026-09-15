@@ -1,8 +1,18 @@
+import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { batchFetchWindow, type BatchFetchWindowInput } from './batch-fetch-window.js';
+import { ZodError } from 'zod';
+import { batchFetchWindow, handleBatchFetchWindow, type BatchFetchWindowInput } from './batch-fetch-window.js';
+import { hasScope } from './scopes.js';
+import {
+  BatchFetchWindowOutputSchema,
+  BatchFetchWindowSchema,
+  getToolByName,
+  toMcpTools,
+  toolDefinitions,
+} from './tools.js';
 
 const WATERMARK = '2026-09-07T12:00:00Z';
 const BOUNDARY = Date.parse(WATERMARK);
@@ -729,5 +739,123 @@ describe('batchFetchWindow: status precedence when truncated', () => {
     expect(result.failures).toEqual([{ id: 'window-listing:page-3', error: '503' }]);
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
     expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual(['009.json']);
+  });
+});
+
+describe('BatchFetchWindowSchema', () => {
+  it('accepts a zoned watermark and an absolute directory, applying defaults', () => {
+    expect(BatchFetchWindowSchema.parse({
+      watermark: '2026-09-10T14:03:22Z',
+      output_dir: '/tmp/out',
+    })).toEqual({
+      watermark: '2026-09-10T14:03:22Z',
+      output_dir: '/tmp/out',
+      max_messages: 2000,
+      cross_check: true,
+    });
+    expect(BatchFetchWindowSchema.parse({
+      watermark: '2026-09-10T14:03:22.250+01:00',
+      output_dir: '/tmp/out',
+      max_messages: 5,
+      cross_check: false,
+    }).max_messages).toBe(5);
+  });
+
+  it('rejects a watermark without an explicit zone', () => {
+    expect(() => BatchFetchWindowSchema.parse({ watermark: '2026-09-10T14:03:22', output_dir: '/tmp/out' }))
+      .toThrow(/zone/);
+  });
+
+  it('rejects an impossible calendar date that Date.parse would roll over', () => {
+    expect(() => BatchFetchWindowSchema.parse({ watermark: '2026-02-30T00:00:00Z', output_dir: '/tmp/out' }))
+      .toThrow(/valid date/);
+  });
+
+  it('rejects an unparseable watermark, a relative directory, and bad caps', () => {
+    expect(() => BatchFetchWindowSchema.parse({ watermark: '2026-13-40T99:00:00Z', output_dir: '/tmp/out' })).toThrow();
+    expect(() => BatchFetchWindowSchema.parse({ watermark: '2026-09-10T14:03:22Z', output_dir: 'relative/out' })).toThrow(/absolute/);
+    expect(() => BatchFetchWindowSchema.parse({ watermark: '2026-09-10T14:03:22Z', output_dir: '/tmp/out', max_messages: 0 })).toThrow();
+    expect(() => BatchFetchWindowSchema.parse({ watermark: '2026-09-10T14:03:22Z', output_dir: '/tmp/out', extra: 1 })).toThrow();
+  });
+});
+
+describe('BatchFetchWindowOutputSchema', () => {
+  const base = {
+    status: 'ok',
+    checkedAt: '2026-09-11T12:00:00.000Z',
+    emailAddress: 'me@example.com',
+    watermark: '2026-09-10T14:03:22Z',
+    boundaryMs: 1789000000000,
+    query: 'after:1 -in:spam -in:trash',
+    pages: 1,
+    listed: 0,
+    inWindow: 0,
+    belowBoundaryOrExcluded: 0,
+    truncated: false,
+    listingComplete: true,
+    maxMessages: 2000,
+    failures: [],
+    triage: [],
+  };
+
+  it('accepts a result with and without crossCheck', () => {
+    expect(BatchFetchWindowOutputSchema.parse(base)).toEqual(base);
+    const withCheck = {
+      ...base,
+      crossCheck: { window: 0, spam: 0, trash: 0, anywhere: 0, unexplainedIds: [], consistent: true },
+    };
+    expect(BatchFetchWindowOutputSchema.parse(withCheck)).toEqual(withCheck);
+  });
+
+  it('rejects unknown statuses and extra fields', () => {
+    expect(() => BatchFetchWindowOutputSchema.parse({ ...base, status: 'done' })).toThrow();
+    expect(() => BatchFetchWindowOutputSchema.parse({ ...base, messages: [] })).toThrow();
+  });
+});
+
+describe('batch_fetch_window tool definition', () => {
+  it('is registered with honest annotations and read scopes', () => {
+    const tool = getToolByName('batch_fetch_window');
+    expect(tool).toBeDefined();
+    expect(tool!.scopes).toEqual(['gmail.readonly', 'gmail.modify']);
+    expect(tool!.annotations).toEqual({
+      title: 'Batch Fetch Window',
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+    });
+    expect(tool!.outputSchema).toBe(BatchFetchWindowOutputSchema);
+    expect(hasScope(['gmail.readonly'], tool!.scopes)).toBe(true);
+  });
+
+  it('sits directly after batch_get_gmail_index_metadata and is MCP-valid', () => {
+    const names = toolDefinitions.map(tool => tool.name);
+    expect(names.indexOf('batch_fetch_window')).toBe(names.indexOf('batch_get_gmail_index_metadata') + 1);
+    expect(() => ListToolsResultSchema.parse({ tools: toMcpTools(toolDefinitions) })).not.toThrow();
+  });
+});
+
+describe('handleBatchFetchWindow', () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('rejects invalid arguments with a zod error before touching Gmail', async () => {
+    const gmail = fakeGmail({ lists: {} });
+    await expect(handleBatchFetchWindow(gmail as never, { watermark: 'nope', output_dir: dir }))
+      .rejects.toBeInstanceOf(ZodError);
+    expect(gmail.users.getProfile).not.toHaveBeenCalled();
+    expect(gmail.list).not.toHaveBeenCalled();
+  });
+
+  it('applies defaults, runs the window, and returns a structured MCP result', async () => {
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    const result = await handleBatchFetchWindow(gmail as never, { watermark: WATERMARK, output_dir: dir }, FIXED_NOW);
+
+    expect(result.structuredContent).toMatchObject({ status: 'ok', maxMessages: 2000, inWindow: 1 });
+    expect(result.structuredContent.crossCheck).toBeDefined();
+    expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(result.structuredContent) }]);
+    expect(() => BatchFetchWindowOutputSchema.parse(result.structuredContent)).not.toThrow();
+    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true);
   });
 });
