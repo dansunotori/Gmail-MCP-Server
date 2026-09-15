@@ -9,6 +9,17 @@ export interface BatchFetchWindowInput {
   watermark: string;
   // Absolute directory that receives messages/, manifest.json and window-metadata.json.
   output_dir: string;
+  // Also list spam, trash and in:anywhere since the watermark to detect silently dropped messages.
+  cross_check: boolean;
+}
+
+export interface CrossCheck {
+  window: number;
+  spam: number;
+  trash: number;
+  anywhere: number;
+  unexplainedIds: string[];
+  consistent: boolean;
 }
 
 type Failure = { id: string; error: string };
@@ -25,6 +36,7 @@ export interface BatchFetchWindowResult {
   inWindow: number;
   belowBoundaryOrExcluded: number;
   failures: Failure[];
+  crossCheck?: CrossCheck;
   triage: string[];
 }
 
@@ -58,6 +70,26 @@ function publishJson(messagesDir: string, target: string, value: unknown): void 
   const temporary = path.join(messagesDir, `.publish-${path.basename(target)}`);
   writeJson(temporary, value);
   fs.renameSync(temporary, target);
+}
+
+async function crossCheckListing(
+  gmail: gmail_v1.Gmail,
+  query: string,
+  failures: Failure[],
+): Promise<Set<string>> {
+  try {
+    const result = await listAllGmailMessageIds(gmail, { query, includeSpamTrash: true });
+    if (!result.complete && result.error) {
+      failures.push({ id: `cross-check:${query}`, error: failureCode(result.error) });
+    }
+    return new Set(result.ids);
+  } catch (error) {
+    if (isAuthError(error)) {
+      throw error;
+    }
+    failures.push({ id: `cross-check:${query}`, error: failureCode(error) });
+    return new Set();
+  }
 }
 
 export async function batchFetchWindow(
@@ -172,13 +204,31 @@ export async function batchFetchWindow(
     });
   }
 
-  // Stamped after every fetch, immediately before publication, as the reference does.
+  let crossCheck: CrossCheck | undefined;
+  if (input.cross_check) {
+    const spam = await crossCheckListing(gmail, `after:${epoch - 1} in:spam`, failures);
+    const trash = await crossCheckListing(gmail, `after:${epoch - 1} in:trash`, failures);
+    const anywhere = await crossCheckListing(gmail, `after:${epoch - 1} in:anywhere`, failures);
+    const windowIds = new Set(windowList.ids);
+    const unexplainedIds = [...anywhere].filter(id => !windowIds.has(id) && !spam.has(id) && !trash.has(id));
+    crossCheck = {
+      window: windowList.ids.length,
+      spam: spam.size,
+      trash: trash.size,
+      anywhere: anywhere.size,
+      unexplainedIds,
+      consistent: unexplainedIds.length === 0,
+    };
+  }
+
+  // Stamped after every fetch and check, immediately before publication, as the reference does.
   const summary = {
     checkedAt: now().toISOString(),
     ...base,
     inWindow: kept.length,
     belowBoundaryOrExcluded,
     failures,
+    ...(crossCheck ? { crossCheck } : {}),
   };
 
   publishJson(messagesDir, windowMetadataPath, {
@@ -193,6 +243,8 @@ export async function batchFetchWindow(
   const triage = manifestMessages.map(entry =>
     [entry.file, entry.from, entry.subject, entry.dateHeader, `${entry.attachments} att`].join(' | ')
   );
-  const status = failures.length > 0 ? 'incomplete' : 'ok';
+  const status = failures.length > 0 || (crossCheck !== undefined && !crossCheck.consistent)
+    ? 'incomplete'
+    : 'ok';
   return { ...summary, status, triage };
 }

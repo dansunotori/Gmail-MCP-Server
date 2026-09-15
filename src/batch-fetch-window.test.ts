@@ -95,6 +95,7 @@ function run(gmail: ReturnType<typeof fakeGmail>, dir: string, overrides: Partia
   return batchFetchWindow(gmail as never, {
     watermark: WATERMARK,
     output_dir: dir,
+    cross_check: true,
     ...overrides,
   }, FIXED_NOW);
 }
@@ -117,7 +118,7 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
         c: message('c', BOUNDARY + 2000),
       },
     });
-    const result = await run(gmail, dir);
+    const result = await run(gmail, dir, { cross_check: false });
 
     expect(result.pages).toBe(3);
     expect(result.listed).toBe(3);
@@ -499,5 +500,93 @@ describe('batchFetchWindow: body-part failures', () => {
       attachments: { big: unauthorised },
     });
     await expect(run(gmail, dir)).rejects.toBe(unauthorised);
+  });
+});
+
+describe('batchFetchWindow: cross-check', () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('lists spam, trash and anywhere and reports a consistent cross-check in the result and the manifest', async () => {
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    const result = await run(gmail, dir);
+
+    expect(gmail.list).toHaveBeenCalledWith(expect.objectContaining({ q: SPAM_QUERY, includeSpamTrash: true }));
+    expect(gmail.list).toHaveBeenCalledWith(expect.objectContaining({ q: TRASH_QUERY, includeSpamTrash: true }));
+    expect(gmail.list).toHaveBeenCalledWith(expect.objectContaining({ q: ANYWHERE_QUERY, includeSpamTrash: true }));
+    const expected = { window: 1, spam: 0, trash: 0, anywhere: 1, unexplainedIds: [], consistent: true };
+    expect(result.status).toBe('ok');
+    expect(result.crossCheck).toEqual(expected);
+    expect(readJson(path.join(dir, 'manifest.json')).crossCheck).toEqual(expected);
+  });
+
+  // Regression guard: passes already, because nothing lists spam, trash or anywhere before
+  // Step 3; it fails the moment Step 3 runs those listings without honouring cross_check.
+  it('skips the cross-check when disabled', async () => {
+    const gmail = fakeGmail({ lists: { [WINDOW_QUERY]: [{ ids: [] }] } });
+    const result = await run(gmail, dir, { cross_check: false });
+
+    expect(result.status).toBe('ok');
+    expect(result.crossCheck).toBeUndefined();
+    expect(gmail.list).toHaveBeenCalledTimes(1);
+    expect(readJson(path.join(dir, 'manifest.json')).crossCheck).toBeUndefined();
+  });
+});
+
+describe('batchFetchWindow: cross-check outcomes', () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('flags an unexplained anywhere ID as inconsistent', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a'], { [ANYWHERE_QUERY]: [{ ids: ['a', 'ghost'] }] }),
+      messages: { a: message('a', BOUNDARY + 1) },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.status).toBe('incomplete');
+    expect(result.crossCheck).toEqual({ window: 1, spam: 0, trash: 0, anywhere: 2, unexplainedIds: ['ghost'], consistent: false });
+    expect(result.failures).toEqual([]);
+  });
+
+  it('records a cross-check listing failure and keeps the message files', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a'], { [SPAM_QUERY]: [httpError(503)] }),
+      messages: { a: message('a', BOUNDARY + 1) },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.status).toBe('incomplete');
+    expect(result.failures).toEqual([{ id: `cross-check:${SPAM_QUERY}`, error: '503' }]);
+    expect(result.crossCheck?.spam).toBe(0);
+    expect(fs.existsSync(path.join(dir, 'messages', '001.json'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true);
+  });
+
+  it('reports the network error code for a later cross-check page failure', async () => {
+    const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+    const gmail = fakeGmail({
+      lists: windowOnly(['a'], { [TRASH_QUERY]: [{ ids: [] }, reset] }),
+      messages: { a: message('a', BOUNDARY + 1) },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.status).toBe('incomplete');
+    expect(result.failures).toEqual([{ id: `cross-check:${TRASH_QUERY}`, error: 'ECONNRESET' }]);
+  });
+
+  // Passes at this point only because Step 3's listings have no catch, so the 401 propagates;
+  // it exists to fail the moment Step 7 adds a catch without the isAuthError rethrow.
+  it('rejects on a 401 from the spam cross-check and leaves no manifest', async () => {
+    const unauthorised = httpError(401);
+    const gmail = fakeGmail({
+      lists: windowOnly(['a'], { [SPAM_QUERY]: [unauthorised] }),
+      messages: { a: message('a', BOUNDARY + 1) },
+    });
+    await expect(run(gmail, dir)).rejects.toBe(unauthorised);
+    expect(fs.existsSync(path.join(dir, 'messages', '001.json'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
   });
 });
