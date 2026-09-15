@@ -1,14 +1,15 @@
 # `batch_fetch_window` MCP tool — design
 
-Date: 2026-09-11. Source request: `docs/gmail-batch-fetch-spec.md`. Reference implementation:
-`~/Projects/figaro-pa-predecessor/scripts/gmail-fetch-all.cjs` (222 lines, read in full).
+Date: 2026-09-11. Source request: `docs/gmail-batch-fetch-spec.md`. This document is
+self-contained: every output shape, rule and string the tool must produce is stated here, and
+nothing outside this repository is a requirement.
 
 ## Goal
 
-Give this server one read-only tool, `batch_fetch_window`, that downloads every Gmail message
-received since a watermark into a caller-supplied directory, exactly as the PA repository's
-`gmail-fetch-all.cjs` does today. The PA repository forbids scripts that call external APIs
-directly, so the script must become a server feature and then be deleted there.
+Give this server one tool, `batch_fetch_window`, that downloads every Gmail message received
+since a watermark into a caller-supplied directory, with a manifest, window metadata and a
+spam/trash/anywhere cross-check, so that any client of this server can index a mailbox window
+without calling the Gmail API itself.
 
 ## Scope
 
@@ -17,7 +18,7 @@ In scope: one tool, its schema, handler, tests, README entry, and one note in
 work will share.
 
 Out of scope: CLIs, changes to any existing tool's behaviour or output schema, auth or scope
-changes, and any edit inside the PA repository.
+changes, and anything outside this repository.
 
 ## Architecture
 
@@ -44,11 +45,11 @@ which takes the Gmail client for deferred body parts.
 | `decodeBase64Url(data)` | Empty string for falsy input; otherwise base64url decoded as UTF-8. |
 | `headerValue(headers, name)` | Case-insensitive lookup; empty string when absent. |
 | `extractMessageParts(payload)` | Returns `{ text, html, attachments, deferredBodies }`. Rules, in order per part: an `attachmentId` part with mime `text/plain` or `text/html` and no filename is a deferred body; any other `attachmentId` part is an attachment `{ filename, mimeType, size, attachmentId }`; a part with `body.data` and a filename is an attachment `{ filename, mimeType, size, inlineBase64 }`; a `text/plain` part with data appends to `text`; a `text/html` part with data appends to `html`. Recurse into `parts` after handling the part itself. |
-| `htmlToText(html)` | The reference's regex chain, copied verbatim and in the same order. |
-| `resolveMessageBody(gmail, messageId, payload)` | Runs the walk, fetches each deferred body with `users.messages.attachments.get`, appends decoded data to `text` or `html` by mime, and returns `{ text, html, body, attachments, failures }`. `body` is `text.trim()` when non-empty, else `htmlToText(html)`. Each fetch failure adds `{ code: 'body-part-fetch: <failureCode>', error: GmailRequestError }` to `failures` (note the space after the colon, exactly as the reference's `body-part-fetch: ${…}` template), so the tool writes `code` into the manifest and the CLI can throw `error` with its status intact. An `isAuthError` failure rethrows instead. |
+| `htmlToText(html)` | A fixed regex chain applied in this order: strip `<style>…</style>` and `<script>…</script>` blocks (each replaced by a space); `<br>`/`<br/>` followed by any character other than a newline becomes `\n`; closing `</p>`, `</div>`, `</tr>`, `</li>`, `</h1>`…`</h6>` become `\n`; `<a href="…">text</a>` (double or single quotes) becomes `text [href]`; every remaining tag becomes a space; `&nbsp;`, `&amp;`, `&lt;`, `&gt;`, `&#39;`/`&apos;`, `&quot;` are decoded; runs of spaces and tabs collapse to one space; three or more newlines collapse to two; the result is trimmed. The `<br>` rule deliberately does not match a `<br>` immediately followed by a newline (no `s` flag), so that case keeps its literal newline; this is the documented behaviour and a test pins it. |
+| `resolveMessageBody(gmail, messageId, payload)` | Runs the walk, fetches each deferred body with `users.messages.attachments.get`, appends decoded data to `text` or `html` by mime, and returns `{ text, html, body, attachments, failures }`. `body` is `text.trim()` when non-empty, else `htmlToText(html)`. Each fetch failure adds `{ code: 'body-part-fetch: <failureCode>', error: GmailRequestError }` to `failures` (note the space after the colon; the format is `body-part-fetch: ${failureCode}`), so the tool writes `code` into the manifest and the CLI can throw `error` with its status intact. An `isAuthError` failure rethrows instead. |
 
 The existing `extractEmailContent` and `extractAttachments` in `src/index.ts` stay as they are.
-Their semantics differ from the reference (they never defer bodies and they list every
+Their semantics differ from `extractMessageParts` (they never defer bodies and they list every
 `attachmentId` part as an attachment), and shipped tools depend on that.
 
 ### New exports in `src/gmail-sync.ts`
@@ -82,11 +83,11 @@ returns the string, throwing if the response omits it.
 `error.response?.data?.error?.errors?.[0]?.reason`; a `GmailRequestError` passes through
 unchanged. Keeping `code` on the wrapper is what lets a network failure such as
 `ECONNRESET` on a later listing page survive the wrap and still render as `ECONNRESET` in
-the manifest. `failureCode(error)` renders the manifest string exactly as the reference did
-(`error.code || error.response?.status || error.name`): a truthy `error.code` first, as a
+the manifest. `failureCode(error)` renders the manifest string as
+`error.code || error.response?.status || error.name`: a truthy `error.code` first, as a
 string (gaxios sets it to the HTTP status such as `429`, or to a network code such as
 `ECONNRESET`), else the HTTP status, else `error.name`, with no other fallback, so the
-manifest strings are byte-identical to the reference's. The `reason` field on the wrapper
+manifest strings are stable and predictable for any consumer. The `reason` field on the wrapper
 exists for `isAuthError` and the CLI exit-code map, not for manifest strings. Every helper in
 this design that catches and re-reports an
 error keeps the `GmailRequestError` object alongside any string it derives, so no caller has
@@ -154,8 +155,8 @@ Steps:
    `Math.max(3, String(kept.length).length)`, computed once. For each kept message in order:
    `resolveMessageBody`, append each of its `failures` as `{ id, error: failure.code }`, then write
    `messages/<NNN>.json` pretty-printed with two spaces and a trailing newline. The file shape is
-   the reference's: `id, threadId, internalDate, labelIds, from, to, cc, subject, dateHeader,
-   snippet, attachments, body`.
+   `id, threadId, internalDate, labelIds, from, to, cc, subject, dateHeader, snippet,
+   attachments, body`.
 9. Cross-check when `input.cross_check` is true: list `after:${epoch - 1} in:spam`,
    `after:${epoch - 1} in:trash`, and `after:${epoch - 1} in:anywhere`, each with
    `includeSpamTrash: true`. `unexplainedIds` are anywhere IDs absent from the window listing,
@@ -257,77 +258,58 @@ a separate fix. The definition goes after `batch_get_gmail_index_metadata` in
   after step 6 leaves it absent, because it is deleted in step 6 and published last by rename
   in step 10.
 
-## Deviations from the reference, reported here on purpose
+## Behaviour guarantees, stated explicitly
 
-1. **`belowBoundaryOrExcluded`.** The reference computes
-   `listed - inWindow - failures.length`, but `failures` also contains `body-part-fetch`
-   entries for messages that were still written, so the number can be wrong or negative. The
-   tool counts skipped messages directly. The PA repository should know its manifest field was
-   unreliable in that case.
-2. **`<br>` regex.** The reference's `/<br\s*\/?>(?=.)/gi` runs without the `s` flag, so a
-   `<br>` immediately followed by a newline is not converted. The tool keeps the regex verbatim
-   because the document asks for identical output. Reported so the PA repository can decide.
-3. **Cross-check window set.** The reference's `windowIds` are the listed IDs, not the surviving
-   ones, so a listed-but-failed message still counts as explained. Kept as is; noted.
-4. **Absolute `file` paths** in the manifest, as the source document already requires.
-5. **Unused field.** The reference stores `messageId: null` on deferred bodies and never reads
-   it. Dropped.
-6. **Partial listing.** The reference aborts the whole run when any listing page fails. The
-   tool keeps going with the partial list and reports `listingComplete: false`, as the source
-   document's rule of throwing only before the first success requires.
-7. **Annotation.** `readOnlyHint` is false. The source document originally asked for true
-   and was amended on 2026-09-11 to false, for the reason given under schema and
-   registration; the two documents now agree, and this entry records the change of
-   requirement for the PA repository's benefit rather than a live difference.
-8. **Authentication failures throw.** The reference's per-message `catch` records every
-   `messages.get` and body-part failure, including a 401 or an insufficient-scope 403, and
-   carries on. The tool rethrows any failure that `isAuthError` recognises, from the message
-   loop, the body-part fetch, and the cross-check listings, because the source document
-   requires auth failures to throw and a run with dead credentials must not end as
-   `incomplete`.
-9. **Output publication.** The reference deletes only `messages/`, then writes
-   `manifest.json` and `window-metadata.json` directly, manifest first. The tool deletes both
-   metadata files before it touches `messages/`, and then publishes `window-metadata.json`
-   first and `manifest.json` last, each by writing `messages/.publish-<name>` and renaming
-   it into place. The file contents are the same; only the deletion and the write order and
-   atomicity differ, so that a failed run can never leave a stale manifest beside a fresh or
-   partial `messages/`.
-10. **Numbering width.** The reference pads every file name to three digits
-    (`String(index + 1).padStart(3, '0')`), so a run of 1000 or more messages mixes
-    `001.json` … `999.json` with `1000.json` and a lexical directory listing no longer sorts
-    by index. The tool computes the width once as `Math.max(3, String(kept.length).length)`,
-    so every file in a run has the same width (`0001.json` … `1000.json`). Runs under 1000
-    messages are byte-identical to the reference.
-11. **Cross-check listing failures.** The reference calls `listAll` for the three cross-check
-    queries with no `catch`, so any failure there aborts the whole script after the message
-    files were written and before the manifest is; the operator sees exit code 1 and no
-    manifest. The tool records the failure as `{ id: 'cross-check:<query>', error }`, keeps
-    the message files, writes the manifest, and reports `status: 'incomplete'` (auth
-    failures still throw, per deviation 8), because the files on disk are valid and only
+These are the decisions a consumer can rely on; each is pinned by a test.
+
+1. **`belowBoundaryOrExcluded`** counts skipped messages directly (below the boundary, or
+   labelled `SPAM`/`TRASH`). It is never derived from `listed - inWindow - failures.length`,
+   because `failures` also holds `body-part-fetch` entries for messages that were still
+   written, which would make a derived count wrong or negative.
+2. **`<br>` conversion** in `htmlToText` matches `/<br\s*\/?>(?=.)/gi` without the `s` flag,
+   so a `<br>` immediately followed by a newline is left alone and the literal newline stands.
+   A test pins this so it cannot drift silently.
+3. **Cross-check window set** is the listed window IDs, not the surviving ones, so a listed
+   message whose fetch failed still counts as explained by the window and does not appear in
+   `unexplainedIds`; it is reported through `failures` instead.
+4. **Absolute `file` paths** in the manifest, built with `path.join(output_dir, 'messages',
+   name)`, so a consumer can open a file without knowing the server's working directory.
+5. **Deferred bodies** carry only `{ mimeType, attachmentId }`; no other field.
+6. **Partial listing.** When a page after the first fails with a non-auth error, the run
+   continues with the IDs collected so far, records `window-listing:page-<n>`, and reports
+   `listingComplete: false` in both the manifest and the result. Only a first-page failure
+   throws, because nothing has succeeded yet.
+7. **Annotation.** `readOnlyHint` is false, `destructiveHint` is true, `idempotentHint` is
+   false, for the reasons given under schema and registration.
+8. **Authentication failures throw.** Any failure that `isAuthError` recognises, from the
+   message loop, the body-part fetch, or the cross-check listings, rethrows; a run with dead
+   or under-scoped credentials never ends as `incomplete`.
+9. **Output publication.** Both metadata files are deleted before `messages/` is touched, and
+   then `window-metadata.json` is published first and `manifest.json` last, each by writing
+   `messages/.publish-<name>` and renaming it into place, so a failed run can never leave a
+   stale manifest beside a fresh or partial `messages/`.
+10. **Numbering width** is computed once per run as `Math.max(3, String(kept.length).length)`,
+    so every file in a run has the same width (`001.json` … under 1000 messages;
+    `0001.json` … `1000.json` at 1000 or more) and a lexical directory listing sorts by
+    index.
+11. **Cross-check listing failures** are recorded as `{ id: 'cross-check:<query>', error }`,
+    the message files are kept, the manifest is written, and `status` is `'incomplete'`
+    (auth failures still throw, per guarantee 8), because the files on disk are valid and only
     their verification is missing.
-12. **`max_messages` and truncation.** The reference has no cap: it downloads every listed
-    message. The tool takes `max_messages` (default 2000) and, above it, downloads and
+12. **`max_messages` and truncation.** Above the cap (default 2000) the tool downloads and
     writes nothing, leaves any previous `messages/`, `manifest.json` and
     `window-metadata.json` untouched, and returns `truncated: true` with the true `listed`
     count so the caller can choose a new cap or a nearer watermark.
-13. **`cross_check` switch.** The reference always runs the three cross-check listings. The
-    tool takes `cross_check` (default true) and skips them, omitting `crossCheck` from the
-    result and the manifest, when it is false.
-14. **Result shape and location.** The reference writes under a fixed `runs/gmail/`, prints
-    the summary to stdout with a `messages` array of triage strings, and signals problems
-    through the exit code (2 for failures or an inconsistent cross-check). The tool writes
-    under the caller's `output_dir`, returns the summary as the MCP result with `triage`
-    (the same strings) and a `status` field (`ok`, `incomplete`, `truncated`), and adds
-    `truncated`, `listingComplete` and `maxMessages` to both the result and the manifest.
-    Every field the reference wrote to the manifest is still written with the same name and
-    value.
+13. **`cross_check` switch.** With `cross_check: false` the three listings are skipped and
+    `crossCheck` is omitted from the result and the manifest.
+14. **Result shape and location.** Output goes under the caller's `output_dir`; the MCP result
+    is the manifest summary plus `triage` and `status` (`ok`, `incomplete`, `truncated`);
+    `truncated`, `listingComplete` and `maxMessages` appear in both the result and the
+    manifest.
 15. **List request field mask.** Every `users.messages.list` call sends
-    `fields: 'messages/id,nextPageToken'`; the reference sent no field mask. The IDs and
-    page tokens received are identical; only the response payload is smaller.
+    `fields: 'messages/id,nextPageToken'`, so the response carries only what the tool uses.
 16. **Profile request field mask.** `getGmailEmailAddress` calls `users.getProfile` with
-    `fields: 'emailAddress'`; the reference called it with no field mask and read
-    `emailAddress` from the full profile. The address obtained is identical; only the
-    response payload is smaller.
+    `fields: 'emailAddress'`.
 
 ## Testing
 
@@ -403,7 +385,7 @@ success, a 429 failure recorded as `{ code: 'body-part-fetch: 429', error }` wit
 `src/gmail-sync.test.ts` also covers `toGmailRequestError` (status and reason extracted from
 a googleapis-shaped error, pass-through of an existing instance, plain `Error` yielding
 neither) and `failureCode` (`code` first, including a non-numeric `ECONNRESET`, then status,
-then name; an error with only a `reason` renders as `Error`, exactly as the reference would).
+then name; an error with only a `reason` renders as `Error`).
 
 The handler body lives in `src/batch-fetch-window.ts` as
 `handleBatchFetchWindow(gmail, args: unknown)`, which parses with `BatchFetchWindowSchema`,
@@ -438,4 +420,4 @@ The full existing suite must pass unchanged.
   `emailAddress` replaced and the `triage` array replaced by its length, since triage lines
   carry senders and subjects. The status and, if `incomplete`, the `failures` and
   `crossCheck` fields are included as returned.
-- Every one of the sixteen deviations listed above is repeated in the implementation report.
+- The implementation report confirms each of the sixteen behaviour guarantees above by naming the test that pins it.

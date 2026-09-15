@@ -2,15 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. This is mandatory, not a recommendation: `docs/gmail-batch-fetch-spec.md` records Sasha's instruction that the brainstorming, writing-plans and subagent-driven-development skills be followed in full. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add one MCP tool, `batch_fetch_window`, that downloads every Gmail message received since a watermark into a caller-supplied directory with a manifest, window metadata, and a spam/trash/anywhere cross-check, so the PA repository can delete its direct-API script.
+**Goal:** Add one MCP tool, `batch_fetch_window`, that downloads every Gmail message received since a watermark into a caller-supplied directory with a manifest, window metadata, and a spam/trash/anywhere cross-check, so any client of this server can index a mailbox window without calling the Gmail API itself.
 
-**Architecture:** Three new units. `src/message-body.ts` owns the MIME walk, deferred-body fetch and HTML-to-text rules copied from the reference script (done). `src/gmail-sync.ts` gained an error type, an auth-failure predicate, an exhaustive lister and a profile-address lookup (done). `src/batch-fetch-window.ts` orchestrates listing, fetching, filtering, atomic file publication and the cross-check, and returns a status the caller can trust; it is built up one behaviour per task with its own input and result types, unregistered. The last code task adds the zod schemas to `src/tools.ts`, the registry entry, the handler, the `src/index.ts` `case` and the docs, at which point the tool does everything its schema describes.
+**Architecture:** Three new units. `src/message-body.ts` owns the MIME walk, deferred-body fetch and HTML-to-text rules the spec states (done). `src/gmail-sync.ts` gained an error type, an auth-failure predicate, an exhaustive lister and a profile-address lookup (done). `src/batch-fetch-window.ts` orchestrates listing, fetching, filtering, atomic file publication and the cross-check, and returns a status the caller can trust; it is built up one behaviour per task with its own input and result types, unregistered. The last code task adds the zod schemas to `src/tools.ts`, the registry entry, the handler, the `src/index.ts` `case` and the docs, at which point the tool does everything its schema describes.
 
 **Why this order (read before judging any task):** every commit is reviewed by a Codex pre-commit gate as a finished unit of work. The previous plan (`2026-09-11`) registered the schema and tool definition in Task 4, so each early commit *declared* behaviour (`max_messages`, `cross_check`, "deletes and recreates `messages/`", `truncated`, `failures`) that later tasks were still to implement, and the gate refused every such commit as half-done. The gate was right. This plan therefore obeys two rules. **A commit never declares, describes, types, registers or documents a behaviour it does not implement:** the module's input type gains `cross_check` in the task that honours it and `max_messages` in the task that enforces it; the result type gains `belowBoundaryOrExcluded`, `failures`, `status`, `crossCheck`, `truncated`, `maxMessages` and `listingComplete` only in the tasks that compute them; registration, the zod schemas, the README and the CLI-spec note wait for Task 12. **A commit never leaves a window in which its own outputs can lie:** the first version of the module already deletes the three paths it owns before any fetch and publishes `window-metadata.json` then `manifest.json` by atomic rename, so no commit can leave a stale manifest describing deleted or partial files; `status` is introduced together with the failures it reports, and the cross-check lands with its inconsistency and listing-failure handling in the same commit, so `status` is trustworthy in every commit that has one. An unregistered, tested module is a complete unit (Task 3's `src/message-body.ts` passed the gate the same way).
 
 **Tech Stack:** TypeScript 5 (ES2020 modules, `strict`), `googleapis` Gmail v1 client, `zod` 3, `vitest` 4, Node `node:fs`/`node:path`. Tests run with `npx vitest run <file>`; the whole suite with `npm test`; build with `npm run build`. `tsconfig.json` excludes `src/**/*.test.ts` from `npm run typecheck`.
 
-**Spec:** `docs/superpowers/specs/2026-09-11-batch-fetch-window-design.md` (read it first; it explains every rule below and lists the sixteen deliberate deviations from the reference script that the final report must repeat).
+**Spec:** `docs/superpowers/specs/2026-09-11-batch-fetch-window-design.md` (read it first; it explains every rule below and lists the sixteen behaviour guarantees the final report must confirm).
 
 ## Global Constraints
 
@@ -25,7 +25,7 @@
 - **Honesty rule:** a commit never declares, describes, types, registers or documents a behaviour it does not implement, and never leaves a window in which its own outputs can misrepresent a run. Concretely: no zod schema, `toolDefinitions` entry, `index.ts` `case`, README or CLI-spec text before Task 12; no input field before the task that honours it; no result or manifest field before the task that computes it; no `status` value before the task that can produce it; no `status` that ignores a signal the same commit computes.
 - Repository rules from `CLAUDE.md`: run the GitNexus `impact` tool on any existing function you modify before editing it, and run `detect_changes` before every commit. Bash rules: one command per call, no `&&`/`;`/`||`, no output redirection, single-line commit messages with `-m`.
 - **Index freshness and impact analysis:** the name `Gmail-MCP-Server` is registered twice in GitNexus, for the main checkout (`/Users/sasha/Projects/Gmail-MCP-Server`, whose only indexed branch is `experimental`) and for this worktree. Resolving by name from the MCP server picks the main checkout, which does not contain this branch's symbols (verified on 2026-09-14: `impact` with `repo: "Gmail-MCP-Server", branch: "feat/batch-fetch-window"` answers `Branch "feat/batch-fetch-window" is not indexed for "Gmail-MCP-Server"`, and the CLI without `--branch` answers `Target 'resolveMessageBody' not found`). The worktree path with a pinned branch slot resolves them (verified the same day: `resolveMessageBody` found, `epistemic: "exact"`). So every task that edits an existing symbol first refreshes that slot and then measures the blast radius against it. Concretely, Tasks 5 to 12 each start with Step 0: run `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root (pins the checked-out tree into the `feat/batch-fetch-window` slot of this worktree's index), then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"` (CLI equivalent: `npx gitnexus impact batchFetchWindow --direction upstream --repo /Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window --branch feat/batch-fetch-window`), and record the callers and risk in the task report. A `Target … not found` answer means the refresh did not run or targeted the wrong index: fix that, never proceed on it. Until Task 12 the only caller is the test file, so LOW is expected; if HIGH or CRITICAL is reported, stop and report before editing. Task 12 additionally analyses `toolDefinitions` and `main`. `detect_changes` (same `repo` and `branch`) after the edit is not a substitute for `impact` before it.
-- `failureCode` must reproduce the reference's `error.code || error.response?.status || error.name` exactly; body-part failure codes are `body-part-fetch: <code>` with a space after the colon, as in the reference.
+- `failureCode` renders exactly `error.code || error.response?.status || error.name`; body-part failure codes are `body-part-fetch: <code>` with a space after the colon.
 - Use `Read`/`Edit`/`Write` for files, never shell readers or `sed`.
 - Full existing suite (`npm test`) must pass after every task.
 - Every test in Tasks 4 to 12 must be seen failing before the implementation step of its task, except the ones labelled "regression guard", whose reason for passing already is stated next to them. If any other test passes before its implementation step, stop: either the test is wrong or an earlier task over-implemented; say which in your report and fix it before continuing.
@@ -221,7 +221,7 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     ]);
   });
 
-  it('writes the reference shapes for the message file and window metadata, and lists the file in the manifest', async () => {
+  it('writes the documented shapes for the message file and window metadata, and lists the file in the manifest', async () => {
     const gmail = fakeGmail({
       lists: windowOnly(['a']),
       messages: { a: message('a', BOUNDARY + 1000, { labelIds: ['INBOX', 'UNREAD'] }) },
@@ -462,7 +462,7 @@ export async function batchFetchWindow(
     });
   }
 
-  // Stamped after every fetch, immediately before publication, as the reference does.
+  // Stamped after every fetch, immediately before publication, so it dates the files rather than the listing.
   const summary = {
     checkedAt: now().toISOString(),
     ...base,
@@ -843,7 +843,7 @@ describe('batchFetchWindow: body resolution', () => {
     expect(readJson(path.join(dir, 'messages', '001.json')).body).toBe('the large body');
   });
 
-  it('converts an HTML-only message to plain text with the reference rules', async () => {
+  it('converts an HTML-only message to plain text with the documented rules', async () => {
     const html = '<style>p{}</style><p>Hello<br>there</p><a href="https://x.test">link</a>&amp;&nbsp;done';
     const gmail = fakeGmail({
       lists: windowOnly(['a']),
@@ -1337,7 +1337,7 @@ with
     };
   }
 
-  // Stamped after every fetch and check, immediately before publication, as the reference does.
+  // Stamped after every fetch and check, immediately before publication, so it dates the files rather than the listing.
   const summary = {
     checkedAt: now().toISOString(),
     ...base,
@@ -1697,7 +1697,7 @@ describe('batchFetchWindow: partial window listings', () => {
     expect(readJson(path.join(dir, 'manifest.json')).failures).toEqual([{ id: 'window-listing:page-2', error: 'ECONNRESET' }]);
   });
 
-  it('writes the complete reference manifest summary and returns it with status and triage', async () => {
+  it('writes the complete manifest summary and returns it with status and triage', async () => {
     const gmail = fakeGmail({
       lists: windowOnly(['a']),
       messages: { a: message('a', BOUNDARY + 1000, { labelIds: ['INBOX', 'UNREAD'] }) },
@@ -2350,7 +2350,7 @@ git commit -m "Register batch_fetch_window: schema, handler, server case and doc
 ### Task 13: Smoke run against the real mailbox
 
 **Files:**
-- Create: `tmp/smoke-batch-fetch-window.mjs` (the `tmp/` directory is gitignored; nothing in this task is committed unless Step 5 finds an unlisted deviation, in which case only `docs/superpowers/specs/2026-09-11-batch-fetch-window-design.md` is committed)
+- Create: `tmp/smoke-batch-fetch-window.mjs` (the `tmp/` directory is gitignored; nothing in this task is committed unless Step 5 finds an unlisted behaviour, in which case only `docs/superpowers/specs/2026-09-11-batch-fetch-window-design.md` is committed)
 
 **Interfaces:**
 - Consumes: the built server in `dist/index.js` over stdio, through the MCP SDK client.
@@ -2451,4 +2451,4 @@ Leave `tmp/bfw-smoke/` in place for the user to inspect; it is gitignored.
 Run: `git status --short` and confirm nothing is left uncommitted except `tmp/` and the GitNexus one-line edits to `CLAUDE.md` and `AGENTS.md`.
 Run: `npm test` one final time and paste the summary line.
 
-The report must include: the exact test command and its summary output, the smoke stdout JSON (already redacted by the script), and all sixteen deviations from the reference listed under "Deviations from the reference, reported here on purpose" in the design document, repeated verbatim and numbered 1 to 16. Before writing the report, re-read that section: if the implementation as committed differs from the reference in any observable way the list does not name, add the entry to the design document in this task, commit it with the message `Record an additional batch_fetch_window deviation from the reference`, and include it in the report.
+The report must include: the exact test command and its summary output, the smoke stdout JSON (already redacted by the script), and, for each of the sixteen behaviour guarantees listed under "Behaviour guarantees, stated explicitly" in the design document, the name of the test that pins it. Before writing the report, re-read that section: if the implementation as committed has an observable behaviour the list does not name, add the entry to the design document in this task, commit it with the message `Record an additional batch_fetch_window behaviour guarantee`, and include it in the report.

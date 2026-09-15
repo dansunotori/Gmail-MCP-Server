@@ -205,7 +205,7 @@ export async function batchFetchWindow(
     };
   }
 
-  // Stamped after every fetch and check, immediately before publication, as the reference does.
+  // Stamped after every fetch and check, immediately before publication, so it dates the files rather than the listing.
   const summary = {
     checkedAt: now().toISOString(),
     ...base,

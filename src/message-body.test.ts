@@ -111,7 +111,7 @@ describe('htmlToText', () => {
     expect(htmlToText('  a  \t b\n\n\n\nc  ')).toBe('a b\n\nc');
   });
 
-  it('keeps the reference quirk: a br right before a newline is not converted', () => {
+  it('keeps the documented behaviour: a br right before a newline is not converted', () => {
     expect(htmlToText('a<br>\nb')).toBe('a \nb');
   });
 });

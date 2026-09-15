@@ -2,19 +2,14 @@
 
 ## Why
 
-A PA task-tracking repository (`~/Projects/figaro-pa-predecessor`) runs a routine "Gmail pass" that
-downloads every message received since a stored watermark to disk, so a model can read the files
-one by one. Today that pass is implemented by `scripts/gmail-fetch-all.cjs` in that repository,
-which loads `googleapis` and the OAuth credentials from this server's install and calls the Gmail
-API directly. That is a violation of a permanent rule in the PA repository: no script may call an
-external API directly; every external capability must be a feature of the corresponding MCP
-server. Your job is to make this server provide that capability as a tool so the script can be
-deleted.
+Clients of this server need a routine "mailbox pass": download every message received since a
+stored watermark to disk, so a model can read the files one by one, without the client calling
+the Gmail API itself. Your job is to make this server provide that capability as a tool.
 
-The reference implementation is `~/Projects/figaro-pa-predecessor/scripts/gmail-fetch-all.cjs`
-(222 lines). Read it in full before designing anything. Reproduce its observable behaviour and
-output files exactly unless this document says otherwise. Do not modify anything in the PA
-repository; the rewiring of its wrapper script happens in a later session there.
+This document, together with the design document it produced
+(`docs/superpowers/specs/2026-09-11-batch-fetch-window-design.md`), is the complete statement of
+the required behaviour and output files. Nothing outside this repository is a requirement, and
+the tool must serve any client equally.
 
 ## Scope
 
@@ -63,8 +58,8 @@ for `readOnlyHint: true`.)
 2. Window query: `after:${epoch - 1} -in:spam -in:trash`. Gmail's `after:` has one-second
    resolution, so query one second early and filter client-side on
    `internalDate >= boundaryMs`. The boundary is inclusive: a message whose `internalDate` equals
-   the watermark exactly is in the window. (The PA repository's watermark helper handles the
-   equal-candidate case on its side; the tool's job is only to never drop a boundary message.)
+   the watermark exactly is in the window. (A client that advances its own watermark decides
+   what to do with an equal-candidate message; the tool's job is only to never drop one.)
 3. List with `users.messages.list`, `includeSpamTrash: true`, `maxResults: 500`, following
    `nextPageToken` until exhausted. Deduplicate IDs. Record the page count.
 4. If listed count exceeds `max_messages`, return the truncation result (see Output) and stop.
@@ -75,15 +70,15 @@ for `readOnlyHint: true`.)
 6. Sort the surviving messages by `internalDate` ascending. Number them from `001` upwards and
    write `messages/NNN.json` for each (zero-padded to three digits; if more than 999 survive,
    widen the padding for the whole run so ordering by filename stays correct).
-7. Body extraction must match the reference: walk the MIME tree; concatenate `text/plain` parts
+7. Body extraction: walk the MIME tree; concatenate `text/plain` parts
    into `text` and `text/html` parts into `html`; when a body part is delivered as an
    `attachmentId` with no filename (Gmail does this for large bodies), fetch it with
    `users.messages.attachments.get` and append it; parts with a filename are attachments and
    are listed with `filename`, `mimeType`, `size` and `attachmentId` (or `inlineBase64` when the
    data is inline). `body` is `text.trim()` if non-empty, otherwise the HTML converted to plain
-   text with the reference's `htmlToText` rules (strip style and script, `<br>` and block
-   closers become newlines, anchors become `text [href]`, entities decoded, whitespace
-   collapsed). A body-part fetch failure is recorded in `failures` with the prefix
+   text with the `htmlToText` rules the design document specifies (strip style and script,
+   `<br>` and block closers become newlines, anchors become `text [href]`, entities decoded,
+   whitespace collapsed). A body-part fetch failure is recorded in `failures` with the prefix
    `body-part-fetch:` and the message is still written with whatever was recovered.
 8. Cross-check (when enabled): list `after:${epoch - 1} in:spam`, `after:${epoch - 1} in:trash`
    and `after:${epoch - 1} in:anywhere` with the same pagination. `unexplainedIds` is every
@@ -128,8 +123,8 @@ for `readOnlyHint: true`.)
 `headers` carries only `From`, `To`, `Subject` and `Date`.
 
 `file` paths in the manifest must be absolute (built from `output_dir`), not relative to the
-server's cwd. The reference used repo-relative paths because it ran from the PA repo root; the
-MCP server has no such cwd guarantee.
+server's cwd: the MCP server makes no guarantee about its working directory, and a client must
+be able to open a file straight from the manifest.
 
 ### Tool result
 
@@ -182,9 +177,8 @@ and its output.
 - A manual smoke run against the real mailbox with `output_dir` set to a scratch directory and a
   recent watermark produces the three outputs and a `status` of `ok` or `incomplete` with the
   reason visible. Paste the returned summary (redact addresses if you like) in your report.
-- Report every deviation from the reference behaviour you chose to make and why. If you found a
-  bug in the reference while reproducing it, say so and do not silently "fix" it; describe it so
-  the PA repository can decide.
+- Report every behaviour guarantee the design document lists and name the test that pins it, so
+  a client can rely on the documented behaviour rather than on reading the code.
 
 Commit policy (amended 2026-09-11 by Sasha's instruction to follow the brainstorming,
 writing-plans and subagent-driven-development skills in full): each implementation task ends

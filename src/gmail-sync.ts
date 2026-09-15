@@ -80,8 +80,8 @@ function asRecord(error: unknown): ErrorRecord | undefined {
   return typeof error === 'object' && error !== null ? error as ErrorRecord : undefined;
 }
 
-// The reference script's first choice for a failure string is `error.code`; gaxios sets it
-// to the HTTP status as a string, Node sets it to a network code such as ECONNRESET.
+// `failureCode` prefers `error.code` as the failure string; gaxios sets it to the HTTP
+// status as a string, Node sets it to a network code such as ECONNRESET.
 function readCode(record: ErrorRecord | undefined): string | undefined {
   const code = record?.code;
   if (typeof code === 'string' && code !== '') {
@@ -140,10 +140,9 @@ export function toGmailRequestError(error: unknown): GmailRequestError {
   });
 }
 
-// Reproduces the reference script's `error.code || error.response?.status || error.name`
-// so manifest failure strings are byte-identical. Works the same on a raw error and on a
-// GmailRequestError wrapper, because the wrapper keeps `code` and `cause`. `reason` is
-// deliberately not consulted here.
+// Renders `error.code || error.response?.status || error.name`, the documented manifest
+// failure-string format. Works the same on a raw error and on a GmailRequestError wrapper,
+// because the wrapper keeps `code` and `cause`. `reason` is deliberately not consulted here.
 export function failureCode(error: unknown): string {
   const wrapped = toGmailRequestError(error);
   if (wrapped.code !== undefined) {

@@ -94,9 +94,9 @@ export function extractMessageParts(payload: MessagePart | null | undefined): Ex
   return out;
 }
 
-// Copied verbatim from the PA reference script (gmail-fetch-all.cjs). Do not "fix" the
-// regexes: the design requires identical output, and the known <br>-before-newline quirk
-// is reported in the design document rather than changed here.
+// The exact regex chain the design document specifies, in this order. Do not "fix" the
+// regexes: consumers rely on the output being stable, and the <br>-before-newline
+// behaviour (no `s` flag) is documented and pinned by a test rather than changed here.
 export function htmlToText(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')

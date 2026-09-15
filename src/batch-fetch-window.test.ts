@@ -147,7 +147,7 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     ]);
   });
 
-  it('writes the reference shapes for the message file and window metadata, and lists the file in the manifest', async () => {
+  it('writes the documented shapes for the message file and window metadata, and lists the file in the manifest', async () => {
     const gmail = fakeGmail({
       lists: windowOnly(['a']),
       messages: { a: message('a', BOUNDARY + 1000, { labelIds: ['INBOX', 'UNREAD'] }) },
@@ -380,7 +380,7 @@ describe('batchFetchWindow: body resolution', () => {
     expect(readJson(path.join(dir, 'messages', '001.json')).body).toBe('the large body');
   });
 
-  it('converts an HTML-only message to plain text with the reference rules', async () => {
+  it('converts an HTML-only message to plain text with the documented rules', async () => {
     const html = '<style>p{}</style><p>Hello<br>there</p><a href="https://x.test">link</a>&amp;&nbsp;done';
     const gmail = fakeGmail({
       lists: windowOnly(['a']),
@@ -679,7 +679,7 @@ describe('batchFetchWindow: partial window listings', () => {
     expect(readJson(path.join(dir, 'manifest.json')).failures).toEqual([{ id: 'window-listing:page-2', error: 'ECONNRESET' }]);
   });
 
-  it('writes the complete reference manifest summary and returns it with status and triage', async () => {
+  it('writes the complete manifest summary and returns it with status and triage', async () => {
     const gmail = fakeGmail({
       lists: windowOnly(['a']),
       messages: { a: message('a', BOUNDARY + 1000, { labelIds: ['INBOX', 'UNREAD'] }) },

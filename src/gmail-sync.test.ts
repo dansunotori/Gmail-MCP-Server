@@ -349,7 +349,7 @@ describe('GmailRequestError helpers', () => {
     expect(wrapped.message).toBe('plain');
   });
 
-  it('renders failureCode exactly as the reference: code, then status, then name', () => {
+  it('renders failureCode as documented: code, then status, then name', () => {
     expect(failureCode(Object.assign(new Error('reset'), { code: 'ECONNRESET' }))).toBe('ECONNRESET');
     expect(failureCode(Object.assign(new Error('gaxios'), { code: '429', response: { status: 429 } }))).toBe('429');
     expect(failureCode(httpError(404))).toBe('404');
