@@ -542,7 +542,30 @@ describe('batchFetchWindow: body-part failures', () => {
 
     expect(result.status).toBe('incomplete');
     expect(result.failures).toEqual([{ id: 'a', error: 'body-part-fetch: 429' }]);
+    // A written message with a body-part failure is still in the window; a derived count
+    // (listed - inWindow - failures.length) would give -1 here, so the direct count is pinned.
+    expect(result.inWindow).toBe(1);
+    expect(result.belowBoundaryOrExcluded).toBe(0);
     expect(readJson(path.join(dir, 'messages', '001.json')).body).toBe('');
+  });
+
+  it('uses the listed ID for a body-part failure even when the fetched message omits id', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a']),
+      messages: {
+        a: message('a', BOUNDARY + 1, {
+          id: undefined,
+          payload: { mimeType: 'text/plain', headers: [], body: { attachmentId: 'big' } },
+        }),
+      },
+      attachments: { big: httpError(429) },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.failures).toEqual([{ id: 'a', error: 'body-part-fetch: 429' }]);
+    expect(readJson(path.join(dir, 'messages', '001.json')).id).toBe('a');
+    expect(readJson(path.join(dir, 'manifest.json')).messages[0].id).toBe('a');
+    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true);
   });
 
   // Regression guard: passes already, because Task 3's resolveMessageBody rethrows auth errors.

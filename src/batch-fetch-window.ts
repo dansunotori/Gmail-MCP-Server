@@ -12,6 +12,9 @@ export type BatchFetchWindowResult = z.infer<typeof BatchFetchWindowOutputSchema
 type Failure = { id: string; error: string };
 
 type KeptMessage = {
+  // The listed ID, which is always non-empty; used for the file, the manifest and any
+  // failure entry so a response without `id` can never produce an empty failure id.
+  id: string;
   data: gmail_v1.Schema$Message;
   internal: number;
   labels: string[];
@@ -135,7 +138,7 @@ export async function batchFetchWindow(
       belowBoundaryOrExcluded += 1;
       continue;
     }
-    kept.push({ data, internal, labels });
+    kept.push({ id, data, internal, labels });
   }
 
   kept.sort((left, right) => left.internal - right.internal);
@@ -143,8 +146,7 @@ export async function batchFetchWindow(
   const manifestMessages: ManifestEntry[] = [];
   const metadataMessages: Array<Record<string, unknown>> = [];
 
-  for (const [index, { data, labels }] of kept.entries()) {
-    const id = data.id ?? '';
+  for (const [index, { id, data, labels }] of kept.entries()) {
     const headers = (data.payload?.headers ?? []) as MessageHeader[];
     const resolved = await resolveMessageBody(gmail, id, data.payload as MessagePart | undefined);
     for (const failure of resolved.failures) {
@@ -216,6 +218,15 @@ export async function batchFetchWindow(
     ...(crossCheck ? { crossCheck } : {}),
   };
 
+  const triage = manifestMessages.map(entry =>
+    [entry.file, entry.from, entry.subject, entry.dateHeader, `${entry.attachments} att`].join(' | ')
+  );
+  const status = failures.length > 0 || !windowList.complete || (crossCheck !== undefined && !crossCheck.consistent)
+    ? 'incomplete'
+    : 'ok';
+  // Validate before publishing, so a schema rejection can never follow a published manifest.
+  const result = BatchFetchWindowOutputSchema.parse({ ...summary, status, triage });
+
   publishJson(messagesDir, windowMetadataPath, {
     checkedAt: summary.checkedAt,
     emailAddress,
@@ -225,13 +236,7 @@ export async function batchFetchWindow(
   });
   publishJson(messagesDir, manifestPath, { ...summary, messages: manifestMessages });
 
-  const triage = manifestMessages.map(entry =>
-    [entry.file, entry.from, entry.subject, entry.dateHeader, `${entry.attachments} att`].join(' | ')
-  );
-  const status = failures.length > 0 || !windowList.complete || (crossCheck !== undefined && !crossCheck.consistent)
-    ? 'incomplete'
-    : 'ok';
-  return BatchFetchWindowOutputSchema.parse({ ...summary, status, triage });
+  return result;
 }
 
 export async function handleBatchFetchWindow(

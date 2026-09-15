@@ -312,7 +312,7 @@ export const BatchFetchWindowSchema = z.object({
     if (!isValidCalendarDate || !Number.isFinite(Date.parse(value))) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'watermark is not a valid date' });
     }
-  }).describe("ISO 8601 UTC timestamp with an explicit zone, e.g. 2026-09-10T14:03:22Z; the window is inclusive of this instant"),
+  }).describe("ISO 8601 timestamp with an explicit zone (Z or +HH:MM/-HH:MM), e.g. 2026-09-10T14:03:22Z; the window is inclusive of this instant"),
   output_dir: z.string().refine(value => path.isAbsolute(value), {
     message: 'output_dir must be an absolute path',
   }).describe("Absolute directory; unless the result is truncated, the tool deletes and recreates messages/ and overwrites manifest.json and window-metadata.json inside it. A truncated run writes nothing and leaves earlier outputs in place, so check `truncated` before trusting the files"),
