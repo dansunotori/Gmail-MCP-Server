@@ -12,6 +12,7 @@ import {
   listGmailMessageIds,
   structuredResult,
   toGmailRequestError,
+  withGmailRetry,
 } from './gmail-sync.js';
 import { hasScope } from './scopes.js';
 import {
@@ -403,6 +404,47 @@ function pagedList(pages: Array<{ ids: string[]; next?: string } | Error>) {
     };
   });
 }
+
+describe('withGmailRetry', () => {
+  const noSleep = { sleep: vi.fn(async () => {}) };
+
+  it('returns the first successful result without sleeping', async () => {
+    const request = vi.fn(async () => 'ok');
+    await expect(withGmailRetry(request, noSleep)).resolves.toBe('ok');
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(noSleep.sleep).not.toHaveBeenCalled();
+  });
+
+  it('retries a 429, a 503 and a 403 rate limit with doubling backoff, then succeeds', async () => {
+    const sleep = vi.fn(async () => {});
+    const request = vi.fn()
+      .mockRejectedValueOnce(httpError(429))
+      .mockRejectedValueOnce(httpError(503))
+      .mockRejectedValueOnce(httpError(403, 'userRateLimitExceeded'))
+      .mockResolvedValueOnce('ok');
+    await expect(withGmailRetry(request, { attempts: 4, sleep })).resolves.toBe('ok');
+    expect(request).toHaveBeenCalledTimes(4);
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([500, 1000, 2000]);
+  });
+
+  it('gives up after the attempt budget and throws the last error unchanged', async () => {
+    const last = httpError(502);
+    const request = vi.fn()
+      .mockRejectedValueOnce(httpError(500))
+      .mockRejectedValueOnce(httpError(503))
+      .mockRejectedValueOnce(last);
+    await expect(withGmailRetry(request, noSleep)).rejects.toBe(last);
+    expect(request).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry auth, not-found or network errors', async () => {
+    for (const error of [httpError(401), httpError(403), httpError(404), Object.assign(new Error('reset'), { code: 'ECONNRESET' })]) {
+      const request = vi.fn().mockRejectedValue(error);
+      await expect(withGmailRetry(request, noSleep)).rejects.toBe(error);
+      expect(request).toHaveBeenCalledTimes(1);
+    }
+  });
+});
 
 describe('listAllGmailMessageIds', () => {
   const options = { query: 'after:1 -in:spam -in:trash', includeSpamTrash: true };

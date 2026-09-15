@@ -33,6 +33,13 @@ function httpError(status: number, reason?: string) {
 
 type Page = { ids: string[] } | Error;
 type FakeMessage = Record<string, unknown>;
+// An array is consumed one entry per call, so a fixture can fail and then succeed.
+type Sequenced<T> = T | Error | Array<T | Error>;
+
+function nextOutcome<T>(found: Sequenced<T>): T | Error {
+  if (!Array.isArray(found)) return found;
+  return found.length > 1 ? (found.shift() as T | Error) : found[0];
+}
 
 function message(id: string, internalDate: number, extra: Partial<FakeMessage> = {}): FakeMessage {
   return {
@@ -58,8 +65,8 @@ function message(id: string, internalDate: number, extra: Partial<FakeMessage> =
 
 function fakeGmail(config: {
   lists: Record<string, Page[]>;
-  messages?: Record<string, FakeMessage | Error>;
-  attachments?: Record<string, string | Error>;
+  messages?: Record<string, Sequenced<FakeMessage>>;
+  attachments?: Record<string, Sequenced<string>>;
 }) {
   const list = vi.fn(async (params: { q: string; pageToken?: string }) => {
     const pages = config.lists[params.q];
@@ -71,14 +78,16 @@ function fakeGmail(config: {
     return { data: { messages: page.ids.map(id => ({ id })), ...(next ? { nextPageToken: next } : {}) } };
   });
   const get = vi.fn(async ({ id }: { id: string }) => {
-    const found = config.messages?.[id];
-    if (found === undefined) throw new Error(`unexpected message ${id}`);
+    const configured = config.messages?.[id];
+    if (configured === undefined) throw new Error(`unexpected message ${id}`);
+    const found = nextOutcome(configured);
     if (found instanceof Error) throw found;
     return { data: found };
   });
   const attachmentsGet = vi.fn(async ({ id }: { id: string }) => {
-    const found = config.attachments?.[id];
-    if (found === undefined) throw new Error(`unexpected attachment ${id}`);
+    const configured = config.attachments?.[id];
+    if (configured === undefined) throw new Error(`unexpected attachment ${id}`);
+    const found = nextOutcome(configured);
     if (found instanceof Error) throw found;
     return { data: { data: found } };
   });
@@ -101,6 +110,10 @@ function windowOnly(ids: string[], extra: Partial<Record<string, Page[]>> = {}) 
   };
 }
 
+// Retries back off for real by default; tests skip the wait so a fixture that fails every
+// attempt (429 on a body part, 500 on a message) still exercises the full budget instantly.
+const NO_SLEEP = { sleep: async () => {} };
+
 function run(gmail: ReturnType<typeof fakeGmail>, dir: string, overrides: Partial<BatchFetchWindowInput> = {}) {
   return batchFetchWindow(gmail as never, {
     watermark: WATERMARK,
@@ -108,7 +121,7 @@ function run(gmail: ReturnType<typeof fakeGmail>, dir: string, overrides: Partia
     cross_check: true,
     max_messages: 2000,
     ...overrides,
-  }, FIXED_NOW);
+  }, FIXED_NOW, NO_SLEEP);
 }
 
 const readJson = (file: string) => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -279,6 +292,40 @@ describe('batchFetchWindow: owned paths and atomic publication', () => {
     await run(gmail, dir);
 
     expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual(['001.json']);
+  });
+
+  it('refuses to delete a messages/ that holds files the tool did not write, before touching anything', async () => {
+    const first = fakeGmail({ lists: windowOnly(['old']), messages: { old: message('old', BOUNDARY + 1) } });
+    await run(first, dir);
+    fs.writeFileSync(path.join(dir, 'messages', 'photo.jpg'), 'not ours');
+    fs.mkdirSync(path.join(dir, 'messages', 'archive'));
+
+    const second = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    await expect(run(second, dir)).rejects.toThrow(/refusing to delete .*messages.*archive, photo\.jpg/);
+
+    expect(second.get).not.toHaveBeenCalled();
+    expect(fs.readdirSync(path.join(dir, 'messages')).sort()).toEqual(['001.json', 'archive', 'photo.jpg']);
+    expect(readJson(path.join(dir, 'manifest.json')).messages[0].id).toBe('old');
+    expect(readJson(path.join(dir, 'window-metadata.json')).messages[0].id).toBe('old');
+  });
+
+  it('refuses when an owned name is a directory or a symlink rather than a regular file', async () => {
+    fs.mkdirSync(path.join(dir, 'messages', '001.json'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'messages', '001.json', 'inside.txt'), 'caller data');
+    fs.writeFileSync(path.join(dir, 'elsewhere.json'), '{}');
+    fs.symlinkSync(path.join(dir, 'elsewhere.json'), path.join(dir, 'messages', '.publish-link'));
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    await expect(run(gmail, dir)).rejects.toThrow(/refusing to delete .*messages.*\.publish-link, 001\.json/);
+
+    expect(fs.readFileSync(path.join(dir, 'messages', '001.json', 'inside.txt'), 'utf8')).toBe('caller data');
+    expect(fs.lstatSync(path.join(dir, 'messages', '.publish-link')).isSymbolicLink()).toBe(true);
+  });
+
+  it('refuses when messages/ exists but is not a directory', async () => {
+    fs.writeFileSync(path.join(dir, 'messages'), 'a file');
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    await expect(run(gmail, dir)).rejects.toThrow(/refusing to delete .*messages.*not a directory/);
+    expect(fs.readFileSync(path.join(dir, 'messages'), 'utf8')).toBe('a file');
   });
 
   it('clears old outputs before a rerun that then fails part-way', async () => {
@@ -484,7 +531,30 @@ describe('batchFetchWindow: per-message failures', () => {
     expect(result.belowBoundaryOrExcluded).toBe(0);
     expect(readJson(path.join(dir, 'manifest.json')).failures).toEqual([{ id: 'bad', error: '500' }]);
     expect(fs.readdirSync(path.join(dir, 'messages')).sort()).toEqual(['001.json', '002.json']);
-    expect(result.crossCheck).toEqual({ window: 3, spam: 0, trash: 0, anywhere: 3, unexplainedIds: [], consistent: true });
+    expect(result.crossCheck).toEqual({ window: 3, spam: 0, trash: 0, anywhere: 3, unexplainedIds: [], complete: true, consistent: true });
+    // A 500 is retried up to the budget before it is recorded as a failure.
+    expect(gmail.get.mock.calls.filter(([params]) => params.id === 'bad')).toHaveLength(3);
+  });
+
+  it('recovers a message whose messages.get fails twice with 503 then 429 and records no failure', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a']),
+      messages: { a: [httpError(503), httpError(429), message('a', BOUNDARY + 1)] },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.status).toBe('ok');
+    expect(result.failures).toEqual([]);
+    expect(result.inWindow).toBe(1);
+    expect(gmail.get).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a 404 from messages.get', async () => {
+    const gmail = fakeGmail({ lists: windowOnly(['gone']), messages: { gone: httpError(404) } });
+    const result = await run(gmail, dir);
+
+    expect(result.failures).toEqual([{ id: 'gone', error: '404' }]);
+    expect(gmail.get).toHaveBeenCalledTimes(1);
   });
 
   it('reports status ok with no failures for a clean run', async () => {
@@ -547,6 +617,25 @@ describe('batchFetchWindow: body-part failures', () => {
     expect(result.inWindow).toBe(1);
     expect(result.belowBoundaryOrExcluded).toBe(0);
     expect(readJson(path.join(dir, 'messages', '001.json')).body).toBe('');
+    expect(gmail.attachmentsGet).toHaveBeenCalledTimes(3);
+  });
+
+  it('recovers a body part whose fetch fails once with 429', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a']),
+      messages: {
+        a: message('a', BOUNDARY + 1, {
+          payload: { mimeType: 'text/plain', headers: [], body: { attachmentId: 'big' } },
+        }),
+      },
+      attachments: { big: [httpError(429), b64('recovered body')] },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.status).toBe('ok');
+    expect(result.failures).toEqual([]);
+    expect(readJson(path.join(dir, 'messages', '001.json')).body).toBe('recovered body');
+    expect(gmail.attachmentsGet).toHaveBeenCalledTimes(2);
   });
 
   it('uses the listed ID for a body-part failure even when the fetched message omits id', async () => {
@@ -643,7 +732,7 @@ describe('batchFetchWindow: cross-check', () => {
     expect(gmail.list).toHaveBeenCalledWith(expect.objectContaining({ q: SPAM_QUERY, includeSpamTrash: true }));
     expect(gmail.list).toHaveBeenCalledWith(expect.objectContaining({ q: TRASH_QUERY, includeSpamTrash: true }));
     expect(gmail.list).toHaveBeenCalledWith(expect.objectContaining({ q: ANYWHERE_QUERY, includeSpamTrash: true }));
-    const expected = { window: 1, spam: 0, trash: 0, anywhere: 1, unexplainedIds: [], consistent: true };
+    const expected = { window: 1, spam: 0, trash: 0, anywhere: 1, unexplainedIds: [], complete: true, consistent: true };
     expect(result.status).toBe('ok');
     expect(result.crossCheck).toEqual(expected);
     expect(readJson(path.join(dir, 'manifest.json')).crossCheck).toEqual(expected);
@@ -675,7 +764,7 @@ describe('batchFetchWindow: cross-check outcomes', () => {
     const result = await run(gmail, dir);
 
     expect(result.status).toBe('incomplete');
-    expect(result.crossCheck).toEqual({ window: 1, spam: 0, trash: 0, anywhere: 2, unexplainedIds: ['ghost'], consistent: false });
+    expect(result.crossCheck).toEqual({ window: 1, spam: 0, trash: 0, anywhere: 2, unexplainedIds: ['ghost'], complete: true, consistent: false });
     expect(result.failures).toEqual([]);
   });
 
@@ -693,6 +782,30 @@ describe('batchFetchWindow: cross-check outcomes', () => {
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true);
   });
 
+  // A listing that failed cannot vouch for anything: an empty spam set explains no IDs, and an
+  // empty anywhere set would hide every unexplained ID, so `consistent` must not read true.
+  it('reports the cross-check as incomplete and inconsistent when a listing fails, even with no unexplained IDs', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a'], { [SPAM_QUERY]: [httpError(503)] }),
+      messages: { a: message('a', BOUNDARY + 1) },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.crossCheck).toEqual({ window: 1, spam: 0, trash: 0, anywhere: 1, unexplainedIds: [], complete: false, consistent: false });
+    expect(readJson(path.join(dir, 'manifest.json')).crossCheck.consistent).toBe(false);
+  });
+
+  it('reports the cross-check as incomplete when the anywhere listing fails and its IDs are therefore unknown', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a'], { [ANYWHERE_QUERY]: [httpError(503)] }),
+      messages: { a: message('a', BOUNDARY + 1) },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.status).toBe('incomplete');
+    expect(result.crossCheck).toMatchObject({ anywhere: 0, unexplainedIds: [], complete: false, consistent: false });
+  });
+
   it('reports the network error code for a later cross-check page failure', async () => {
     const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
     const gmail = fakeGmail({
@@ -703,6 +816,8 @@ describe('batchFetchWindow: cross-check outcomes', () => {
 
     expect(result.status).toBe('incomplete');
     expect(result.failures).toEqual([{ id: `cross-check:${TRASH_QUERY}`, error: 'ECONNRESET' }]);
+    // A partial listing (page one succeeded, page two failed) is incomplete too.
+    expect(result.crossCheck).toMatchObject({ complete: false, consistent: false });
   });
 
   // Passes at this point only because Step 3's listings have no catch, so the 401 propagates;
@@ -737,6 +852,9 @@ describe('batchFetchWindow: partial window listings', () => {
     expect(result.failures).toEqual([{ id: 'window-listing:page-2', error: '503' }]);
     expect(readJson(path.join(dir, 'manifest.json')).listingComplete).toBe(false);
     expect(fs.existsSync(path.join(dir, 'messages', '001.json'))).toBe(true);
+    // The window set is one of the four the cross-check compares, so a partial window
+    // listing makes the check incomplete as well.
+    expect(result.crossCheck).toMatchObject({ complete: false, consistent: false });
   });
 
   it('reports the network error code for a later window page failure', async () => {
@@ -774,7 +892,7 @@ describe('batchFetchWindow: partial window listings', () => {
       listingComplete: true,
       maxMessages: 2000,
       failures: [],
-      crossCheck: { window: 1, spam: 0, trash: 0, anywhere: 1, unexplainedIds: [], consistent: true },
+      crossCheck: { window: 1, spam: 0, trash: 0, anywhere: 1, unexplainedIds: [], complete: true, consistent: true },
       messages: [{
         file,
         id: 'a',
@@ -874,7 +992,7 @@ describe('BatchFetchWindowOutputSchema', () => {
     expect(BatchFetchWindowOutputSchema.parse(base)).toEqual(base);
     const withCheck = {
       ...base,
-      crossCheck: { window: 0, spam: 0, trash: 0, anywhere: 0, unexplainedIds: [], consistent: true },
+      crossCheck: { window: 0, spam: 0, trash: 0, anywhere: 0, unexplainedIds: [], complete: true, consistent: true },
     };
     expect(BatchFetchWindowOutputSchema.parse(withCheck)).toEqual(withCheck);
   });

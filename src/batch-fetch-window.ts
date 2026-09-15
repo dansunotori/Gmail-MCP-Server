@@ -2,7 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { gmail_v1 } from 'googleapis';
 import { z } from 'zod';
-import { failureCode, getGmailEmailAddress, isAuthError, listAllGmailMessageIds, structuredResult } from './gmail-sync.js';
+import {
+  failureCode,
+  getGmailEmailAddress,
+  isAuthError,
+  listAllGmailMessageIds,
+  structuredResult,
+  withGmailRetry,
+  type GmailRetryOptions,
+} from './gmail-sync.js';
 import { headerValue, resolveMessageBody, type MessageHeader, type MessagePart } from './message-body.js';
 import { BatchFetchWindowOutputSchema, BatchFetchWindowSchema } from './tools.js';
 
@@ -46,23 +54,57 @@ function publishJson(messagesDir: string, target: string, value: unknown): void 
   fs.renameSync(temporary, target);
 }
 
+// The tool only ever writes zero-padded numbered files and its own publish temporaries into
+// messages/, and only as regular files, so anything else there (a foreign name, or a
+// directory or symlink under an owned name) was put there by someone else and must not be
+// deleted.
+const OWNED_MESSAGE_FILE = /^\d{3,}\.json$/;
+
+function isOwnedEntry(entry: fs.Dirent): boolean {
+  const name = String(entry.name);
+  return entry.isFile() && (OWNED_MESSAGE_FILE.test(name) || name.startsWith('.publish-'));
+}
+
+function assertMessagesDirDeletable(messagesDir: string): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(messagesDir, { withFileTypes: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      return;
+    }
+    if (code === 'ENOTDIR') {
+      throw new Error(`refusing to delete ${messagesDir}: it exists but is not a directory`);
+    }
+    throw error;
+  }
+  const foreign = entries.filter(entry => !isOwnedEntry(entry)).map(entry => String(entry.name)).sort();
+  if (foreign.length > 0) {
+    const shown = foreign.slice(0, 5).join(', ') + (foreign.length > 5 ? `, … (${foreign.length} entries)` : '');
+    throw new Error(`refusing to delete ${messagesDir}: it contains entries batch_fetch_window did not write: ${shown}`);
+  }
+}
+
+type CrossCheckListing = { ids: Set<string>; complete: boolean };
+
 async function crossCheckListing(
   gmail: gmail_v1.Gmail,
   query: string,
   failures: Failure[],
-): Promise<Set<string>> {
+): Promise<CrossCheckListing> {
   try {
     const result = await listAllGmailMessageIds(gmail, { query, includeSpamTrash: true });
     if (!result.complete && result.error) {
       failures.push({ id: `cross-check:${query}`, error: failureCode(result.error) });
     }
-    return new Set(result.ids);
+    return { ids: new Set(result.ids), complete: result.complete };
   } catch (error) {
     if (isAuthError(error)) {
       throw error;
     }
     failures.push({ id: `cross-check:${query}`, error: failureCode(error) });
-    return new Set();
+    return { ids: new Set(), complete: false };
   }
 }
 
@@ -70,6 +112,7 @@ export async function batchFetchWindow(
   gmail: gmail_v1.Gmail,
   input: BatchFetchWindowInput,
   now: () => Date = () => new Date(),
+  retry: GmailRetryOptions = {},
 ): Promise<BatchFetchWindowResult> {
   const boundaryMs = Date.parse(input.watermark);
   const epoch = Math.floor(boundaryMs / 1000);
@@ -112,7 +155,9 @@ export async function batchFetchWindow(
   const windowMetadataPath = path.join(outputDir, 'window-metadata.json');
   // Remove exactly the three paths the tool owns, metadata first, so that from here until
   // the final publish no manifest exists that could describe deleted or partial files.
-  // Nothing else under output_dir is read, matched or deleted.
+  // Nothing else under output_dir is read, matched or deleted, and the guard runs before
+  // the first deletion so a refused run leaves every earlier output intact.
+  assertMessagesDirDeletable(messagesDir);
   fs.mkdirSync(outputDir, { recursive: true });
   fs.rmSync(manifestPath, { force: true });
   fs.rmSync(windowMetadataPath, { force: true });
@@ -124,7 +169,7 @@ export async function batchFetchWindow(
   for (const id of windowList.ids) {
     let data: gmail_v1.Schema$Message;
     try {
-      data = (await gmail.users.messages.get({ userId: 'me', id, format: 'full' })).data;
+      data = (await withGmailRetry(() => gmail.users.messages.get({ userId: 'me', id, format: 'full' }), retry)).data;
     } catch (error) {
       if (isAuthError(error)) {
         throw error;
@@ -148,7 +193,7 @@ export async function batchFetchWindow(
 
   for (const [index, { id, data, labels }] of kept.entries()) {
     const headers = (data.payload?.headers ?? []) as MessageHeader[];
-    const resolved = await resolveMessageBody(gmail, id, data.payload as MessagePart | undefined);
+    const resolved = await resolveMessageBody(gmail, id, data.payload as MessagePart | undefined, retry);
     for (const failure of resolved.failures) {
       failures.push({ id, error: failure.code });
     }
@@ -196,14 +241,18 @@ export async function batchFetchWindow(
     const trash = await crossCheckListing(gmail, `after:${epoch - 1} in:trash`, failures);
     const anywhere = await crossCheckListing(gmail, `after:${epoch - 1} in:anywhere`, failures);
     const windowIds = new Set(windowList.ids);
-    const unexplainedIds = [...anywhere].filter(id => !windowIds.has(id) && !spam.has(id) && !trash.has(id));
+    const unexplainedIds = [...anywhere.ids].filter(id => !windowIds.has(id) && !spam.ids.has(id) && !trash.ids.has(id));
+    // A listing that failed or stopped early cannot explain or reveal anything, so the check
+    // is only consistent when every listing ran to the end and left nothing unexplained.
+    const complete = windowList.complete && spam.complete && trash.complete && anywhere.complete;
     crossCheck = {
       window: windowList.ids.length,
-      spam: spam.size,
-      trash: trash.size,
-      anywhere: anywhere.size,
+      spam: spam.ids.size,
+      trash: trash.ids.size,
+      anywhere: anywhere.ids.size,
       unexplainedIds,
-      consistent: unexplainedIds.length === 0,
+      complete,
+      consistent: complete && unexplainedIds.length === 0,
     };
   }
 

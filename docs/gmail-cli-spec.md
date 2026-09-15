@@ -1,10 +1,10 @@
 # Gmail CLI — Specification
 
 Add command-line entry points to this repo so scripts (and Claude sessions) can search, read and
-download Gmail deterministically without an MCP session. This mirrors the CLI pattern already
-established in `~/Projects/outlook-claude-mcp` (`search-mail`, `get-message`, `list-attachments`,
-`get-attachment-text`); read `docs/search-mail-cli.md` and `docs/get-message-cli.md` there before
-implementing — the output contracts below are deliberately parallel.
+download Gmail deterministically without an MCP session. The commands (`search-mail`,
+`get-message`, `list-attachments`, `get-attachment-text`) follow a common CLI pattern shared with
+a sibling Outlook project; this document is self-contained and the output contracts below are the
+requirement.
 
 Requested by Sasha on 2026-09-08 for clients that need scripted "list every message since
 watermark" and "read message in full" operations.

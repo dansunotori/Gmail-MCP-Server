@@ -169,6 +169,49 @@ export function isAuthError(error: unknown): boolean {
   return false;
 }
 
+// Transient: Gmail asks for a retry on 429 and on a 403 carrying a rate-limit reason, and a
+// 5xx is a server-side hiccup. Everything else (auth, 404, network errors) is left to the
+// caller so a missing message or a dropped socket is reported once, not three times.
+export function isRetryableGmailError(error: unknown): boolean {
+  const wrapped = toGmailRequestError(error);
+  if (wrapped.status === 429) {
+    return true;
+  }
+  if (wrapped.status !== undefined && wrapped.status >= 500 && wrapped.status <= 599) {
+    return true;
+  }
+  return wrapped.status === 403 && wrapped.reason !== undefined && RATE_LIMIT_REASONS.has(wrapped.reason);
+}
+
+export interface GmailRetryOptions {
+  // Total calls including the first; default 3.
+  attempts?: number;
+  // Wait before the first retry; doubles on each further retry. Default 500 ms.
+  baseDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const defaultSleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+export async function withGmailRetry<T>(
+  request: () => Promise<T>,
+  options: GmailRetryOptions = {},
+): Promise<T> {
+  const attempts = options.attempts ?? 3;
+  const baseDelayMs = options.baseDelayMs ?? 500;
+  const sleep = options.sleep ?? defaultSleep;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await request();
+    } catch (error) {
+      if (attempt >= attempts || !isRetryableGmailError(error)) {
+        throw error;
+      }
+      await sleep(baseDelayMs * 2 ** (attempt - 1));
+    }
+  }
+}
+
 export async function getGmailProfile(gmail: gmail_v1.Gmail) {
   const response = await gmail.users.getProfile({
     userId: 'me',

@@ -45,6 +45,12 @@ for `readOnlyHint: true`.)
   it if missing. Inside it the tool owns exactly three things: `messages/` (a directory),
   `manifest.json` and `window-metadata.json`. It must delete and recreate `messages/` on every
   run (numbered files are replaced each fetch) and must not touch anything else in `output_dir`.
+  Guard (added 2026-09-15): before deleting anything, the tool checks that `messages/` holds
+  only its own numbered `NNN.json` files and `.publish-*` temporaries, each a regular file. If
+  it holds anything else (a foreign name, or a directory or symlink under an owned name), or
+  exists but is not a directory, the tool throws `refusing to delete …` and leaves
+  every earlier output in place, so an `output_dir` pointed at the wrong place cannot erase a
+  caller's data.
 - `max_messages` (integer, optional, default 2000): a hard cap on how many window IDs the tool
   will download. If the listing exceeds it, the tool stops, downloads nothing, and returns
   `truncated: true` with the listed count so the caller can rerun with a larger cap. Never
@@ -66,7 +72,10 @@ for `readOnlyHint: true`.)
 5. For every listed ID, `users.messages.get` with `format: "full"`. Skip (do not write) any
    message whose `internalDate < boundaryMs` or whose `labelIds` include `SPAM` or `TRASH`.
    Record per-message fetch failures as `{ id, error }` where `error` is the HTTP status or
-   error name; a failure must not abort the run.
+   error name; a failure must not abort the run. A 429, a 5xx or a 403 with a rate-limit
+   reason is retried with backoff (three attempts in total, 500 ms then 1 s) before it is
+   recorded; the same applies to the `attachments.get` calls in step 7. Auth errors, 404s and
+   network errors are never retried.
 6. Sort the surviving messages by `internalDate` ascending. Number them from `001` upwards and
    write `messages/NNN.json` for each (zero-padded to three digits; if more than 999 survive,
    widen the padding for the whole run so ordering by filename stays correct).
@@ -82,8 +91,10 @@ for `readOnlyHint: true`.)
    `body-part-fetch:` and the message is still written with whatever was recovered.
 8. Cross-check (when enabled): list `after:${epoch - 1} in:spam`, `after:${epoch - 1} in:trash`
    and `after:${epoch - 1} in:anywhere` with the same pagination. `unexplainedIds` is every
-   anywhere ID that is in none of window, spam or trash. `consistent` is true when that list is
-   empty.
+   anywhere ID that is in none of window, spam or trash. `complete` is true when all four
+   listings (window, spam, trash, anywhere) ran to their last page. `consistent` is true only
+   when `complete` is true and `unexplainedIds` is empty: a listing that failed or stopped
+   early cannot explain or reveal anything, so it must never produce a `consistent: true`.
 
 ### Output files
 
@@ -106,7 +117,7 @@ for `readOnlyHint: true`.)
   "boundaryMs": 0, "query": "after:... -in:spam -in:trash", "pages": 1,
   "listed": 0, "inWindow": 0, "belowBoundaryOrExcluded": 0, "truncated": false, "maxMessages": 2000,
   "failures": [ { "id": "...", "error": "..." } ],
-  "crossCheck": { "window": 0, "spam": 0, "trash": 0, "anywhere": 0, "unexplainedIds": [], "consistent": true },
+  "crossCheck": { "window": 0, "spam": 0, "trash": 0, "anywhere": 0, "unexplainedIds": [], "complete": true, "consistent": true },
   "messages": [ { "file": "<output_dir>/messages/001.json", "id": "...", "internalDate": "...", "labelIds": [], "from": "...", "subject": "...", "dateHeader": "...", "attachments": 0 } ]
 }
 ```

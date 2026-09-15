@@ -144,22 +144,25 @@ describe('resolveMessageBody', () => {
     expect(result.body).toBe('only html');
   });
 
-  it('records a non-auth fetch failure with its status and keeps going', async () => {
+  it('records a non-auth fetch failure with its status after exhausting retries and keeps going', async () => {
     const gmail = gmailWithAttachments(async id => {
       if (id === 'bad') throw httpError(429);
       return { data: { data: b64('ok') } };
     });
+    const sleep = vi.fn(async () => {});
     const result = await resolveMessageBody(gmail as never, 'm1', {
       parts: [
         { mimeType: 'text/plain', body: { attachmentId: 'bad' } },
         { mimeType: 'text/plain', body: { attachmentId: 'good' } },
       ],
-    });
+    }, { sleep });
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0].code).toBe('body-part-fetch: 429');
     expect(result.failures[0].error).toBeInstanceOf(GmailRequestError);
     expect(result.failures[0].error.status).toBe(429);
     expect(result.body).toBe('ok');
+    expect(gmail.users.messages.attachments.get).toHaveBeenCalledTimes(4);
+    expect(sleep).toHaveBeenCalledTimes(2);
   });
 
   it('rethrows an auth failure', async () => {

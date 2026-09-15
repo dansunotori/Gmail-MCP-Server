@@ -1,5 +1,12 @@
 import type { gmail_v1 } from 'googleapis';
-import { failureCode, GmailRequestError, isAuthError, toGmailRequestError } from './gmail-sync.js';
+import {
+  failureCode,
+  GmailRequestError,
+  isAuthError,
+  toGmailRequestError,
+  withGmailRetry,
+  type GmailRetryOptions,
+} from './gmail-sync.js';
 
 export interface MessageHeader {
   name?: string | null;
@@ -121,17 +128,18 @@ export async function resolveMessageBody(
   gmail: gmail_v1.Gmail,
   messageId: string,
   payload: MessagePart | null | undefined,
+  retry: GmailRetryOptions = {},
 ): Promise<ResolvedBody> {
   const parts = extractMessageParts(payload);
   const failures: BodyFailure[] = [];
 
   for (const deferred of parts.deferredBodies) {
     try {
-      const response = await gmail.users.messages.attachments.get({
+      const response = await withGmailRetry(() => gmail.users.messages.attachments.get({
         userId: 'me',
         messageId,
         id: deferred.attachmentId,
-      });
+      }), retry);
       const decoded = decodeBase64Url(response.data.data);
       if (deferred.mimeType === 'text/plain') {
         parts.text += decoded;

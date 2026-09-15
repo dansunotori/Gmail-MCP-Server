@@ -315,7 +315,7 @@ export const BatchFetchWindowSchema = z.object({
   }).describe("ISO 8601 timestamp with an explicit zone (Z or +HH:MM/-HH:MM), e.g. 2026-09-10T14:03:22Z; the window is inclusive of this instant"),
   output_dir: z.string().refine(value => path.isAbsolute(value), {
     message: 'output_dir must be an absolute path',
-  }).describe("Absolute directory; unless the result is truncated, the tool deletes and recreates messages/ and overwrites manifest.json and window-metadata.json inside it. A truncated run writes nothing and leaves earlier outputs in place, so check `truncated` before trusting the files"),
+  }).describe("Absolute directory; unless the result is truncated, the tool deletes and recreates messages/ and overwrites manifest.json and window-metadata.json inside it. It refuses to run, before deleting anything, if messages/ holds files it did not write. A truncated run writes nothing and leaves earlier outputs in place, so check `truncated` before trusting the files"),
   max_messages: z.number().int().min(1).default(2000)
     .describe("Hard cap on listed IDs; above it nothing is downloaded and the result is truncated"),
   cross_check: z.boolean().default(true)
@@ -333,6 +333,9 @@ const BatchFetchCrossCheckSchema = z.object({
   trash: z.number().int().min(0),
   anywhere: z.number().int().min(0),
   unexplainedIds: z.array(NonEmptyString),
+  // False when any of the window, spam, trash or anywhere listings failed or stopped early;
+  // `consistent` is then false too, whatever `unexplainedIds` holds.
+  complete: z.boolean(),
   consistent: z.boolean(),
 }).strict();
 
