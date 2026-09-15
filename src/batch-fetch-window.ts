@@ -11,6 +11,8 @@ export interface BatchFetchWindowInput {
   output_dir: string;
   // Also list spam, trash and in:anywhere since the watermark to detect silently dropped messages.
   cross_check: boolean;
+  // Hard cap on listed IDs; above it nothing is downloaded and the result is truncated.
+  max_messages: number;
 }
 
 export interface CrossCheck {
@@ -25,7 +27,7 @@ export interface CrossCheck {
 type Failure = { id: string; error: string };
 
 export interface BatchFetchWindowResult {
-  status: 'ok' | 'incomplete';
+  status: 'ok' | 'incomplete' | 'truncated';
   checkedAt: string;
   emailAddress: string;
   watermark: string;
@@ -35,6 +37,8 @@ export interface BatchFetchWindowResult {
   listed: number;
   inWindow: number;
   belowBoundaryOrExcluded: number;
+  truncated: boolean;
+  maxMessages: number;
   failures: Failure[];
   crossCheck?: CrossCheck;
   triage: string[];
@@ -117,7 +121,21 @@ export async function batchFetchWindow(
     query: windowQuery,
     pages: windowList.pages,
     listed: windowList.ids.length,
+    maxMessages: input.max_messages,
   };
+
+  if (windowList.ids.length > input.max_messages) {
+    return {
+      checkedAt: now().toISOString(),
+      ...base,
+      status: 'truncated',
+      truncated: true,
+      inWindow: 0,
+      belowBoundaryOrExcluded: 0,
+      failures,
+      triage: [],
+    };
+  }
 
   const outputDir = input.output_dir;
   const messagesDir = path.join(outputDir, 'messages');
@@ -225,6 +243,7 @@ export async function batchFetchWindow(
   const summary = {
     checkedAt: now().toISOString(),
     ...base,
+    truncated: false,
     inWindow: kept.length,
     belowBoundaryOrExcluded,
     failures,

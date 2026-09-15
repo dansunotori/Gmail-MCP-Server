@@ -96,6 +96,7 @@ function run(gmail: ReturnType<typeof fakeGmail>, dir: string, overrides: Partia
     watermark: WATERMARK,
     output_dir: dir,
     cross_check: true,
+    max_messages: 2000,
     ...overrides,
   }, FIXED_NOW);
 }
@@ -500,6 +501,57 @@ describe('batchFetchWindow: body-part failures', () => {
       attachments: { big: unauthorised },
     });
     await expect(run(gmail, dir)).rejects.toBe(unauthorised);
+  });
+});
+
+describe('batchFetchWindow: truncation', () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('truncates across three pages without fetching or writing anything', async () => {
+    fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'messages', '009.json'), '{}');
+    const gmail = fakeGmail({
+      lists: { [WINDOW_QUERY]: [{ ids: ['a', 'b'] }, { ids: ['c', 'd'] }, { ids: ['e'] }] },
+    });
+    const result = await run(gmail, dir, { max_messages: 4 });
+
+    expect(result.status).toBe('truncated');
+    expect(result.truncated).toBe(true);
+    expect(result.maxMessages).toBe(4);
+    expect(result.listed).toBe(5);
+    expect(result.pages).toBe(3);
+    expect(result.inWindow).toBe(0);
+    expect(result.failures).toEqual([]);
+    expect(result.triage).toEqual([]);
+    expect(result.crossCheck).toBeUndefined();
+    expect(gmail.get).not.toHaveBeenCalled();
+    expect(gmail.list).toHaveBeenCalledTimes(3);
+    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
+    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual(['009.json']);
+  });
+
+  it('leaves all three previous outputs untouched on a truncated rerun', async () => {
+    fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'messages', '001.json'), 'old message');
+    fs.writeFileSync(path.join(dir, 'manifest.json'), 'old manifest');
+    fs.writeFileSync(path.join(dir, 'window-metadata.json'), 'old metadata');
+    const gmail = fakeGmail({ lists: { [WINDOW_QUERY]: [{ ids: ['a', 'b'] }] } });
+    await run(gmail, dir, { max_messages: 1 });
+
+    expect(fs.readFileSync(path.join(dir, 'messages', '001.json'), 'utf8')).toBe('old message');
+    expect(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')).toBe('old manifest');
+    expect(fs.readFileSync(path.join(dir, 'window-metadata.json'), 'utf8')).toBe('old metadata');
+  });
+
+  it('reports truncated false and the cap in the result and the manifest when under the cap', async () => {
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    const result = await run(gmail, dir, { max_messages: 1 });
+
+    expect(result.truncated).toBe(false);
+    expect(result.maxMessages).toBe(1);
+    expect(readJson(path.join(dir, 'manifest.json'))).toMatchObject({ truncated: false, maxMessages: 1 });
   });
 });
 
