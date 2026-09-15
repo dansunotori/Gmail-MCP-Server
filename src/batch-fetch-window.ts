@@ -38,6 +38,7 @@ export interface BatchFetchWindowResult {
   inWindow: number;
   belowBoundaryOrExcluded: number;
   truncated: boolean;
+  listingComplete: boolean;
   maxMessages: number;
   failures: Failure[];
   crossCheck?: CrossCheck;
@@ -108,10 +109,8 @@ export async function batchFetchWindow(
   const emailAddress = await getGmailEmailAddress(gmail);
   const failures: Failure[] = [];
   const windowList = await listAllGmailMessageIds(gmail, { query: windowQuery, includeSpamTrash: true });
-  // A listing that stopped early cannot be reported by this result, so it is refused
-  // rather than passed off as a complete window.
   if (!windowList.complete && windowList.error) {
-    throw windowList.error;
+    failures.push({ id: `window-listing:page-${windowList.pages + 1}`, error: failureCode(windowList.error) });
   }
 
   const base = {
@@ -122,13 +121,14 @@ export async function batchFetchWindow(
     pages: windowList.pages,
     listed: windowList.ids.length,
     maxMessages: input.max_messages,
+    listingComplete: windowList.complete,
   };
 
   if (windowList.ids.length > input.max_messages) {
     return {
       checkedAt: now().toISOString(),
       ...base,
-      status: 'truncated',
+      status: failures.length > 0 ? 'incomplete' : 'truncated',
       truncated: true,
       inWindow: 0,
       belowBoundaryOrExcluded: 0,

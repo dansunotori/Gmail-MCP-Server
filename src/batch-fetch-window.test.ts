@@ -226,12 +226,6 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     expect(fs.readdirSync(dir)).toEqual([]);
   });
 
-  it('rejects when a later window page fails and writes nothing', async () => {
-    const gmail = fakeGmail({ lists: { [WINDOW_QUERY]: [{ ids: ['a'] }, httpError(503)] } });
-    await expect(run(gmail, dir)).rejects.toMatchObject({ name: 'GmailRequestError', status: 503 });
-    expect(gmail.get).not.toHaveBeenCalled();
-    expect(fs.readdirSync(dir)).toEqual([]);
-  });
 });
 
 describe('batchFetchWindow: owned paths and atomic publication', () => {
@@ -640,5 +634,100 @@ describe('batchFetchWindow: cross-check outcomes', () => {
     await expect(run(gmail, dir)).rejects.toBe(unauthorised);
     expect(fs.existsSync(path.join(dir, 'messages', '001.json'))).toBe(true);
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
+  });
+});
+
+describe('batchFetchWindow: partial window listings', () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('continues with a partial window listing when page two fails', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a'], { [WINDOW_QUERY]: [{ ids: ['a'] }, httpError(503)] }),
+      messages: { a: message('a', BOUNDARY + 1) },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.status).toBe('incomplete');
+    expect(result.listingComplete).toBe(false);
+    expect(result.pages).toBe(1);
+    expect(result.failures).toEqual([{ id: 'window-listing:page-2', error: '503' }]);
+    expect(readJson(path.join(dir, 'manifest.json')).listingComplete).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'messages', '001.json'))).toBe(true);
+  });
+
+  it('reports the network error code for a later window page failure', async () => {
+    const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+    const gmail = fakeGmail({
+      lists: windowOnly(['a'], { [WINDOW_QUERY]: [{ ids: ['a'] }, reset] }),
+      messages: { a: message('a', BOUNDARY + 1) },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.failures).toEqual([{ id: 'window-listing:page-2', error: 'ECONNRESET' }]);
+    expect(readJson(path.join(dir, 'manifest.json')).failures).toEqual([{ id: 'window-listing:page-2', error: 'ECONNRESET' }]);
+  });
+
+  it('writes the complete reference manifest summary and returns it with status and triage', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a']),
+      messages: { a: message('a', BOUNDARY + 1000, { labelIds: ['INBOX', 'UNREAD'] }) },
+    });
+    const result = await run(gmail, dir);
+    const file = path.join(dir, 'messages', '001.json');
+
+    const manifest = readJson(path.join(dir, 'manifest.json'));
+    expect(manifest).toEqual({
+      checkedAt: '2026-09-11T12:00:00.000Z',
+      emailAddress: 'me@example.com',
+      watermark: WATERMARK,
+      boundaryMs: BOUNDARY,
+      query: WINDOW_QUERY,
+      pages: 1,
+      listed: 1,
+      inWindow: 1,
+      belowBoundaryOrExcluded: 0,
+      truncated: false,
+      listingComplete: true,
+      maxMessages: 2000,
+      failures: [],
+      crossCheck: { window: 1, spam: 0, trash: 0, anywhere: 1, unexplainedIds: [], consistent: true },
+      messages: [{
+        file,
+        id: 'a',
+        internalDate: String(BOUNDARY + 1000),
+        labelIds: ['INBOX', 'UNREAD'],
+        from: 'a@example.com',
+        subject: 'Subject a',
+        dateHeader: 'Mon, 07 Sep 2026 14:00:00 +0000',
+        attachments: 0,
+      }],
+    });
+    const { messages, ...summary } = manifest;
+    expect(messages).toHaveLength(1);
+    expect(result).toEqual({ ...summary, status: 'ok', triage: result.triage });
+  });
+});
+
+describe('batchFetchWindow: status precedence when truncated', () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('reports incomplete with truncated true when the listing fails after exceeding the cap', async () => {
+    fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'messages', '009.json'), '{}');
+    const gmail = fakeGmail({
+      lists: { [WINDOW_QUERY]: [{ ids: ['a', 'b'] }, { ids: ['c'] }, httpError(503)] },
+    });
+    const result = await run(gmail, dir, { max_messages: 2 });
+
+    expect(result.status).toBe('incomplete');
+    expect(result.truncated).toBe(true);
+    expect(result.listingComplete).toBe(false);
+    expect(result.failures).toEqual([{ id: 'window-listing:page-3', error: '503' }]);
+    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
+    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual(['009.json']);
   });
 });
