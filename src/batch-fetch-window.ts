@@ -236,7 +236,7 @@ export async function batchFetchWindow(
   const epoch = Math.floor(boundaryMs / 1000);
   const windowQuery = `after:${epoch - 1} -in:spam -in:trash`;
 
-  const emailAddress = await getGmailEmailAddress(gmail);
+  const emailAddress = await withGmailRetry(() => getGmailEmailAddress(gmail), retry);
   const failures: Failure[] = [];
   const windowList = await listAllGmailMessageIds(gmail, { query: windowQuery, includeSpamTrash: true, retry });
   // A window whose listing is incomplete is not a window: fail here, before the guard and

@@ -382,7 +382,67 @@ These tools return structured metadata only, so a client can build and maintain 
 | `batch_get_gmail_index_metadata` | 1 to 50 `messageIds` | Each message's ID, Gmail `internalDate`, and label IDs, plus IDs deleted before retrieval |
 | `batch_fetch_window` | `watermark` (ISO 8601 with zone); `output_dir` (absolute); optional `max_messages` (default 2000); optional `cross_check` (default true) | Status (`ok`, `incomplete`, `truncated`), counts, failures, cross-check summary and a triage list; writes `messages/NNN.json`, `manifest.json` and `window-metadata.json` under `output_dir` (nothing when `truncated`) |
 
-The first four tools never request or return subjects, addresses, snippets, headers, bodies, attachments, or raw message content. Metadata batches retry only Gmail HTTP 429 and 5xx responses, with a maximum of three attempts. `batch_fetch_window` is the exception: it downloads full messages to disk and returns only headers in its triage lines. On every run that is not truncated it deletes and recreates `messages/` and overwrites the two JSON files under `output_dir`; a truncated result (listing above `max_messages`) writes nothing and leaves any earlier outputs in place, so check `truncated` before trusting the files. It refuses to run, before deleting anything, if `messages/` holds files it did not write itself. It touches nothing else in `output_dir` and reports `readOnlyHint: false` because of those writes. Message and body-part fetches retry Gmail 429, 5xx and rate-limit 403 responses up to three attempts with backoff; the cross-check reports `complete: false` and `consistent: false` whenever any of its listings failed or stopped early.
+The first four tools never request or return subjects, addresses, snippets, headers, bodies, attachments, or raw message content. Metadata batches retry only Gmail HTTP 429 and 5xx responses, with a maximum of three attempts. `batch_fetch_window` is the exception: it downloads full messages to disk and returns only headers in its triage lines. On every run that is not truncated it deletes and recreates `messages/` and overwrites the two JSON files under `output_dir`; a truncated result (listing above `max_messages`) writes nothing and leaves any earlier outputs in place, so check `truncated` before trusting the files. It touches nothing else in `output_dir` and reports `readOnlyHint: false` because of those writes.
+
+#### `batch_fetch_window` result contract
+
+**Retry policy.** Every Gmail call the tool makes (`getProfile`, `messages.list` for the window and for each cross-check query, `messages.get`, `attachments.get`) is retried on HTTP 429, on any 5xx, on a 403 whose reason is a Gmail rate limit, and on network errors (connection reset, refused or aborted, timeout, DNS failure, host or network unreachable), up to 5 attempts per call with exponential full-jitter backoff starting at a 500 ms ceiling and capped at 30 s; a `Retry-After` header is honoured up to the same cap. Any other 4xx (400, 401, non-rate-limit 403, 404, …) is not retried. A call that succeeds on a later attempt produces exactly the result it would have on the first.
+
+**Guard.** Checked before anything is deleted or written: `messages/` under `output_dir` may be deleted only if it is absent, empty, or holds nothing but regular files named `NNN.json` (three or more digits) or `.publish-*` plus the `.batch-fetch-window` marker file the tool writes into `messages/` on every run. An output written before the marker existed is accepted when the `manifest.json` beside it lists every `NNN.json` present, each under that same `messages/` path. Anything else — an unknown name, a subdirectory, a symlink, a pattern-named file the manifest does not list, or `messages/` being a file — makes the call fail with an error naming the first offending entry, and nothing is deleted or written.
+
+**When the call fails.** The result is an MCP error (`isError: true`). Nothing under `output_dir` changes when the failure happens before the tool starts writing: invalid input; the profile lookup or a page of the window listing still failing after its retries (the listing error text names the query, the 1-based page and the final status, e.g. `window listing failed: query "after:… -in:spam -in:trash" page 2 status 503 after 5 attempts`); an authentication failure on either of those calls; or the guard refusing. A window whose listing is incomplete is never written. Once the listing has succeeded and the guard has passed, the tool deletes `manifest.json`, `window-metadata.json` and `messages/` and recreates `messages/` before downloading; an authentication failure (401, or a 403 that is not a rate limit) on a later `messages.get`, `attachments.get` or cross-check listing aborts the call at that point, so the previous outputs are gone, `messages/` holds the marker and whichever message files were written, and no manifest or window metadata exists. Rerun the tool to replace that state; the guard accepts it.
+
+**Result fields.** The manifest's top level carries the same fields except `status` and `triage`, and adds `messages[]`:
+
+| Field | Type | Meaning |
+|-|-|-|
+| `status` | `"ok"` \| `"incomplete"` \| `"truncated"` | `ok`: no failures and the cross-check is consistent or skipped. `incomplete`: at least one `failures` entry, or `crossCheck.status` is `inconsistent` or `failed`; files are still written. `truncated`: the listing exceeded `max_messages`; nothing written. |
+| `checkedAt` | string | ISO 8601 UTC instant stamped just before the files are published. |
+| `emailAddress` | string | Address of the mailbox. |
+| `watermark`, `boundaryMs` | string, integer | The input watermark and its epoch milliseconds; the window is inclusive of that instant. |
+| `query` | string | The window query issued, `after:<epoch-1> -in:spam -in:trash`. |
+| `pages`, `listed` | integer | Window listing pages fetched and distinct IDs listed. |
+| `listingComplete` | boolean | Always `true` in a returned result: an incomplete listing fails the call instead. |
+| `maxMessages`, `truncated` | integer, boolean | The cap and whether `listed` exceeded it. |
+| `inWindow` | integer | Messages written to `messages/`. |
+| `belowBoundaryOrExcluded` | integer | Listed messages skipped because `internalDate` precedes the watermark or they carry `SPAM` or `TRASH`. |
+| `failures` | array | One entry per call given up on after retries, see below. Empty when none. |
+| `crossCheck` | object | Always present, see below. |
+| `triage` | string[] | `"<file> | <from> | <subject> | <dateHeader> | <n> att"` per written message, in file order. |
+
+**`failures[]` entry** — `{ id, error, operation, status, attempts }`:
+
+- `id`: the listed message ID, or `cross-check:<query>` for a cross-check listing.
+- `error`: the failure string: the HTTP status (`"503"`), the network code (`"ECONNRESET"`) or the error name, prefixed `body-part-fetch: ` for a body part.
+- `operation`: `"messages.get"`, `"body-part-fetch"` or `"cross-check"`.
+- `status`: the numeric HTTP status, or the network code or error name as a string.
+- `attempts`: calls made before giving up (1 when the error was not retryable, otherwise up to 5).
+
+```json
+{ "id": "18f3c2a9e0b1d4f7", "error": "503", "operation": "messages.get", "status": 503, "attempts": 5 }
+```
+
+**`crossCheck`** — always present, never `null`:
+
+- `status`: `"consistent"` — all three listings (spam, trash, `in:anywhere`) completed and every `in:anywhere` ID is in the window, spam or trash; `"inconsistent"` — all completed and at least one ID is in none of them; `"failed"` — at least one listing did not complete after retries; `"skipped"` — `cross_check` was `false` or the result is truncated, so no listing ran.
+- `consistent`: `true` only when `status` is `"consistent"`; `false` for the other three, so a caller checking this one field fails closed.
+- `complete`: `true` only when every listing ran to its last page (`false` for `failed` and `skipped`).
+- `unexplainedIds`: the IDs that make the result inconsistent; empty otherwise (always present).
+- `errors`: one `{ query, page?, status, attempts }` per listing that did not complete (`page` is the 1-based page that failed); empty otherwise (always present).
+- `counts`: `{ window, spam, trash, anywhere }` distinct IDs per listing; present when the cross-check ran (`consistent`, `inconsistent`, `failed`), absent when `skipped`. The same four numbers are also present as top-level `window`, `spam`, `trash` and `anywhere` for compatibility.
+
+```json
+{ "status": "failed", "consistent": false, "complete": false, "unexplainedIds": [],
+  "errors": [{ "query": "after:1788825599 in:anywhere", "page": 1, "status": 503, "attempts": 5 }],
+  "counts": { "window": 12, "spam": 1, "trash": 0, "anywhere": 0 },
+  "window": 12, "spam": 1, "trash": 0, "anywhere": 0 }
+```
+
+```json
+{ "status": "skipped", "consistent": false, "complete": false, "unexplainedIds": [], "errors": [] }
+```
+
+A failed cross-check does not prevent the window from being written and does not make the result an MCP error; `status` is `incomplete` and `crossCheck` carries the detail.
 
 ### 1. Send Email (`send_email`)
 

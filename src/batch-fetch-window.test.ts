@@ -666,6 +666,30 @@ describe('batchFetchWindow: per-message failures', () => {
     expect(gmail.get).toHaveBeenCalledTimes(1);
   });
 
+  it('retries the profile lookup on a transient error and fails the call when it is exhausted', async () => {
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    gmail.users.getProfile
+      .mockRejectedValueOnce(httpError(503))
+      .mockRejectedValueOnce(httpError(429))
+      .mockResolvedValueOnce({ data: { emailAddress: 'me@example.com' } });
+    const result = await run(gmail, dir);
+    expect(result.emailAddress).toBe('me@example.com');
+    expect(gmail.users.getProfile).toHaveBeenCalledTimes(3);
+
+    const exhausted = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    const outage = httpError(503);
+    exhausted.users.getProfile.mockRejectedValue(outage);
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-'));
+    try {
+      await expect(run(exhausted, other)).rejects.toBe(outage);
+      expect(exhausted.users.getProfile).toHaveBeenCalledTimes(GMAIL_RETRY_MAX_ATTEMPTS);
+      expect(exhausted.list).not.toHaveBeenCalled();
+      expect(fs.readdirSync(other)).toEqual([]);
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+    }
+  });
+
   it('records a network error code as the status of a messages.get failure', async () => {
     const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
     const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: reset } });

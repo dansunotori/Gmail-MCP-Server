@@ -315,11 +315,11 @@ export const BatchFetchWindowSchema = z.object({
   }).describe("ISO 8601 timestamp with an explicit zone (Z or +HH:MM/-HH:MM), e.g. 2026-09-10T14:03:22Z; the window is inclusive of this instant"),
   output_dir: z.string().refine(value => path.isAbsolute(value), {
     message: 'output_dir must be an absolute path',
-  }).describe("Absolute directory; unless the result is truncated, the tool deletes and recreates messages/ and overwrites manifest.json and window-metadata.json inside it. It refuses to run, before deleting anything, if messages/ holds files it did not write. A truncated run writes nothing and leaves earlier outputs in place, so check `truncated` before trusting the files"),
+  }).describe("Absolute directory; unless the result is truncated, the tool deletes and recreates messages/ and overwrites manifest.json and window-metadata.json inside it. Guard, checked before anything is deleted: messages/ may be deleted only if it is absent, empty, or holds nothing but regular files named NNN.json or .publish-* plus the .batch-fetch-window marker the tool writes on every run (an output written before the marker existed is accepted when the manifest.json beside it lists every NNN.json present under that same messages/ path). Anything else, including a subdirectory or a symlink, makes the call fail with an error naming the offending entry, and nothing is deleted or written. A truncated run writes nothing and leaves earlier outputs in place, so check `truncated` before trusting the files"),
   max_messages: z.number().int().min(1).default(2000)
     .describe("Hard cap on listed IDs; above it nothing is downloaded and the result is truncated"),
   cross_check: z.boolean().default(true)
-    .describe("Also list spam, trash and in:anywhere since the watermark to detect silently dropped messages"),
+    .describe("Also list spam, trash and in:anywhere since the watermark to detect silently dropped messages. The result's crossCheck.status is then consistent, inconsistent (crossCheck.unexplainedIds names IDs seen in in:anywhere but in none of window, spam or trash) or failed (a listing did not complete after retries; crossCheck.errors names each query); false gives status skipped. crossCheck.consistent is true only for status consistent"),
 }).strict();
 
 // One entry per Gmail call that was given up on after its retries. `error` is the failure
@@ -458,7 +458,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "batch_fetch_window",
-    description: "Downloads every message received since a watermark into a local directory with manifest and cross-check; deletes and recreates messages/ under output_dir unless the listing exceeds max_messages, in which case nothing is written and earlier outputs remain",
+    description: "Downloads every message received since a watermark into a local directory with manifest and cross-check; deletes and recreates messages/ under output_dir unless the listing exceeds max_messages, in which case nothing is written and earlier outputs remain. Every Gmail call is retried on 429, 5xx, rate-limit 403 and network errors up to 5 attempts with exponential full-jitter backoff (500 ms base, 30 s cap, Retry-After honoured); other 4xx are not retried. A window listing page that still fails makes the whole call an error, before anything is deleted or written. A message or body part that still fails is recorded in failures as { id, error, operation, status, attempts } and the rest of the window is written. crossCheck is always present with status consistent, inconsistent, failed or skipped; consistent is true only for status consistent",
     schema: BatchFetchWindowSchema,
     outputSchema: BatchFetchWindowOutputSchema,
     scopes: ["gmail.readonly", "gmail.modify"],

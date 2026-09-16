@@ -45,12 +45,16 @@ for `readOnlyHint: true`.)
   it if missing. Inside it the tool owns exactly three things: `messages/` (a directory),
   `manifest.json` and `window-metadata.json`. It must delete and recreate `messages/` on every
   run (numbered files are replaced each fetch) and must not touch anything else in `output_dir`.
-  Guard (added 2026-09-15): before deleting anything, the tool checks that `messages/` holds
-  only its own numbered `NNN.json` files and `.publish-*` temporaries, each a regular file. If
-  it holds anything else (a foreign name, or a directory or symlink under an owned name), or
-  exists but is not a directory, the tool throws `refusing to delete …` and leaves
-  every earlier output in place, so an `output_dir` pointed at the wrong place cannot erase a
-  caller's data.
+  Guard (added 2026-09-15, marker added 2026-09-16): before deleting anything, the tool checks
+  that `messages/` is absent, empty, or holds nothing but regular files named `NNN.json` or
+  `.publish-*` plus the `.batch-fetch-window` marker file the tool writes into `messages/`
+  immediately after creating it on every run. An output written before the marker existed is
+  accepted when the `manifest.json` beside it lists every `NNN.json` present, each under that
+  same `messages/` path. If `messages/` holds anything else (a foreign name, a directory or
+  symlink under an owned name, or a pattern-named file the manifest does not list), or exists
+  but is not a directory, the tool throws `refusing to delete …` naming the first offending
+  entry and leaves every earlier output in place, so an `output_dir` pointed at the wrong
+  place cannot erase a caller's data.
 - `max_messages` (integer, optional, default 2000): a hard cap on how many window IDs the tool
   will download. If the listing exceeds it, the tool stops, downloads nothing, and returns
   `truncated: true` with the listed count so the caller can rerun with a larger cap. Never
@@ -67,15 +71,25 @@ for `readOnlyHint: true`.)
    the watermark exactly is in the window. (A client that advances its own watermark decides
    what to do with an equal-candidate message; the tool's job is only to never drop one.)
 3. List with `users.messages.list`, `includeSpamTrash: true`, `maxResults: 500`, following
-   `nextPageToken` until exhausted. Deduplicate IDs. Record the page count.
+   `nextPageToken` until exhausted. Deduplicate IDs. Record the page count. A page that still
+   fails after its retries (below) fails the whole call: throw an error naming the query, the
+   1-based page and the final status (`window listing failed: query "…" page N status S after
+   A attempts`), before the guard runs and before anything is deleted or written. A window
+   whose listing is incomplete is never written.
 4. If listed count exceeds `max_messages`, return the truncation result (see Output) and stop.
 5. For every listed ID, `users.messages.get` with `format: "full"`. Skip (do not write) any
    message whose `internalDate < boundaryMs` or whose `labelIds` include `SPAM` or `TRASH`.
-   Record per-message fetch failures as `{ id, error }` where `error` is the HTTP status or
-   error name; a failure must not abort the run. A 429, a 5xx or a 403 with a rate-limit
-   reason is retried with backoff (three attempts in total, 500 ms then 1 s) before it is
-   recorded; the same applies to the `attachments.get` calls in step 7. Auth errors, 404s and
-   network errors are never retried.
+   Record per-message fetch failures as `{ id, error, operation, status, attempts }` (see
+   Tool result); a failure must not abort the run.
+
+   Retry policy (revised 2026-09-16), applied through one helper to every Gmail call the tool
+   makes (the profile lookup, every listing page, `messages.get` and `attachments.get`): retry
+   on 429, on any 5xx, on a 403 whose reason is a Gmail rate limit, and on network errors
+   (connection reset, refused or aborted, timeout, DNS failure, host or network unreachable);
+   do not retry any other 4xx. At most 5 attempts per call, exponential backoff with full jitter from a
+   500 ms ceiling doubling to a 30 s cap; a `Retry-After` header is honoured up to the same
+   cap. A call that succeeds on a later attempt gives exactly the result of a first-attempt
+   success. Auth errors are never retried and abort the run.
 6. Sort the surviving messages by `internalDate` ascending. Number them from `001` upwards and
    write `messages/NNN.json` for each (zero-padded to three digits; if more than 999 survive,
    widen the padding for the whole run so ordering by filename stays correct).
@@ -90,11 +104,17 @@ for `readOnlyHint: true`.)
    whitespace collapsed). A body-part fetch failure is recorded in `failures` with the prefix
    `body-part-fetch:` and the message is still written with whatever was recovered.
 8. Cross-check (when enabled): list `after:${epoch - 1} in:spam`, `after:${epoch - 1} in:trash`
-   and `after:${epoch - 1} in:anywhere` with the same pagination. `unexplainedIds` is every
-   anywhere ID that is in none of window, spam or trash. `complete` is true when all four
-   listings (window, spam, trash, anywhere) ran to their last page. `consistent` is true only
-   when `complete` is true and `unexplainedIds` is empty: a listing that failed or stopped
-   early cannot explain or reveal anything, so it must never produce a `consistent: true`.
+   and `after:${epoch - 1} in:anywhere` with the same pagination and retries. `unexplainedIds`
+   is every anywhere ID that is in none of window, spam or trash. `complete` is true when all
+   three listings ran to their last page (the window listing is always complete by step 3).
+   `status` is `"failed"` when any listing did not complete (`errors` then holds one
+   `{ query, page, status, attempts }` per failed listing, and the same failure is recorded in
+   `failures` with `id: "cross-check:<query>"`), `"inconsistent"` when all completed and
+   `unexplainedIds` is non-empty, `"consistent"` otherwise, and `"skipped"` when the check did
+   not run (`cross_check: false`, or a truncated window). `consistent` is true only for
+   `"consistent"`: a listing that failed cannot explain or reveal anything, and a skipped check
+   verified nothing, so a caller that reads only the boolean fails closed. A failed cross-check
+   does not stop the window from being written and does not make the call an error.
 
 ### Output files
 
@@ -115,12 +135,31 @@ for `readOnlyHint: true`.)
 {
   "checkedAt": "<ISO UTC now>", "emailAddress": "<profile address>", "watermark": "<input>",
   "boundaryMs": 0, "query": "after:... -in:spam -in:trash", "pages": 1,
-  "listed": 0, "inWindow": 0, "belowBoundaryOrExcluded": 0, "truncated": false, "maxMessages": 2000,
-  "failures": [ { "id": "...", "error": "..." } ],
-  "crossCheck": { "window": 0, "spam": 0, "trash": 0, "anywhere": 0, "unexplainedIds": [], "complete": true, "consistent": true },
+  "listed": 0, "inWindow": 0, "belowBoundaryOrExcluded": 0, "truncated": false, "listingComplete": true, "maxMessages": 2000,
+  "failures": [ { "id": "...", "error": "503", "operation": "messages.get", "status": 503, "attempts": 5 } ],
+  "crossCheck": {
+    "status": "consistent", "consistent": true, "complete": true, "unexplainedIds": [], "errors": [],
+    "counts": { "window": 0, "spam": 0, "trash": 0, "anywhere": 0 },
+    "window": 0, "spam": 0, "trash": 0, "anywhere": 0
+  },
   "messages": [ { "file": "<output_dir>/messages/001.json", "id": "...", "internalDate": "...", "labelIds": [], "from": "...", "subject": "...", "dateHeader": "...", "attachments": 0 } ]
 }
 ```
+
+`failures[]`: `id` is the listed message ID or `cross-check:<query>`; `error` is the failure
+string (HTTP status, network code or error name, prefixed `body-part-fetch: ` for a body
+part); `operation` is `"messages.get"`, `"body-part-fetch"` or `"cross-check"`; `status` is the
+numeric HTTP status or the network code / error name as a string; `attempts` is the number of
+calls made (1 when not retryable, otherwise up to 5).
+
+`crossCheck` is always present. When the check ran it has the shape above with `status`
+`"consistent"`, `"inconsistent"` or `"failed"`, `errors[]` entries of
+`{ query, page?, status, attempts }`, and the four counts both under `counts` and flat. When it
+did not run it is exactly
+`{ "status": "skipped", "consistent": false, "complete": false, "unexplainedIds": [], "errors": [] }`.
+
+`messages/` also holds the `.batch-fetch-window` marker file (see the guard); it is not a
+message file and is not listed in the manifest.
 
 `window-metadata.json` (what a client reads to decide whether to advance its own watermark; keep it minimal):
 
@@ -143,13 +182,19 @@ Return a structured result (use `structuredResult` from `src/gmail-sync.ts` if i
 the manifest summary without the `messages` array, plus a `triage` array of one-line strings
 `"<file> | <from> | <subject> | <dateHeader> | <n> att"` in file order, and a `status` field:
 
-- `"ok"`: no failures, cross-check consistent (or disabled), not truncated.
-- `"incomplete"`: any failure recorded, or cross-check inconsistent. Files are still written.
+- `"ok"`: no failures, cross-check consistent (or skipped), not truncated.
+- `"incomplete"`: any failure recorded, or `crossCheck.status` is `"inconsistent"` or
+  `"failed"`. Files are still written.
 - `"truncated"`: listing exceeded `max_messages`; no files written; `messages/` left untouched.
 
 The status must be explicit so the caller can refuse to advance a watermark on anything but
 `"ok"`. Do not throw for `"incomplete"` or `"truncated"`; throw only for input validation
-failures, auth failures and errors before any listing succeeded.
+failures, auth failures, a guard refusal, and a profile lookup or window listing page that
+still fails after its retries (the server reports each as an MCP error with `isError: true`).
+A throw before the guard leaves `output_dir` untouched. An auth failure after it (on a
+`messages.get`, an `attachments.get` or a cross-check listing) happens after the previous
+outputs were deleted: `messages/` then holds the marker and whichever message files were
+written, with no manifest or window metadata, and a rerun replaces that state.
 
 ## Testing
 
@@ -165,7 +210,19 @@ Add `src/batch-fetch-window.test.ts` under vitest, mocking the Gmail client the 
   `incomplete`;
 - a large body delivered via `attachmentId` is fetched and included in `body`;
 - HTML-only message produces plain text `body` per the conversion rules;
-- cross-check with one unexplained ID gives `consistent: false` and status `incomplete`;
+- cross-check with one unexplained ID gives `status: "inconsistent"`, `consistent: false` and
+  status `incomplete`; a cross-check listing that fails after retries gives `status: "failed"`,
+  `consistent: false`, an `errors` entry naming the query, and the window is still written;
+  `cross_check: false` gives `status: "skipped"`, `consistent: false` and no spam, trash or
+  anywhere listing calls;
+- a `messages.get` that returns 429 twice then 200 is written with no failure; one that fails
+  on every attempt is recorded with `status` and `attempts: 5` while the rest is written; a
+  404 is not retried and is recorded with `attempts: 1`; a `Retry-After: 2` on a 429 delays the
+  retry by 2 s;
+- a window page that fails on every attempt rejects with an error naming the page and leaves
+  every file under `output_dir` byte-for-byte unchanged;
+- the guard refuses a `messages/` holding a foreign file, writing and deleting nothing, and
+  accepts one holding only a previous run's files;
 - `max_messages` exceeded gives status `truncated`, writes nothing, and leaves an existing
   `messages/` directory intact;
 - input validation rejects a watermark without zone suffix;
