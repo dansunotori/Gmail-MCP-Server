@@ -334,17 +334,55 @@ const BatchFetchFailureSchema = z.object({
   attempts: z.number().int().min(1),
 }).strict();
 
-const BatchFetchCrossCheckSchema = z.object({
+const CrossCheckCountsSchema = z.object({
   window: z.number().int().min(0),
   spam: z.number().int().min(0),
   trash: z.number().int().min(0),
   anywhere: z.number().int().min(0),
-  unexplainedIds: z.array(NonEmptyString),
+}).strict();
+
+// One entry per cross-check listing that did not complete after its retries.
+const CrossCheckErrorSchema = z.object({
+  query: NonEmptyString,
+  // 1-based page that failed; absent when the failure was not a page request.
+  page: z.number().int().min(1).optional(),
+  status: z.union([z.number().int(), NonEmptyString]),
+  attempts: z.number().int().min(1),
+}).strict();
+
+const CrossCheckRanSchema = z.object({
+  status: z.enum(['consistent', 'inconsistent', 'failed']),
+  consistent: z.boolean(),
   // False when any of the window, spam, trash or anywhere listings failed or stopped early;
   // `consistent` is then false too, whatever `unexplainedIds` holds.
   complete: z.boolean(),
-  consistent: z.boolean(),
+  unexplainedIds: z.array(NonEmptyString),
+  errors: z.array(CrossCheckErrorSchema),
+  counts: CrossCheckCountsSchema,
+  // The same four counts, kept flat for compatibility.
+  window: z.number().int().min(0),
+  spam: z.number().int().min(0),
+  trash: z.number().int().min(0),
+  anywhere: z.number().int().min(0),
 }).strict();
+
+// The shape when no cross-check listing ran (`cross_check: false`, or a truncated window).
+const CrossCheckSkippedSchema = z.object({
+  status: z.literal('skipped'),
+  consistent: z.literal(false),
+  complete: z.literal(false),
+  unexplainedIds: z.array(NonEmptyString).length(0),
+  errors: z.array(CrossCheckErrorSchema).length(0),
+}).strict();
+
+// `consistent` is true exactly when `status` is "consistent", so a caller that checks only the
+// boolean fails closed on "inconsistent", "failed" and "skipped" alike.
+const BatchFetchCrossCheckSchema = z.discriminatedUnion('status', [
+  CrossCheckRanSchema.extend({ status: z.literal('consistent'), consistent: z.literal(true) }).strict(),
+  CrossCheckRanSchema.extend({ status: z.literal('inconsistent'), consistent: z.literal(false) }).strict(),
+  CrossCheckRanSchema.extend({ status: z.literal('failed'), consistent: z.literal(false) }).strict(),
+  CrossCheckSkippedSchema,
+]);
 
 export const BatchFetchWindowOutputSchema = z.object({
   status: z.enum(['ok', 'incomplete', 'truncated']),
@@ -361,7 +399,7 @@ export const BatchFetchWindowOutputSchema = z.object({
   listingComplete: z.boolean(),
   maxMessages: z.number().int().min(1),
   failures: z.array(BatchFetchFailureSchema),
-  crossCheck: BatchFetchCrossCheckSchema.optional(),
+  crossCheck: BatchFetchCrossCheckSchema,
   triage: z.array(z.string()),
 }).strict();
 

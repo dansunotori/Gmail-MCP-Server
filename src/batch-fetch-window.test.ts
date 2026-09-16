@@ -737,7 +737,8 @@ describe('batchFetchWindow: truncation', () => {
     expect(result.inWindow).toBe(0);
     expect(result.failures).toEqual([]);
     expect(result.triage).toEqual([]);
-    expect(result.crossCheck).toBeUndefined();
+    // No cross-check listing runs for a truncated window, and the result says so.
+    expect(result.crossCheck).toEqual({ status: 'skipped', consistent: false, complete: false, unexplainedIds: [], errors: [] });
     expect(gmail.get).not.toHaveBeenCalled();
     expect(gmail.list).toHaveBeenCalledTimes(3);
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
@@ -779,7 +780,18 @@ describe('batchFetchWindow: cross-check', () => {
     expect(gmail.list).toHaveBeenCalledWith(expect.objectContaining({ q: SPAM_QUERY, includeSpamTrash: true }));
     expect(gmail.list).toHaveBeenCalledWith(expect.objectContaining({ q: TRASH_QUERY, includeSpamTrash: true }));
     expect(gmail.list).toHaveBeenCalledWith(expect.objectContaining({ q: ANYWHERE_QUERY, includeSpamTrash: true }));
-    const expected = { window: 1, spam: 0, trash: 0, anywhere: 1, unexplainedIds: [], complete: true, consistent: true };
+    const expected = {
+      status: 'consistent',
+      consistent: true,
+      complete: true,
+      unexplainedIds: [],
+      errors: [],
+      counts: { window: 1, spam: 0, trash: 0, anywhere: 1 },
+      window: 1,
+      spam: 0,
+      trash: 0,
+      anywhere: 1,
+    };
     expect(result.status).toBe('ok');
     expect(result.crossCheck).toEqual(expected);
     expect(readJson(path.join(dir, 'manifest.json')).crossCheck).toEqual(expected);
@@ -787,14 +799,16 @@ describe('batchFetchWindow: cross-check', () => {
 
   // Regression guard: with cross_check disabled the spam, trash and anywhere listings must not
   // run at all; this fails if they are ever issued unconditionally.
-  it('skips the cross-check when disabled', async () => {
+  it('reports the cross-check as skipped and not consistent when disabled, without listing spam, trash or anywhere', async () => {
     const gmail = fakeGmail({ lists: { [WINDOW_QUERY]: [{ ids: [] }] } });
     const result = await run(gmail, dir, { cross_check: false });
 
+    const skipped = { status: 'skipped', consistent: false, complete: false, unexplainedIds: [], errors: [] };
     expect(result.status).toBe('ok');
-    expect(result.crossCheck).toBeUndefined();
+    expect(result.crossCheck).toEqual(skipped);
     expect(gmail.list).toHaveBeenCalledTimes(1);
-    expect(readJson(path.join(dir, 'manifest.json')).crossCheck).toBeUndefined();
+    expect(gmail.list).toHaveBeenCalledWith(expect.objectContaining({ q: WINDOW_QUERY }));
+    expect(readJson(path.join(dir, 'manifest.json')).crossCheck).toEqual(skipped);
   });
 });
 
@@ -803,15 +817,30 @@ describe('batchFetchWindow: cross-check outcomes', () => {
   beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
   afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  it('flags an unexplained anywhere ID as inconsistent', async () => {
+  it('flags an anywhere ID absent from window, spam and trash as inconsistent and lists exactly that ID', async () => {
     const gmail = fakeGmail({
-      lists: windowOnly(['a'], { [ANYWHERE_QUERY]: [{ ids: ['a', 'ghost'] }] }),
+      lists: windowOnly(['a'], {
+        [SPAM_QUERY]: [{ ids: ['s1'] }],
+        [TRASH_QUERY]: [{ ids: ['t1'] }],
+        [ANYWHERE_QUERY]: [{ ids: ['a', 's1', 't1', 'ghost'] }],
+      }),
       messages: { a: message('a', BOUNDARY + 1) },
     });
     const result = await run(gmail, dir);
 
     expect(result.status).toBe('incomplete');
-    expect(result.crossCheck).toEqual({ window: 1, spam: 0, trash: 0, anywhere: 2, unexplainedIds: ['ghost'], complete: true, consistent: false });
+    expect(result.crossCheck).toEqual({
+      status: 'inconsistent',
+      consistent: false,
+      complete: true,
+      unexplainedIds: ['ghost'],
+      errors: [],
+      counts: { window: 1, spam: 1, trash: 1, anywhere: 4 },
+      window: 1,
+      spam: 1,
+      trash: 1,
+      anywhere: 4,
+    });
     expect(result.failures).toEqual([]);
   });
 
@@ -838,11 +867,22 @@ describe('batchFetchWindow: cross-check outcomes', () => {
     });
     const result = await run(gmail, dir);
 
-    expect(result.crossCheck).toEqual({ window: 1, spam: 0, trash: 0, anywhere: 1, unexplainedIds: [], complete: false, consistent: false });
+    expect(result.crossCheck).toEqual({
+      status: 'failed',
+      consistent: false,
+      complete: false,
+      unexplainedIds: [],
+      errors: [{ query: SPAM_QUERY, page: 1, status: 503, attempts: GMAIL_RETRY_MAX_ATTEMPTS }],
+      counts: { window: 1, spam: 0, trash: 0, anywhere: 1 },
+      window: 1,
+      spam: 0,
+      trash: 0,
+      anywhere: 1,
+    });
     expect(readJson(path.join(dir, 'manifest.json')).crossCheck.consistent).toBe(false);
   });
 
-  it('reports the cross-check as incomplete when the anywhere listing fails and its IDs are therefore unknown', async () => {
+  it('writes the window and reports the cross-check as failed, naming the query, when the anywhere listing exhausts its retries', async () => {
     const gmail = fakeGmail({
       lists: windowOnly(['a'], { [ANYWHERE_QUERY]: [httpError(503)] }),
       messages: { a: message('a', BOUNDARY + 1) },
@@ -850,7 +890,35 @@ describe('batchFetchWindow: cross-check outcomes', () => {
     const result = await run(gmail, dir);
 
     expect(result.status).toBe('incomplete');
-    expect(result.crossCheck).toMatchObject({ anywhere: 0, unexplainedIds: [], complete: false, consistent: false });
+    expect(result.crossCheck).toMatchObject({
+      status: 'failed',
+      consistent: false,
+      complete: false,
+      anywhere: 0,
+      unexplainedIds: [],
+      errors: [{ query: ANYWHERE_QUERY, page: 1, status: 503, attempts: GMAIL_RETRY_MAX_ATTEMPTS }],
+    });
+    expect(gmail.list.mock.calls.filter(([params]) => params.q === ANYWHERE_QUERY)).toHaveLength(GMAIL_RETRY_MAX_ATTEMPTS);
+    expect(fs.existsSync(path.join(dir, 'messages', '001.json'))).toBe(true);
+    expect(readJson(path.join(dir, 'manifest.json')).crossCheck.status).toBe('failed');
+  });
+
+  it('lists every failed listing in errors and still reports unexplained IDs from the listings that completed', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a'], { [SPAM_QUERY]: [httpError(500)], [TRASH_QUERY]: [httpError(502)], [ANYWHERE_QUERY]: [{ ids: ['a', 'ghost'] }] }),
+      messages: { a: message('a', BOUNDARY + 1) },
+    });
+    const result = await run(gmail, dir);
+
+    expect(result.crossCheck).toMatchObject({
+      status: 'failed',
+      consistent: false,
+      unexplainedIds: ['ghost'],
+      errors: [
+        { query: SPAM_QUERY, page: 1, status: 500, attempts: GMAIL_RETRY_MAX_ATTEMPTS },
+        { query: TRASH_QUERY, page: 1, status: 502, attempts: GMAIL_RETRY_MAX_ATTEMPTS },
+      ],
+    });
   });
 
   it('reports the network error code for a later cross-check page failure after retrying it', async () => {
@@ -962,7 +1030,18 @@ describe('batchFetchWindow: window listing failures', () => {
       listingComplete: true,
       maxMessages: 2000,
       failures: [],
-      crossCheck: { window: 1, spam: 0, trash: 0, anywhere: 1, unexplainedIds: [], complete: true, consistent: true },
+      crossCheck: {
+        status: 'consistent',
+        consistent: true,
+        complete: true,
+        unexplainedIds: [],
+        errors: [],
+        counts: { window: 1, spam: 0, trash: 0, anywhere: 1 },
+        window: 1,
+        spam: 0,
+        trash: 0,
+        anywhere: 1,
+      },
       messages: [{
         file,
         id: 'a',
@@ -1051,16 +1130,32 @@ describe('BatchFetchWindowOutputSchema', () => {
     listingComplete: true,
     maxMessages: 2000,
     failures: [],
+    crossCheck: { status: 'skipped', consistent: false, complete: false, unexplainedIds: [], errors: [] },
     triage: [],
   };
 
-  it('accepts a result with and without crossCheck', () => {
+  it('requires crossCheck and accepts the skipped, consistent, inconsistent and failed shapes', () => {
     expect(BatchFetchWindowOutputSchema.parse(base)).toEqual(base);
-    const withCheck = {
+    const { crossCheck: _skipped, ...withoutCheck } = base;
+    expect(() => BatchFetchWindowOutputSchema.parse(withoutCheck)).toThrow();
+
+    const ran = { complete: true, unexplainedIds: [], errors: [], counts: { window: 0, spam: 0, trash: 0, anywhere: 0 }, window: 0, spam: 0, trash: 0, anywhere: 0 };
+    const consistent = { ...base, crossCheck: { ...ran, status: 'consistent', consistent: true } };
+    expect(BatchFetchWindowOutputSchema.parse(consistent)).toEqual(consistent);
+    const inconsistent = { ...base, crossCheck: { ...ran, status: 'inconsistent', consistent: false, unexplainedIds: ['x'] } };
+    expect(BatchFetchWindowOutputSchema.parse(inconsistent)).toEqual(inconsistent);
+    const failed = {
       ...base,
-      crossCheck: { window: 0, spam: 0, trash: 0, anywhere: 0, unexplainedIds: [], complete: true, consistent: true },
+      crossCheck: { ...ran, status: 'failed', consistent: false, complete: false, errors: [{ query: 'in:spam', page: 2, status: 503, attempts: 5 }] },
     };
-    expect(BatchFetchWindowOutputSchema.parse(withCheck)).toEqual(withCheck);
+    expect(BatchFetchWindowOutputSchema.parse(failed)).toEqual(failed);
+  });
+
+  it('rejects a crossCheck whose consistent flag contradicts its status', () => {
+    const ran = { complete: true, unexplainedIds: [], errors: [], counts: { window: 0, spam: 0, trash: 0, anywhere: 0 }, window: 0, spam: 0, trash: 0, anywhere: 0 };
+    expect(() => BatchFetchWindowOutputSchema.parse({ ...base, crossCheck: { ...ran, status: 'consistent', consistent: false } })).toThrow();
+    expect(() => BatchFetchWindowOutputSchema.parse({ ...base, crossCheck: { ...ran, status: 'failed', consistent: true } })).toThrow();
+    expect(() => BatchFetchWindowOutputSchema.parse({ ...base, crossCheck: { ...base.crossCheck, consistent: true } })).toThrow();
   });
 
   it('accepts a numeric or string status on a failure entry and requires operation and attempts', () => {

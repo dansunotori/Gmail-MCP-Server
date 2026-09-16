@@ -111,18 +111,33 @@ function assertMessagesDirDeletable(messagesDir: string): void {
   }
 }
 
+type CrossCheck = BatchFetchWindowResult['crossCheck'];
+type CrossCheckError = Extract<CrossCheck, { status: 'failed' }>['errors'][number];
 type CrossCheckListing = { ids: Set<string>; complete: boolean };
 
+const CROSS_CHECK_SKIPPED: CrossCheck = {
+  status: 'skipped',
+  consistent: false,
+  complete: false,
+  unexplainedIds: [],
+  errors: [],
+};
+
+// A failed listing is recorded twice: in `failures`, keyed `cross-check:<query>` like every
+// other failure, and in `crossCheck.errors`, where the query is the key.
 async function crossCheckListing(
   gmail: gmail_v1.Gmail,
   query: string,
   failures: Failure[],
+  errors: CrossCheckError[],
   retry: GmailRetryOptions,
 ): Promise<CrossCheckListing> {
   try {
     const result = await listAllGmailMessageIds(gmail, { query, includeSpamTrash: true, retry });
     if (!result.complete) {
-      failures.push(listingFailure(`cross-check:${query}`, 'cross-check', result));
+      const recorded = listingFailure(`cross-check:${query}`, 'cross-check', result);
+      failures.push(recorded);
+      errors.push({ query, page: result.failedPage, status: recorded.status, attempts: recorded.attempts });
     }
     return { ids: new Set(result.ids), complete: result.complete };
   } catch (error) {
@@ -130,9 +145,39 @@ async function crossCheckListing(
     if (isAuthError(error)) {
       throw error;
     }
-    failures.push(failure(`cross-check:${query}`, 'cross-check', error));
+    const recorded = failure(`cross-check:${query}`, 'cross-check', error);
+    failures.push(recorded);
+    errors.push({ query, status: recorded.status, attempts: recorded.attempts });
     return { ids: new Set(), complete: false };
   }
+}
+
+async function runCrossCheck(
+  gmail: gmail_v1.Gmail,
+  epoch: number,
+  windowIds: string[],
+  failures: Failure[],
+  retry: GmailRetryOptions,
+): Promise<CrossCheck> {
+  const errors: CrossCheckError[] = [];
+  const spam = await crossCheckListing(gmail, `after:${epoch - 1} in:spam`, failures, errors, retry);
+  const trash = await crossCheckListing(gmail, `after:${epoch - 1} in:trash`, failures, errors, retry);
+  const anywhere = await crossCheckListing(gmail, `after:${epoch - 1} in:anywhere`, failures, errors, retry);
+  const window = new Set(windowIds);
+  const unexplainedIds = [...anywhere.ids].filter(id => !window.has(id) && !spam.ids.has(id) && !trash.ids.has(id));
+  // A listing that failed cannot explain or reveal anything, so the check is consistent only
+  // when every listing ran to the end and left nothing unexplained. The window listing itself
+  // is always complete here: an incomplete one fails the whole call.
+  const complete = spam.complete && trash.complete && anywhere.complete;
+  const counts = { window: window.size, spam: spam.ids.size, trash: trash.ids.size, anywhere: anywhere.ids.size };
+  const shared = { complete, unexplainedIds, errors, counts, ...counts };
+  if (!complete) {
+    return { ...shared, status: 'failed', consistent: false };
+  }
+  if (unexplainedIds.length > 0) {
+    return { ...shared, status: 'inconsistent', consistent: false };
+  }
+  return { ...shared, status: 'consistent', consistent: true };
 }
 
 export async function batchFetchWindow(
@@ -180,6 +225,7 @@ export async function batchFetchWindow(
       inWindow: 0,
       belowBoundaryOrExcluded: 0,
       failures,
+      crossCheck: CROSS_CHECK_SKIPPED,
       triage: [],
     });
   }
@@ -276,26 +322,9 @@ export async function batchFetchWindow(
     });
   }
 
-  let crossCheck: BatchFetchWindowResult['crossCheck'];
-  if (input.cross_check) {
-    const spam = await crossCheckListing(gmail, `after:${epoch - 1} in:spam`, failures, retry);
-    const trash = await crossCheckListing(gmail, `after:${epoch - 1} in:trash`, failures, retry);
-    const anywhere = await crossCheckListing(gmail, `after:${epoch - 1} in:anywhere`, failures, retry);
-    const windowIds = new Set(windowList.ids);
-    const unexplainedIds = [...anywhere.ids].filter(id => !windowIds.has(id) && !spam.ids.has(id) && !trash.ids.has(id));
-    // A listing that failed or stopped early cannot explain or reveal anything, so the check
-    // is only consistent when every listing ran to the end and left nothing unexplained.
-    const complete = windowList.complete && spam.complete && trash.complete && anywhere.complete;
-    crossCheck = {
-      window: windowList.ids.length,
-      spam: spam.ids.size,
-      trash: trash.ids.size,
-      anywhere: anywhere.ids.size,
-      unexplainedIds,
-      complete,
-      consistent: complete && unexplainedIds.length === 0,
-    };
-  }
+  const crossCheck = input.cross_check
+    ? await runCrossCheck(gmail, epoch, windowList.ids, failures, retry)
+    : CROSS_CHECK_SKIPPED;
 
   // Stamped after every fetch and check, immediately before publication, so it dates the files rather than the listing.
   const summary = {
@@ -305,13 +334,14 @@ export async function batchFetchWindow(
     inWindow: kept.length,
     belowBoundaryOrExcluded,
     failures,
-    ...(crossCheck ? { crossCheck } : {}),
+    crossCheck,
   };
 
   const triage = manifestMessages.map(entry =>
     [entry.file, entry.from, entry.subject, entry.dateHeader, `${entry.attachments} att`].join(' | ')
   );
-  const status = failures.length > 0 || (crossCheck !== undefined && !crossCheck.consistent)
+  // A skipped cross-check is not a defect in the window, so it leaves the status at ok.
+  const status = failures.length > 0 || crossCheck.status === 'inconsistent' || crossCheck.status === 'failed'
     ? 'incomplete'
     : 'ok';
   // Validate before publishing, so a schema rejection can never follow a published manifest.
