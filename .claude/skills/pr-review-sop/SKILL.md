@@ -26,7 +26,7 @@ MISMATCH handling: don't build it, don't merge it. **Pitch the item to the maint
 1. Before starting a new batch of PR reviews/changes: merge `experimental` → `main` IF the experiment is confirmed successful. If no evidence, ask the user.
 2. PR merges and own changes go into `experimental` first. Never merge PRs directly into `main`.
 3. After a batch is complete on `experimental`: wait for user confirmation, then merge `experimental` → `main`.
-4. **After every push to any branch:** run `gh run list --branch {branch} --limit 1` and verify CI passes. If CI fails, fix immediately - do NOT leave broken CI for the user to discover. This applies to every `git push` in the session, not just merges.
+4. **After every push to any branch:** run `gh run list --repo dansunotori/Gmail-MCP-Server --branch {branch} --limit 1` and verify CI passes. If CI fails, fix immediately - do NOT leave broken CI for the user to discover. This applies to every `git push` in the session, not just merges.
 5. **End of each dev round (batch merged to `experimental`, awaiting soak):** remind the user that `experimental` is awaiting promotion to `main` once the soak is clean. The user decides where to track that reminder.
 
 ## Distribution
@@ -80,7 +80,7 @@ This repository is installed from source only. `package.json` is marked `"privat
    a. Fetch and fix locally on experimental, push - the PR diff updates automatically.
    b. Or: merge first via GitHub, then commit fixes on top.
 3. `gh pr merge {N} --merge` (merge via GitHub - shows purple "merged" badge, credits the contributor)
-4. **Verify CI:** `gh run list --branch experimental --limit 1` - wait for result. If CI fails, fix before proceeding.
+4. **Verify CI:** `gh run list --repo dansunotori/Gmail-MCP-Server --branch experimental --limit 1` - wait for result. If CI fails, fix before proceeding.
 5. Comment on PR explaining security audit result + any post-merge fixes applied.
 
 **Why not manual close:** "Closed" (red) looks like rejection to contributors and doesn't credit their work on their GitHub profile. Always use `gh pr merge` for accepted PRs.
@@ -122,10 +122,9 @@ Established hardening from commits `95071e7` and `208ce00`:
 
 ## CI Verification (Mandatory)
 
-After every push (to any branch), check CI status: `gh run list --branch {branch} --limit 1`
+After every push (to any branch), check CI status: `gh run list --repo dansunotori/Gmail-MCP-Server --branch {branch} --limit 1`. Pass `--repo` explicitly: `gh` otherwise resolves the `upstream` remote.
 - If CI fails: investigate and fix before moving on. Do NOT leave broken CI.
-- **README check:** CI requires README.md to be updated on every push to `main`. If the change doesn't need docs, add `[skip-readme]` to the commit message.
-- **Build & Test:** Must pass. If it fails, fix the code.
+- **Build & Test** is the only job: clean install, lockfile lint, `npm audit`, typecheck, build, tests. If it fails, fix the code.
 - CI triggers on both `main` and `experimental` pushes, and PRs targeting either branch.
 
 ## Session Hygiene

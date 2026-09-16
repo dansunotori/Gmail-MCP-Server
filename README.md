@@ -1078,10 +1078,7 @@ PR opened (any base)
 
 Open your PR against `experimental` when possible. If you target `main`, a maintainer will retarget it to `experimental` before merge.
 
-**CI requires README updates** - every push to `main` and every PR must include a README.md change (even a version bump or changelog entry). This ensures documentation stays current as the codebase evolves.
-
-To bypass for commits that genuinely don't need a docs update (dependency bumps, CI config changes), include `[skip-readme]` or `[no-readme]` in your commit message or PR title.
-
+CI runs a clean install, lockfile lint, dependency audit, typecheck, build and the test suite on every push and pull request.
 
 ## Running evals
 
