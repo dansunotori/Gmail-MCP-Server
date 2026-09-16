@@ -189,10 +189,11 @@ The status must be explicit so the caller can refuse to advance a watermark on a
 `"ok"`. Do not throw for `"incomplete"` or `"truncated"`; throw only for input validation
 failures, auth failures, a guard refusal, and a profile lookup or window listing page that
 still fails after its retries (the server reports each as an MCP error with `isError: true`).
-A throw before the guard leaves `output_dir` untouched. An auth failure after it (on a
-`messages.get`, an `attachments.get` or a cross-check listing) happens after the previous
-outputs were deleted: `messages/` then holds the marker and whichever message files were
-written, with no manifest or window metadata, and a rerun replaces that state.
+Every Gmail call (profile lookup, listing pages, `messages.get`, `attachments.get`, cross-check
+listings) completes before anything under `output_dir` is deleted or written, so every throw
+above leaves the previous outputs untouched. Only a local file-system error can interrupt the
+run after the deletion; `messages/` then holds the marker and the new message files, with no
+manifest or window metadata, and a rerun replaces that state.
 
 ## Testing
 

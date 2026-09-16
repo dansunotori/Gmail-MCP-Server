@@ -64,6 +64,15 @@ type ManifestEntry = {
   attachments: number;
 };
 
+// A message ready to be written: its file content, and its manifest and window-metadata
+// entries. Built before anything on disk is touched.
+type PreparedMessage = {
+  file: string;
+  content: Record<string, unknown>;
+  manifest: ManifestEntry;
+  metadata: Record<string, unknown>;
+};
+
 const METADATA_HEADERS = new Set(['from', 'to', 'subject', 'date']);
 
 function writeJson(target: string, value: unknown): void {
@@ -245,17 +254,9 @@ export async function batchFetchWindow(
   const messagesDir = path.join(outputDir, 'messages');
   const manifestPath = path.join(outputDir, 'manifest.json');
   const windowMetadataPath = path.join(outputDir, 'window-metadata.json');
-  // Remove exactly the three paths the tool owns, metadata first, so that from here until
-  // the final publish no manifest exists that could describe deleted or partial files.
-  // Nothing else under output_dir is read, matched or deleted, and the guard runs before
-  // the first deletion so a refused run leaves every earlier output intact.
+  // Fail fast on a foreign messages/ before spending any download; the guard runs again
+  // immediately before the deletion below.
   assertMessagesDirDeletable(messagesDir);
-  fs.mkdirSync(outputDir, { recursive: true });
-  fs.rmSync(manifestPath, { force: true });
-  fs.rmSync(windowMetadataPath, { force: true });
-  fs.rmSync(messagesDir, { recursive: true, force: true });
-  fs.mkdirSync(messagesDir);
-  writeJson(path.join(messagesDir, MESSAGES_DIR_MARKER), { tool: 'batch_fetch_window' });
 
   const kept: KeptMessage[] = [];
   let belowBoundaryOrExcluded = 0;
@@ -281,9 +282,10 @@ export async function batchFetchWindow(
 
   kept.sort((left, right) => left.internal - right.internal);
   const width = Math.max(3, String(kept.length).length);
-  const manifestMessages: ManifestEntry[] = [];
-  const metadataMessages: Array<Record<string, unknown>> = [];
 
+  // Resolve every body part now, so that after this loop the tool needs nothing further from
+  // Gmail for the files themselves.
+  const prepared: PreparedMessage[] = [];
   for (const [index, { id, data, labels }] of kept.entries()) {
     const headers = (data.payload?.headers ?? []) as MessageHeader[];
     const resolved = await resolveMessageBody(gmail, id, data.payload as MessagePart | undefined, retry);
@@ -296,47 +298,66 @@ export async function batchFetchWindow(
         attempts: bodyFailure.attempts,
       });
     }
-    const body = resolved.body;
-    const attachments = resolved.attachments;
     const from = headerValue(headers, 'From');
     const subject = headerValue(headers, 'Subject');
     const dateHeader = headerValue(headers, 'Date');
     const file = path.join(messagesDir, `${String(index + 1).padStart(width, '0')}.json`);
-    writeJson(file, {
-      id,
-      threadId: data.threadId,
-      internalDate: data.internalDate,
-      labelIds: labels,
-      from,
-      to: headerValue(headers, 'To'),
-      cc: headerValue(headers, 'Cc'),
-      subject,
-      dateHeader,
-      snippet: data.snippet ?? '',
-      attachments,
-      body,
-    });
-    manifestMessages.push({
+    prepared.push({
       file,
-      id,
-      internalDate: data.internalDate,
-      labelIds: labels,
-      from,
-      subject,
-      dateHeader,
-      attachments: attachments.length,
-    });
-    metadataMessages.push({
-      id,
-      internalDate: data.internalDate,
-      labelIds: labels,
-      headers: headers.filter(header => METADATA_HEADERS.has((header.name ?? '').toLowerCase())),
+      content: {
+        id,
+        threadId: data.threadId,
+        internalDate: data.internalDate,
+        labelIds: labels,
+        from,
+        to: headerValue(headers, 'To'),
+        cc: headerValue(headers, 'Cc'),
+        subject,
+        dateHeader,
+        snippet: data.snippet ?? '',
+        attachments: resolved.attachments,
+        body: resolved.body,
+      },
+      manifest: {
+        file,
+        id,
+        internalDate: data.internalDate,
+        labelIds: labels,
+        from,
+        subject,
+        dateHeader,
+        attachments: resolved.attachments.length,
+      },
+      metadata: {
+        id,
+        internalDate: data.internalDate,
+        labelIds: labels,
+        headers: headers.filter(header => METADATA_HEADERS.has((header.name ?? '').toLowerCase())),
+      },
     });
   }
 
   const crossCheck = input.cross_check
     ? await runCrossCheck(gmail, epoch, windowList.ids, failures, retry)
     : CROSS_CHECK_SKIPPED;
+
+  // Every Gmail call is behind us, so from here only the local file system can fail. Remove
+  // exactly the three paths the tool owns, metadata first, so that until the final publish no
+  // manifest exists that could describe deleted or partial files. Nothing else under
+  // output_dir is read, matched or deleted, and the guard runs again right before the first
+  // deletion so a refused run leaves every earlier output intact.
+  assertMessagesDirDeletable(messagesDir);
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.rmSync(manifestPath, { force: true });
+  fs.rmSync(windowMetadataPath, { force: true });
+  fs.rmSync(messagesDir, { recursive: true, force: true });
+  fs.mkdirSync(messagesDir);
+  writeJson(path.join(messagesDir, MESSAGES_DIR_MARKER), { tool: 'batch_fetch_window' });
+  for (const { file, content } of prepared) {
+    writeJson(file, content);
+  }
+  const manifestMessages = prepared.map(entry => entry.manifest);
+  const metadataMessages = prepared.map(entry => entry.metadata);
 
   // Stamped after every fetch and check, immediately before publication, so it dates the files rather than the listing.
   const summary = {

@@ -395,10 +395,13 @@ describe('batchFetchWindow: owned paths and atomic publication', () => {
     expect(fs.readFileSync(path.join(dir, 'messages'), 'utf8')).toBe('a file');
   });
 
-  it('clears old outputs before a rerun that then fails part-way', async () => {
+  // Every Gmail call (message fetches, body parts, cross-check listings) completes before the
+  // previous outputs are deleted, so a rerun that fails on any of them leaves them untouched.
+  it('leaves the previous outputs byte-for-byte untouched when a rerun fails on a messages.get auth error', async () => {
     const first = fakeGmail({ lists: windowOnly(['old']), messages: { old: message('old', BOUNDARY + 1) } });
     await run(first, dir);
-    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true);
+    const before = snapshotDir(dir);
+    expect(before.has('manifest.json')).toBe(true);
 
     const unauthorised = httpError(401);
     const second = fakeGmail({
@@ -407,13 +410,46 @@ describe('batchFetchWindow: owned paths and atomic publication', () => {
     });
     await expect(run(second, dir)).rejects.toBe(unauthorised);
 
-    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
-    expect(fs.existsSync(path.join(dir, 'window-metadata.json'))).toBe(false);
-    // Every messages.get completes before any message file is written; only a later
-    // body-part fetch can fail after some files exist, and no manifest is written in that
-    // case either, so the failed rerun leaves messages/ holding only the marker: the old
-    // content was removed, and nothing new was written. The marker lets the next run recover.
-    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual([MARKER]);
+    expect(snapshotDir(dir)).toEqual(before);
+  });
+
+  it('leaves the previous outputs untouched when a rerun fails on a body-part auth error', async () => {
+    const first = fakeGmail({ lists: windowOnly(['old']), messages: { old: message('old', BOUNDARY + 1) } });
+    await run(first, dir);
+    const before = snapshotDir(dir);
+
+    const unauthorised = httpError(401);
+    const second = fakeGmail({
+      lists: windowOnly(['a']),
+      messages: { a: message('a', BOUNDARY + 1, { payload: { mimeType: 'text/plain', headers: [], body: { attachmentId: 'big' } } }) },
+      attachments: { big: unauthorised },
+    });
+    await expect(run(second, dir)).rejects.toBe(unauthorised);
+
+    expect(snapshotDir(dir)).toEqual(before);
+  });
+
+  it('leaves the previous outputs untouched when a rerun fails on a cross-check auth error', async () => {
+    const first = fakeGmail({ lists: windowOnly(['old']), messages: { old: message('old', BOUNDARY + 1) } });
+    await run(first, dir);
+    const before = snapshotDir(dir);
+
+    const unauthorised = httpError(401);
+    const second = fakeGmail({
+      lists: windowOnly(['a'], { [SPAM_QUERY]: [unauthorised] }),
+      messages: { a: message('a', BOUNDARY + 1) },
+    });
+    await expect(run(second, dir)).rejects.toBe(unauthorised);
+
+    expect(snapshotDir(dir)).toEqual(before);
+  });
+
+  it('refuses a foreign messages/ before downloading anything', async () => {
+    fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'messages', 'photo.jpg'), 'not ours');
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    await expect(run(gmail, dir)).rejects.toThrow(/refusing to delete/);
+    expect(gmail.get).not.toHaveBeenCalled();
   });
 
   it('leaves window-metadata but no manifest when the manifest publish fails', async () => {
@@ -695,9 +731,7 @@ describe('batchFetchWindow: per-message failures', () => {
       messages: { a: message('a', BOUNDARY + 1), b: unauthorised },
     });
     await expect(run(gmail, dir)).rejects.toBe(unauthorised);
-    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
-    expect(fs.existsSync(path.join(dir, 'window-metadata.json'))).toBe(false);
-    expect(messageFiles(dir)).toEqual([]);
+    expect(fs.readdirSync(dir)).toEqual([]);
   });
 
   it('rejects on a 403 insufficientPermissions from messages.get', async () => {
@@ -1019,15 +1053,14 @@ describe('batchFetchWindow: cross-check outcomes', () => {
 
   // The cross-check listings catch non-auth failures and report them as incomplete; this pins
   // that a 401 is rethrown through the isAuthError check rather than swallowed by that catch.
-  it('rejects on a 401 from the spam cross-check and leaves no manifest', async () => {
+  it('rejects on a 401 from the spam cross-check and writes nothing', async () => {
     const unauthorised = httpError(401);
     const gmail = fakeGmail({
       lists: windowOnly(['a'], { [SPAM_QUERY]: [unauthorised] }),
       messages: { a: message('a', BOUNDARY + 1) },
     });
     await expect(run(gmail, dir)).rejects.toBe(unauthorised);
-    expect(fs.existsSync(path.join(dir, 'messages', '001.json'))).toBe(true);
-    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
+    expect(fs.readdirSync(dir)).toEqual([]);
   });
 });
 
