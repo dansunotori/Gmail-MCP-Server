@@ -27,11 +27,9 @@ Thumbs.db
 
 # Project specific
 .worktrees/
-mcp-config.json
+.claude/worktrees/
 gcp-oauth.keys.json
-.calendar-mcp/
 credentials.json
-.calendar-server-credentials.json 
 .gcp-oauth.keys.json
 # Local scratch (browser-agent screenshots etc.)
 tmp/

@@ -1,15 +1,13 @@
 # Gmail CLI — Specification
 
 Add command-line entry points to this repo so scripts (and Claude sessions) can search, read and
-download Gmail deterministically without an MCP session. The commands (`search-mail`,
-`get-message`, `list-attachments`, `get-attachment-text`) follow a common CLI pattern shared with
-a sibling Outlook project; this document is self-contained and the output contracts below are the
-requirement.
+download Gmail deterministically without an MCP session. This document is self-contained and the
+output contracts below are the requirement.
 
-Requested by Sasha on 2026-09-08 for clients that need scripted "list every message since
-watermark" and "read message in full" operations.
+Requested on 2026-09-08 for clients that need scripted "list every message since watermark" and
+"read message in full" operations.
 
-Note (2026-09-11): the routine mailbox pass now uses the `batch_fetch_window` MCP tool (see
+Note (2026-09-11): a routine mailbox pass can use the `batch_fetch_window` MCP tool (see
 `docs/superpowers/specs/2026-09-11-batch-fetch-window-design.md`); the CLIs below remain
 optional, for targeted reads.
 
@@ -33,8 +31,8 @@ Add to `package.json` `bin` (then `npm link` once):
 | `gmail-get-message` | Full content of one message by ID |
 | `gmail-download-attachment` | Save one attachment to disk |
 
-Names are prefixed `gmail-` because `search-mail`/`get-message` are already taken globally by the
-Outlook CLIs.
+Names are prefixed `gmail-` so that they cannot clash with generic mail CLIs a user may already
+have installed globally.
 
 ### gmail-search
 
@@ -102,8 +100,7 @@ gmail-get-message <message_id> [options]
 
 Implementation: `messages.get` with `format: 'full'`; reuse `extractHeaders`,
 `extractEmailContent`, `extractAttachments` from `src/index.ts` (see extraction note below). For
-`--format markdown` convert the HTML part when no plain-text part exists (turndown or similar —
-match what the Outlook `get-message` does).
+`--format markdown` convert the HTML part when no plain-text part exists (turndown or similar).
 
 Output:
 
@@ -113,7 +110,7 @@ Output:
   "thread_id": "1991f2ab34cd56ef",
   "subject": "Invoice #123",
   "from": { "email": "billing@example.com", "name": "Billing Dept" },
-  "to": [{ "email": "sasha@example.com", "name": "Sasha" }],
+  "to": [{ "email": "recipient@example.com", "name": "Recipient" }],
   "cc": [],
   "date": "2026-09-07T14:00:00Z",
   "is_unread": false,
@@ -154,8 +151,8 @@ and CLIs both import, e.g.:
   existing tests passing).
 - `src/cli/gmail-search.ts`, `src/cli/gmail-get-message.ts`, `src/cli/gmail-download-attachment.ts`.
 
-Keep the diff against upstream as small as the extraction allows — this repo is a fork and wants to
-stay mergeable. Pure moves plus new files; avoid reformatting.
+Keep the diff as small as the extraction allows so it stays reviewable. Pure moves plus new files;
+avoid reformatting.
 
 ## Errors and exit codes
 

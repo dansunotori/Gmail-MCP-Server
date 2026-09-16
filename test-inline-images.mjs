@@ -16,9 +16,10 @@
  *   B. HTML email + one base64 content-based inline image
  *   C. HTML email + one inline image + one regular (non-inline) attachment
  *
- * Test mail is sent from the default send-as alias to jonas+<test-id>@duplo.org
- * (plus-addressing — all copies land in the same mailbox) and left in place,
- * subject-tagged [INLINE-IMG-TEST], so it can be reviewed and bulk-deleted by hand.
+ * Set GMAIL_TEST_ADDRESS to the address of the authenticated mailbox. Test mail is sent
+ * from that address to a plus-addressed variant of it (all copies land in the same
+ * mailbox) and left in place, subject-tagged [INLINE-IMG-TEST], so it can be reviewed
+ * and bulk-deleted by hand.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -35,8 +36,13 @@ const CREDENTIALS_PATH = path.join(CONFIG_DIR, 'credentials.json');
 const FIXTURE = path.join(__dirname, 'test', 'fixtures', 'inline-test.png');
 
 const STAMP = new Date().toISOString().replace(/[:.]/g, '-');
-const FROM = 'j@duplo.org';
-const recipient = (id) => `jonas+inline-img-${id}-${STAMP}@duplo.org`;
+const FROM = process.env.GMAIL_TEST_ADDRESS;
+if (!FROM) {
+    console.error('Set GMAIL_TEST_ADDRESS to the address of the authenticated mailbox before running this test.');
+    process.exit(2);
+}
+const [localPart, domain] = FROM.split('@');
+const recipient = (id) => `${localPart}+inline-img-${id}-${STAMP}@${domain}`;
 
 function loadAuth() {
     const keysFile = JSON.parse(fs.readFileSync(OAUTH_PATH, 'utf8'));
@@ -183,7 +189,7 @@ async function main() {
     console.log(`\n${'='.repeat(60)}`);
     console.log(`RESULT: ${passed}/${results.length} checks passed, ${failed} failed`);
     console.log(`Sent message IDs: ${sentIds.join(', ')}`);
-    console.log(`Recipients (plus-addressed to jonas@duplo.org), subject tag [INLINE-IMG-TEST].`);
+    console.log(`Recipients (plus-addressed to ${FROM}), subject tag [INLINE-IMG-TEST].`);
     process.exit(failed === 0 ? 0 : 1);
 }
 

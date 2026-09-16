@@ -140,8 +140,8 @@ export function toGmailRequestError(error: unknown): GmailRequestError {
   });
 }
 
-// Renders `error.code || error.response?.status || error.name`, the documented manifest
-// failure-string format. Works the same on a raw error and on a GmailRequestError wrapper,
+// Renders `error.code || error.response?.status || error.name`, the failure-string format
+// written into batch_fetch_window results and manifests. Works the same on a raw error and on a GmailRequestError wrapper,
 // because the wrapper keeps `code` and `cause`. `reason` is deliberately not consulted here.
 export function failureCode(error: unknown): string {
   const wrapped = toGmailRequestError(error);

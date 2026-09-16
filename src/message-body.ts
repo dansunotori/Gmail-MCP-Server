@@ -101,9 +101,9 @@ export function extractMessageParts(payload: MessagePart | null | undefined): Ex
   return out;
 }
 
-// The exact regex chain the design document specifies, in this order. Do not "fix" the
-// regexes: consumers rely on the output being stable, and the <br>-before-newline
-// behaviour (no `s` flag) is documented and pinned by a test rather than changed here.
+// Apply these regexes in exactly this order. Do not "fix" them: the plain-text output shape
+// is part of this server's stable contract for downloaded message files, and the
+// <br>-before-newline behaviour (no `s` flag) is pinned by a test rather than changed here.
 export function htmlToText(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')

@@ -416,7 +416,7 @@ The full existing suite must pass unchanged.
 
 - Tool registered, typed, tested, documented; `npm test` and `npm run build` succeed; `dist/`
   rebuilt.
-- Smoke run against the real mailbox with `output_dir` under a scratch directory and a
+- Smoke run against a live mailbox with `output_dir` under a scratch directory and a
   watermark within the last day; the returned summary is pasted in the report with
   `emailAddress` replaced and the `triage` array replaced by its length, since triage lines
   carry senders and subjects. The status and, if `incomplete`, the `failures` and

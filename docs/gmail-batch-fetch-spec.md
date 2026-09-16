@@ -2,9 +2,9 @@
 
 ## Why
 
-Clients of this server need a routine "mailbox pass": download every message received since a
-stored watermark to disk, so a model can read the files one by one, without the client calling
-the Gmail API itself. Your job is to make this server provide that capability as a tool.
+A client of this server may want a routine "mailbox pass": download every message received since
+a stored watermark to disk, so the files can be read one by one, without the client calling the
+Gmail API itself. Your job is to make this server provide that capability as a tool.
 
 This document, together with the design document it produced
 (`docs/superpowers/specs/2026-09-11-batch-fetch-window-design.md`), is the complete statement of
@@ -122,7 +122,7 @@ for `readOnlyHint: true`.)
 }
 ```
 
-`window-metadata.json` (the watermark-advancement source; keep it minimal):
+`window-metadata.json` (what a client reads to decide whether to advance its own watermark; keep it minimal):
 
 ```json
 {
@@ -177,22 +177,22 @@ and its output.
 ## Documentation
 
 - Add the tool to the README tool list with a short description and the input fields.
-- Add a line to `docs/gmail-cli-spec.md` noting that the routine pass now uses
+- Add a line to `docs/gmail-cli-spec.md` noting that a routine mailbox pass can use
   `batch_fetch_window` and the CLIs there remain optional for targeted reads.
 
 ## Definition of done
 
 - `batch_fetch_window` is registered, typed, tested and documented.
-- `npm run build` succeeds and `dist/` is rebuilt so the registered server in `~/.claude.json`
-  (which points at this install) picks it up.
-- A manual smoke run against the real mailbox with `output_dir` set to a scratch directory and a
+- `npm run build` succeeds and `dist/` is rebuilt so any MCP client registered against this
+  checkout picks it up.
+- A manual smoke run against a live mailbox with `output_dir` set to a scratch directory and a
   recent watermark produces the three outputs and a `status` of `ok` or `incomplete` with the
   reason visible. Paste the returned summary (redact addresses if you like) in your report.
 - Report every behaviour guarantee the design document lists and name the test that pins it, so
   a client can rely on the documented behaviour rather than on reading the code.
 
-Commit policy (amended 2026-09-11 by Sasha's instruction to follow the brainstorming,
-writing-plans and subagent-driven-development skills in full): each implementation task ends
+Commit policy (amended 2026-09-11 so that the brainstorming, writing-plans and
+subagent-driven-development skills are followed in full): each implementation task ends
 in its own commit on its feature branch, which is integrated into `experimental` at finish,
 and review happens through git history rather than an uncommitted working tree. The original
 text here said "Do not commit. Leave the working tree for review."

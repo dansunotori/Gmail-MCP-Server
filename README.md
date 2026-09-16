@@ -1,22 +1,19 @@
-# Gmail MCP Server — downstream fork
+# Gmail MCP Server
 
-This repository is a public downstream fork of [ArtyMcLabin/Gmail-MCP-Server](https://github.com/ArtyMcLabin/Gmail-MCP-Server). It carries a small set of general-purpose indexing extensions while preserving the maintained upstream server and its attribution.
+A standalone Model Context Protocol (MCP) server for Gmail. It is installed from source. The code descends from [ArtyMcLabin/Gmail-MCP-Server](https://github.com/ArtyMcLabin/Gmail-MCP-Server), and contributor credits below are preserved from that history.
 
-This fork is not a separate npm or MCP Registry distribution. For the published package, registry listing, general support, and upstream development, use [ArtyMcLabin/Gmail-MCP-Server](https://github.com/ArtyMcLabin/Gmail-MCP-Server). To use the downstream additions, install from source as described below.
+[![CI](https://github.com/dansunotori/Gmail-MCP-Server/actions/workflows/ci.yml/badge.svg)](https://github.com/dansunotori/Gmail-MCP-Server/actions/workflows/ci.yml)
 
-[![CI](https://github.com/ArtyMcLabin/Gmail-MCP-Server/actions/workflows/ci.yml/badge.svg)](https://github.com/ArtyMcLabin/Gmail-MCP-Server/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/@artymclabin/gmail-mcp)](https://www.npmjs.com/package/@artymclabin/gmail-mcp)
+## Structured metadata and bulk download
 
-The maintained upstream package is also available through the [official MCP Registry](https://registry.modelcontextprotocol.io) (`io.github.ArtyMcLabin/Gmail-MCP-Server`) and [Smithery](https://smithery.ai/servers/rawceo/gmail-mcp).
-
-## Downstream additions
-
-- Four read-only structured tools for deterministic mailbox indexing without returning message content
+- Four read-only structured tools that return message IDs, dates and labels without message content, for building a local index
+- A `batch_fetch_window` tool that downloads every message received since a timestamp to a local directory with a manifest and cross-check
 - Gmail batch metadata requests for up to 50 messages, with bounded retry handling
 - Compatibility with the plain response-header objects returned by live Gaxios requests
 
-## Inherited upstream features
+## Mail tools
 
-The following capabilities come from the maintained upstream fork:
+The server also provides the following capabilities:
 
 - **Fixed reply threading** - auto-resolves `In-Reply-To` and `References` headers so email replies land in the correct thread instead of creating orphaned messages ([upstream PR #91](https://github.com/GongRzhe/Gmail-MCP-Server/pull/91), still pending)
 - **Send-as alias support** - optional `from` parameter for multi-identity email management (send from any configured Gmail alias)
@@ -69,12 +66,6 @@ A Model Context Protocol (MCP) server for Gmail integration in Claude Desktop wi
 
 ## Installation & Authentication
 
-### Installing the maintained upstream package from npm
-
-```bash
-npx @artymclabin/gmail-mcp auth
-```
-
 ### Installing from source
 
 ```bash
@@ -84,7 +75,7 @@ npm install
 npm run build
 ```
 
-> **Note**: The `npx @gongrzhe/server-gmail-autoauth-mcp` commands found in older docs reference the [unmaintained upstream fork](https://github.com/GongRzhe/Gmail-MCP-Server). The maintained upstream package is [`@artymclabin/gmail-mcp`](https://www.npmjs.com/package/@artymclabin/gmail-mcp); install this downstream fork from source to use its additions.
+> **Note**: This repository is not published to npm. Any `npx ... auth` commands you find in older documentation refer to other packages; use `node dist/index.js auth` from this checkout instead.
 
 ### Setting up Google Cloud credentials
 
@@ -197,27 +188,27 @@ docker run -i --rm \
 
 ### Cloud Server Authentication
 
-For cloud server environments (like n8n), you can specify a custom callback URL during authentication:
+For hosted environments where the browser cannot reach `localhost` on the server, you can specify a custom callback URL during authentication:
 
 ```bash
-node dist/index.js auth https://gmail.gongrzhe.com/oauth2callback
+node dist/index.js auth https://gmail.example.com/oauth2callback
 ```
 
-#### Setup Instructions for Cloud Environment
+#### Setup Instructions for a Hosted Environment
 
 1. **Configure Reverse Proxy:**
-   - Set up your n8n container to expose a port for authentication
-   - Configure a reverse proxy to forward traffic from your domain (e.g., `gmail.gongrzhe.com`) to this port
+   - Expose a port on the host for the authentication listener
+   - Configure a reverse proxy to forward traffic from your domain (e.g., `gmail.example.com`) to this port
 
 2. **DNS Configuration:**
-   - Add an A record in your DNS settings to resolve your domain to your cloud server's IP address
+   - Add an A record in your DNS settings to resolve your domain to your server's IP address
 
 3. **Google Cloud Platform Setup:**
-   - In your Google Cloud Console, add your custom domain callback URL (e.g., `https://gmail.gongrzhe.com/oauth2callback`) to the authorized redirect URIs list
+   - In your Google Cloud Console, add your custom domain callback URL (e.g., `https://gmail.example.com/oauth2callback`) to the authorized redirect URIs list
 
 4. **Run Authentication:**
    ```bash
-   node dist/index.js auth https://gmail.gongrzhe.com/oauth2callback
+   node dist/index.js auth https://gmail.example.com/oauth2callback
    ```
 
 5. **Configure in your application:**
@@ -379,9 +370,9 @@ The `auth` subcommand runs before the server starts and is unaffected - invoke i
 
 The server provides the following tools that can be used through Claude Desktop:
 
-### Structured index synchronisation tools
+### Structured metadata tools
 
-These tools support deterministic mailbox indexing:
+These tools return structured metadata only, so a client can build and maintain its own local index without receiving message content:
 
 | Tool | Input | Structured output |
 |-|-|-|
@@ -1106,4 +1097,4 @@ MIT
 
 ## Support
 
-If you encounter any issues or have questions, please [file an issue](https://github.com/ArtyMcLabin/Gmail-MCP-Server/issues).
+If you encounter any issues or have questions, please [file an issue](https://github.com/dansunotori/Gmail-MCP-Server/issues).

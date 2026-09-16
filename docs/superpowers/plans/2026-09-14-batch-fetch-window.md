@@ -1,12 +1,12 @@
 # `batch_fetch_window` Implementation Plan (reordered)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. This is mandatory, not a recommendation: `docs/gmail-batch-fetch-spec.md` records Sasha's instruction that the brainstorming, writing-plans and subagent-driven-development skills be followed in full. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. This is mandatory, not a recommendation: `docs/gmail-batch-fetch-spec.md` records that the brainstorming, writing-plans and subagent-driven-development skills are to be followed in full. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add one MCP tool, `batch_fetch_window`, that downloads every Gmail message received since a watermark into a caller-supplied directory with a manifest, window metadata, and a spam/trash/anywhere cross-check, so any client of this server can index a mailbox window without calling the Gmail API itself.
 
 **Architecture:** Three new units. `src/message-body.ts` owns the MIME walk, deferred-body fetch and HTML-to-text rules the spec states (done). `src/gmail-sync.ts` gained an error type, an auth-failure predicate, an exhaustive lister and a profile-address lookup (done). `src/batch-fetch-window.ts` orchestrates listing, fetching, filtering, atomic file publication and the cross-check, and returns a status the caller can trust; it is built up one behaviour per task with its own input and result types, unregistered. The last code task adds the zod schemas to `src/tools.ts`, the registry entry, the handler, the `src/index.ts` `case` and the docs, at which point the tool does everything its schema describes.
 
-**Why this order (read before judging any task):** every commit is reviewed by a Codex pre-commit gate as a finished unit of work. The previous plan (`2026-09-11`) registered the schema and tool definition in Task 4, so each early commit *declared* behaviour (`max_messages`, `cross_check`, "deletes and recreates `messages/`", `truncated`, `failures`) that later tasks were still to implement, and the gate refused every such commit as half-done. The gate was right. This plan therefore obeys two rules. **A commit never declares, describes, types, registers or documents a behaviour it does not implement:** the module's input type gains `cross_check` in the task that honours it and `max_messages` in the task that enforces it; the result type gains `belowBoundaryOrExcluded`, `failures`, `status`, `crossCheck`, `truncated`, `maxMessages` and `listingComplete` only in the tasks that compute them; registration, the zod schemas, the README and the CLI-spec note wait for Task 12. **A commit never leaves a window in which its own outputs can lie:** the first version of the module already deletes the three paths it owns before any fetch and publishes `window-metadata.json` then `manifest.json` by atomic rename, so no commit can leave a stale manifest describing deleted or partial files; `status` is introduced together with the failures it reports, and the cross-check lands with its inconsistency and listing-failure handling in the same commit, so `status` is trustworthy in every commit that has one. An unregistered, tested module is a complete unit (Task 3's `src/message-body.ts` passed the gate the same way).
+**Why this order (read before judging any task):** in the environment this plan was written for, every commit is reviewed by an automated pre-commit review gate as a finished unit of work. The previous plan (`2026-09-11`) registered the schema and tool definition in Task 4, so each early commit *declared* behaviour (`max_messages`, `cross_check`, "deletes and recreates `messages/`", `truncated`, `failures`) that later tasks were still to implement, and the gate refused every such commit as half-done. The gate was right. This plan therefore obeys two rules. **A commit never declares, describes, types, registers or documents a behaviour it does not implement:** the module's input type gains `cross_check` in the task that honours it and `max_messages` in the task that enforces it; the result type gains `belowBoundaryOrExcluded`, `failures`, `status`, `crossCheck`, `truncated`, `maxMessages` and `listingComplete` only in the tasks that compute them; registration, the zod schemas, the README and the CLI-spec note wait for Task 12. **A commit never leaves a window in which its own outputs can lie:** the first version of the module already deletes the three paths it owns before any fetch and publishes `window-metadata.json` then `manifest.json` by atomic rename, so no commit can leave a stale manifest describing deleted or partial files; `status` is introduced together with the failures it reports, and the cross-check lands with its inconsistency and listing-failure handling in the same commit, so `status` is trustworthy in every commit that has one. An unregistered, tested module is a complete unit (Task 3's `src/message-body.ts` passed the gate the same way).
 
 **Tech Stack:** TypeScript 5 (ES2020 modules, `strict`), `googleapis` Gmail v1 client, `zod` 3, `vitest` 4, Node `node:fs`/`node:path`. Tests run with `npx vitest run <file>`; the whole suite with `npm test`; build with `npm run build`. `tsconfig.json` excludes `src/**/*.test.ts` from `npm run typecheck`.
 
@@ -21,10 +21,10 @@
 - `manifest.json` is written last, by atomic rename from `messages/.publish-manifest.json`, and `window-metadata.json` is written first, the same way. From Task 4 on.
 - Every catch that records a failure and continues must first call `isAuthError` and rethrow when it is true.
 - Message files are pretty-printed with two-space indentation and a trailing newline.
-- **Commit policy:** each task ends in its own commit on `feat/batch-fetch-window` (the worktree branch; it is integrated into `experimental` at finish through finishing-a-development-branch). The Codex pre-commit gate reviews each commit as a finished unit; a gate finding is a defect to fix inside the same task, never a reason to bypass. `--no-verify`, `git commit -n`, `-F`, and every other bypass are banned by the repository hooks.
+- **Commit policy:** each task ends in its own commit on `feat/batch-fetch-window` (the worktree branch; it is integrated into `experimental` at finish through finishing-a-development-branch). The pre-commit review gate reviews each commit as a finished unit; a gate finding is a defect to fix inside the same task, never a reason to bypass. `--no-verify`, `git commit -n`, `-F`, and every other bypass are banned by the hooks in that environment.
 - **Honesty rule:** a commit never declares, describes, types, registers or documents a behaviour it does not implement, and never leaves a window in which its own outputs can misrepresent a run. Concretely: no zod schema, `toolDefinitions` entry, `index.ts` `case`, README or CLI-spec text before Task 12; no input field before the task that honours it; no result or manifest field before the task that computes it; no `status` value before the task that can produce it; no `status` that ignores a signal the same commit computes.
-- Repository rules from `CLAUDE.md`: run the GitNexus `impact` tool on any existing function you modify before editing it, and run `detect_changes` before every commit. Bash rules: one command per call, no `&&`/`;`/`||`, no output redirection, single-line commit messages with `-m`.
-- **Index freshness and impact analysis:** the name `Gmail-MCP-Server` is registered twice in GitNexus, for the main checkout (`/Users/sasha/Projects/Gmail-MCP-Server`, whose only indexed branch is `experimental`) and for this worktree. Resolving by name from the MCP server picks the main checkout, which does not contain this branch's symbols (verified on 2026-09-14: `impact` with `repo: "Gmail-MCP-Server", branch: "feat/batch-fetch-window"` answers `Branch "feat/batch-fetch-window" is not indexed for "Gmail-MCP-Server"`, and the CLI without `--branch` answers `Target 'resolveMessageBody' not found`). The worktree path with a pinned branch slot resolves them (verified the same day: `resolveMessageBody` found, `epistemic: "exact"`). So every task that edits an existing symbol first refreshes that slot and then measures the blast radius against it. Concretely, Tasks 5 to 12 each start with Step 0: run `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root (pins the checked-out tree into the `feat/batch-fetch-window` slot of this worktree's index), then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"` (CLI equivalent: `npx gitnexus impact batchFetchWindow --direction upstream --repo /Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window --branch feat/batch-fetch-window`), and record the callers and risk in the task report. A `Target … not found` answer means the refresh did not run or targeted the wrong index: fix that, never proceed on it. Until Task 12 the only caller is the test file, so LOW is expected; if HIGH or CRITICAL is reported, stop and report before editing. Task 12 additionally analyses `toolDefinitions` and `main`. `detect_changes` (same `repo` and `branch`) after the edit is not a substitute for `impact` before it.
+- Repository rules from `CLAUDE.md`: run the GitNexus `impact` tool on any existing function you modify before editing it, and run `detect_changes` before every commit. Shell rules from the executing environment's hooks: one command per call, no `&&`/`;`/`||`, no output redirection, single-line commit messages with `-m`.
+- **Index freshness and impact analysis:** the name `Gmail-MCP-Server` is registered twice in GitNexus, for the main checkout (whose only indexed branch is `experimental`) and for this worktree. Resolving by name from the MCP server picks the main checkout, which does not contain this branch's symbols (verified on 2026-09-14: `impact` with `repo: "Gmail-MCP-Server", branch: "feat/batch-fetch-window"` answers `Branch "feat/batch-fetch-window" is not indexed for "Gmail-MCP-Server"`, and the CLI without `--branch` answers `Target 'resolveMessageBody' not found`). The worktree path with a pinned branch slot resolves them (verified the same day: `resolveMessageBody` found, `epistemic: "exact"`). So every task that edits an existing symbol first refreshes that slot and then measures the blast radius against it. Concretely, Tasks 5 to 12 each start with Step 0: run `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root (pins the checked-out tree into the `feat/batch-fetch-window` slot of this worktree's index), then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"` (CLI equivalent: `npx gitnexus impact batchFetchWindow --direction upstream --repo <absolute path of the worktree> --branch feat/batch-fetch-window`), and record the callers and risk in the task report. A `Target … not found` answer means the refresh did not run or targeted the wrong index: fix that, never proceed on it. Until Task 12 the only caller is the test file, so LOW is expected; if HIGH or CRITICAL is reported, stop and report before editing. Task 12 additionally analyses `toolDefinitions` and `main`. `detect_changes` (same `repo` and `branch`) after the edit is not a substitute for `impact` before it.
 - `failureCode` renders exactly `error.code || error.response?.status || error.name`; body-part failure codes are `body-part-fetch: <code>` with a space after the colon.
 - Use `Read`/`Edit`/`Write` for files, never shell readers or `sed`.
 - Full existing suite (`npm test`) must pass after every task.
@@ -32,15 +32,7 @@
 
 ## Starting state
 
-Tasks 1 to 3 are committed on `feat/batch-fetch-window` (`b22f5c5`, `0d00d7f`, `65402ab`). The working tree also holds an unstaged, uncommitted attempt at the old plan's Tasks 4, 5 and 16 (`src/tools.ts`, `src/index.ts`, `src/batch-fetch-window.ts`, `src/batch-fetch-window.test.ts`) that the gate refused. Before Task 4 starts, the controller discards those four paths so Task 4 begins from the committed tree:
-
-```bash
-git checkout -- src/tools.ts src/index.ts
-rm src/batch-fetch-window.ts
-rm src/batch-fetch-window.test.ts
-```
-
-The one genuine improvement from that attempt, calendar validation of the watermark (the old schema accepted `2026-02-30`), is carried into Task 12's schema code below. Unstaged one-line edits to `CLAUDE.md` and `AGENTS.md` are GitNexus symbol-count rewrites; leave them alone and never add them to a commit.
+Tasks 1 to 3 are committed on `feat/batch-fetch-window` (`b22f5c5`, `0d00d7f`, `65402ab`). Historical note: when this plan was written, the working tree also held an unstaged, uncommitted attempt at the old plan's Tasks 4, 5 and 16 (`src/tools.ts`, `src/index.ts`, `src/batch-fetch-window.ts`, `src/batch-fetch-window.test.ts`) that the gate refused, and those four paths were discarded before Task 4 so it began from the committed tree. The one genuine improvement from that attempt, calendar validation of the watermark (the old schema accepted `2026-02-30`), is carried into Task 12's schema code below.
 
 ---
 
@@ -657,7 +649,7 @@ Run: `npm test` then `npm run typecheck`. Expected: both clean.
 
 - [ ] **Step 10: Check scope and commit**
 
-Run GitNexus `detect_changes` (scope `all`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`). Expected: one new module plus its test; no existing symbol changed.
+Run GitNexus `detect_changes` (scope `all`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`). Expected: one new module plus its test; no existing symbol changed.
 
 ```bash
 git add src/batch-fetch-window.ts src/batch-fetch-window.test.ts
@@ -677,7 +669,7 @@ git commit -m "Add batchFetchWindow core: list a window, fetch messages, publish
 
 - [ ] **Step 0: Refresh the index and run impact analysis**
 
-Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
+Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -791,7 +783,7 @@ Run: `npm test` then `npm run typecheck`. Expected: both clean.
 
 - [ ] **Step 6: Check scope and commit**
 
-Run GitNexus `detect_changes` (scope `all`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`).
+Run GitNexus `detect_changes` (scope `all`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`).
 
 ```bash
 git add src/batch-fetch-window.ts src/batch-fetch-window.test.ts
@@ -811,7 +803,7 @@ git commit -m "Filter batchFetchWindow messages by boundary and spam or trash la
 
 - [ ] **Step 0: Refresh the index and run impact analysis**
 
-Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
+Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -904,7 +896,7 @@ Run: `npm test` then `npm run typecheck`. Expected: both clean.
 
 - [ ] **Step 6: Check scope and commit**
 
-Run GitNexus `detect_changes` (scope `all`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`).
+Run GitNexus `detect_changes` (scope `all`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`).
 
 ```bash
 git add src/batch-fetch-window.ts src/batch-fetch-window.test.ts
@@ -921,7 +913,7 @@ git commit -m "Resolve deferred and HTML bodies in batchFetchWindow"
 
 - [ ] **Step 0: Refresh the index and run impact analysis**
 
-Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
+Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -977,7 +969,7 @@ Run: `npm test` then `npm run typecheck`. Expected: both clean.
 
 - [ ] **Step 6: Check scope and commit**
 
-Run GitNexus `detect_changes` (scope `all`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`).
+Run GitNexus `detect_changes` (scope `all`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`).
 
 ```bash
 git add src/batch-fetch-window.ts src/batch-fetch-window.test.ts
@@ -1000,7 +992,7 @@ This task introduces the first tolerant `catch` in the module, so it also introd
 
 - [ ] **Step 0: Refresh the index and run impact analysis**
 
-Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
+Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1207,7 +1199,7 @@ Run: `npm test` then `npm run typecheck`. Expected: both clean.
 
 - [ ] **Step 10: Check scope and commit**
 
-Run GitNexus `detect_changes` (scope `all`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`).
+Run GitNexus `detect_changes` (scope `all`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`).
 
 ```bash
 git add src/batch-fetch-window.ts src/batch-fetch-window.test.ts
@@ -1230,7 +1222,7 @@ The cross-check lands whole in one commit: the switch, the counts, the fold of `
 
 - [ ] **Step 0: Refresh the index and run impact analysis**
 
-Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
+Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
 
 - [ ] **Step 1: Extend the `run` helper and write the failing tests**
 
@@ -1489,7 +1481,7 @@ Run: `npm test` then `npm run typecheck`. Expected: both clean.
 
 - [ ] **Step 10: Check scope and commit**
 
-Run GitNexus `detect_changes` (scope `all`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`).
+Run GitNexus `detect_changes` (scope `all`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`).
 
 ```bash
 git add src/batch-fetch-window.ts src/batch-fetch-window.test.ts
@@ -1509,7 +1501,7 @@ git commit -m "Add the optional spam, trash and anywhere cross-check to batchFet
 
 - [ ] **Step 0: Refresh the index and run impact analysis**
 
-Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
+Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
 
 - [ ] **Step 1: Extend the `run` helper and write the failing tests**
 
@@ -1636,7 +1628,7 @@ Run: `npm test` then `npm run typecheck`. Expected: both clean.
 
 - [ ] **Step 6: Check scope and commit**
 
-Run GitNexus `detect_changes` (scope `all`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`).
+Run GitNexus `detect_changes` (scope `all`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`).
 
 ```bash
 git add src/batch-fetch-window.ts src/batch-fetch-window.test.ts
@@ -1656,7 +1648,7 @@ git commit -m "Return a truncated result from batchFetchWindow above max_message
 
 - [ ] **Step 0: Refresh the index and run impact analysis**
 
-Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
+Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool with `target: "batchFetchWindow"`, `direction: "upstream"`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`. Record the callers and the risk level in the task report. Expected: the target resolves with `epistemic: "exact"`, the only caller is `src/batch-fetch-window.test.ts`, risk LOW. A `not found` answer means the wrong index was queried; fix that before editing. If HIGH or CRITICAL, stop and report before editing.
 
 - [ ] **Step 1: Replace the Task 4 refusal test and write the failing tests**
 
@@ -1835,7 +1827,7 @@ Run: `npm test` then `npm run typecheck`. Expected: both clean.
 
 - [ ] **Step 10: Check scope and commit**
 
-Run GitNexus `detect_changes` (scope `all`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`).
+Run GitNexus `detect_changes` (scope `all`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`).
 
 ```bash
 git add src/batch-fetch-window.ts src/batch-fetch-window.test.ts
@@ -1867,7 +1859,7 @@ This is the one task that exposes the tool. Every behaviour the schema describes
 
 - [ ] **Step 1: Refresh the index and run impact analysis**
 
-Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool three times, each with `direction: "upstream"`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"` and `branch: "feat/batch-fetch-window"`: `target: "batchFetchWindow"` (this task changes its types and both returns), `target: "toolDefinitions"`, and `target: "main"` (the `src/index.ts` entry point that contains the request handler). Report the callers (`src/batch-fetch-window.test.ts`; `toMcpTools`, `getToolByName`, index.ts registration) and the risk in the task report. All three are expected LOW to MEDIUM since only an array entry and a `case` are appended and the module's callers are its tests; if any reports HIGH or CRITICAL, stop and report before editing.
+Run: `npx gitnexus analyze --branch feat/batch-fetch-window --index-only` from the worktree root. Then run the GitNexus `impact` tool three times, each with `direction: "upstream"`, `repo: "<absolute path of the worktree>"` and `branch: "feat/batch-fetch-window"`: `target: "batchFetchWindow"` (this task changes its types and both returns), `target: "toolDefinitions"`, and `target: "main"` (the `src/index.ts` entry point that contains the request handler). Report the callers (`src/batch-fetch-window.test.ts`; `toMcpTools`, `getToolByName`, index.ts registration) and the risk in the task report. All three are expected LOW to MEDIUM since only an array entry and a `case` are appended and the module's callers are its tests; if any reports HIGH or CRITICAL, stop and report before editing.
 
 - [ ] **Step 2: Write the failing schema tests**
 
@@ -2327,7 +2319,7 @@ The first four tools never request or return subjects, addresses, snippets, head
 In `docs/gmail-cli-spec.md`, after the paragraph ending `...which needs scripted "list every message since watermark" and "read message in full" operations.` (line 10), insert a blank line and:
 
 ```
-Note (2026-09-11): the routine PA pass now uses the `batch_fetch_window` MCP tool (see
+Note (2026-09-11): a routine mailbox pass can use the `batch_fetch_window` MCP tool (see
 `docs/superpowers/specs/2026-09-11-batch-fetch-window-design.md`); the CLIs below remain
 optional, for targeted reads.
 ```
@@ -2338,7 +2330,7 @@ Run: `npm test`, then `npm run typecheck`, then `npm run build`. Expected: all c
 
 - [ ] **Step 18: Check scope and commit**
 
-Run GitNexus `detect_changes` (scope `all`, `repo: "/Users/sasha/Projects/Gmail-MCP-Server/.worktrees/batch-fetch-window"`, `branch: "feat/batch-fetch-window"`). Expected: `toolDefinitions` and the request handler in `src/index.ts` changed; affected processes are tool listing and dispatch.
+Run GitNexus `detect_changes` (scope `all`, `repo: "<absolute path of the worktree>"`, `branch: "feat/batch-fetch-window"`). Expected: `toolDefinitions` and the request handler in `src/index.ts` changed; affected processes are tool listing and dispatch.
 
 ```bash
 git add src/tools.ts src/index.ts src/batch-fetch-window.ts src/batch-fetch-window.test.ts README.md docs/gmail-cli-spec.md
@@ -2347,7 +2339,7 @@ git commit -m "Register batch_fetch_window: schema, handler, server case and doc
 
 ---
 
-### Task 13: Smoke run against the real mailbox
+### Task 13: Smoke run against a live mailbox
 
 **Files:**
 - Create: `tmp/smoke-batch-fetch-window.mjs` (the `tmp/` directory is gitignored; nothing in this task is committed unless Step 5 finds an unlisted behaviour, in which case only `docs/superpowers/specs/2026-09-11-batch-fetch-window-design.md` is committed)
@@ -2435,7 +2427,7 @@ console.error('messages:', fs.readdirSync(path.join(outputDir, 'messages')).leng
 - [ ] **Step 2: Run it**
 
 Run: `node tmp/smoke-batch-fetch-window.mjs`
-Expected: stderr shows the annotations `{"title":"Batch Fetch Window","readOnlyHint":false,"destructiveHint":true,"idempotentHint":false}`, the process exits 0, stdout shows a JSON summary with `status` `ok` or `incomplete` and `truncated: false`, `emailAddress` already replaced and `triage` replaced by `triageCount`, and `tmp/bfw-smoke/` contains `manifest.json`, `window-metadata.json` and `messages/`. If `status` is `incomplete`, the `failures` array or `crossCheck.unexplainedIds` shows why; paste the stdout JSON as printed. A `truncated` result is handled by the script itself: it retries once with `max_messages: 20000` and exits 1 if the mailbox still exceeds that, in which case the smoke step has not passed; choose a nearer watermark (edit the `24 * 60 * 60 * 1000` term to a few hours) and rerun rather than reporting anything from the directory. Never paste `manifest.json`, `window-metadata.json`, or any `messages/*.json` content into the report. If the script prints `tool returned an error`, read the text: for a credentials message run `node dist/index.js auth` (this opens a browser; ask Sasha if you cannot complete it) and rerun; for anything else, treat it as a defect, fix it, and rerun.
+Expected: stderr shows the annotations `{"title":"Batch Fetch Window","readOnlyHint":false,"destructiveHint":true,"idempotentHint":false}`, the process exits 0, stdout shows a JSON summary with `status` `ok` or `incomplete` and `truncated: false`, `emailAddress` already replaced and `triage` replaced by `triageCount`, and `tmp/bfw-smoke/` contains `manifest.json`, `window-metadata.json` and `messages/`. If `status` is `incomplete`, the `failures` array or `crossCheck.unexplainedIds` shows why; paste the stdout JSON as printed. A `truncated` result is handled by the script itself: it retries once with `max_messages: 20000` and exits 1 if the mailbox still exceeds that, in which case the smoke step has not passed; choose a nearer watermark (edit the `24 * 60 * 60 * 1000` term to a few hours) and rerun rather than reporting anything from the directory. Never paste `manifest.json`, `window-metadata.json`, or any `messages/*.json` content into the report. If the script prints `tool returned an error`, read the text: for a credentials message run `node dist/index.js auth` (this opens a browser; ask the user if you cannot complete it) and rerun; for anything else, treat it as a defect, fix it, and rerun.
 
 - [ ] **Step 3: Inspect one output file**
 
@@ -2448,7 +2440,7 @@ Leave `tmp/bfw-smoke/` in place for the user to inspect; it is gitignored.
 
 - [ ] **Step 5: Final verification and report**
 
-Run: `git status --short` and confirm nothing is left uncommitted except `tmp/` and the GitNexus one-line edits to `CLAUDE.md` and `AGENTS.md`.
+Run: `git status --short` and confirm nothing is left uncommitted except `tmp/`.
 Run: `npm test` one final time and paste the summary line.
 
 The report must include: the exact test command and its summary output, the smoke stdout JSON (already redacted by the script), and, for each of the sixteen behaviour guarantees listed under "Behaviour guarantees, stated explicitly" in the design document, the name of the test that pins it. Before writing the report, re-read that section: if the implementation as committed has an observable behaviour the list does not name, add the entry to the design document in this task, commit it with the message `Record an additional batch_fetch_window behaviour guarantee`, and include it in the report.

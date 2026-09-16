@@ -384,8 +384,8 @@ describe('batchFetchWindow: owned paths and atomic publication', () => {
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
   });
 
-  // Regression guard: passes already, because Step 3 touches nothing outside the three owned
-  // paths; it protects that property against the deletions Step 7 adds.
+  // Regression guard: the tool only ever deletes the three paths it owns, and this pins that
+  // property so a future change to the deletion logic cannot widen it.
   it('leaves no publish temporaries and never touches unrelated caller files', async () => {
     fs.writeFileSync(path.join(dir, 'notes.txt'), 'keep me');
     fs.writeFileSync(path.join(dir, 'manifest.json.tmp-123'), 'also keep me');
@@ -584,7 +584,7 @@ describe('batchFetchWindow: per-message failures', () => {
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
   });
 
-  // Regression guard: passes already, because Task 2's lister rethrows auth errors on any page.
+  // Regression guard: listAllGmailMessageIds rethrows auth errors on any page, so the run aborts.
   it('rejects on a 401 on window page two and writes nothing', async () => {
     const unauthorised = httpError(401);
     const gmail = fakeGmail({ lists: { [WINDOW_QUERY]: [{ ids: ['a'] }, unauthorised] } });
@@ -657,7 +657,7 @@ describe('batchFetchWindow: body-part failures', () => {
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true);
   });
 
-  // Regression guard: passes already, because Task 3's resolveMessageBody rethrows auth errors.
+  // Regression guard: resolveMessageBody rethrows auth errors instead of recording them as failures.
   it('rejects on a 401 from a deferred body fetch', async () => {
     const unauthorised = httpError(401);
     const gmail = fakeGmail({
@@ -738,8 +738,8 @@ describe('batchFetchWindow: cross-check', () => {
     expect(readJson(path.join(dir, 'manifest.json')).crossCheck).toEqual(expected);
   });
 
-  // Regression guard: passes already, because nothing lists spam, trash or anywhere before
-  // Step 3; it fails the moment Step 3 runs those listings without honouring cross_check.
+  // Regression guard: with cross_check disabled the spam, trash and anywhere listings must not
+  // run at all; this fails if they are ever issued unconditionally.
   it('skips the cross-check when disabled', async () => {
     const gmail = fakeGmail({ lists: { [WINDOW_QUERY]: [{ ids: [] }] } });
     const result = await run(gmail, dir, { cross_check: false });
@@ -820,8 +820,8 @@ describe('batchFetchWindow: cross-check outcomes', () => {
     expect(result.crossCheck).toMatchObject({ complete: false, consistent: false });
   });
 
-  // Passes at this point only because Step 3's listings have no catch, so the 401 propagates;
-  // it exists to fail the moment Step 7 adds a catch without the isAuthError rethrow.
+  // The cross-check listings catch non-auth failures and report them as incomplete; this pins
+  // that a 401 is rethrown through the isAuthError check rather than swallowed by that catch.
   it('rejects on a 401 from the spam cross-check and leaves no manifest', async () => {
     const unauthorised = httpError(401);
     const gmail = fakeGmail({

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Standalone test for draft lifecycle Gmail API calls.
- * Validates the same API operations our new MCP tools (send_draft / delete_draft / update_draft)
- * will perform — running directly against the Gmail API with the MCP's OAuth credential.
+ * Standalone live test for draft lifecycle Gmail API calls.
+ * Validates the API operations behind the send_draft / delete_draft / update_draft tools by
+ * running directly against the Gmail API with this server's OAuth credential, so the
+ * underlying behaviour can be checked without going through an MCP client.
  *
- * Why standalone: the running MCP server holds the OLD compiled code in memory.
- * We can't exercise the new tools without restarting Claude Code, but we CAN
- * verify the underlying API behavior the new handlers depend on.
+ * Set GMAIL_TEST_ADDRESS to the address of the authenticated mailbox; test mail is sent
+ * from and to that address and trashed at the end.
  *
  * Scenarios:
  *  1. Create draft → verify it exists in Drafts
@@ -30,7 +30,11 @@ const CREDENTIALS_PATH = path.join(CONFIG_DIR, 'credentials.json');
 // Marker for easy identification + manual cleanup if something goes sideways
 const STAMP = new Date().toISOString().replace(/[:.]/g, '-');
 const MARKER = `[MCP-DRAFT-LIFECYCLE-TEST-${STAMP}]`;
-const SELF = 'luca.ambrosini@sartiq.com';
+const SELF = process.env.GMAIL_TEST_ADDRESS;
+if (!SELF) {
+    console.error('Set GMAIL_TEST_ADDRESS to the address of the authenticated mailbox before running this test.');
+    process.exit(2);
+}
 
 function loadAuth() {
     const keysFile = JSON.parse(fs.readFileSync(OAUTH_PATH, 'utf8'));
@@ -148,7 +152,7 @@ async function main() {
         for (const f of fails) console.log(`  - ${f.name}: ${f.detail}`);
         process.exit(1);
     }
-    console.log('All draft-lifecycle API calls behave as expected. Safe to wire up MCP tools.');
+    console.log('All draft-lifecycle API calls behave as expected.');
 }
 
 main().catch(err => {

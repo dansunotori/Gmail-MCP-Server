@@ -8,8 +8,7 @@ Date: 2026-09-11. Source request: `docs/gmail-cli-spec.md`. Depends on the
 
 Add three command-line entry points, `gmail-search`, `gmail-get-message`, and
 `gmail-download-attachment`, so scripts and Claude sessions can search, read, and download
-Gmail without an MCP session. Output contracts mirror the Outlook CLIs in
-`~/Projects/outlook-claude-mcp` (`docs/search-mail-cli.md`, `docs/get-message-cli.md`).
+Gmail without an MCP session. The output contracts are defined in full in this document.
 
 ## Non-negotiables
 
@@ -189,8 +188,8 @@ Flow: one `users.messages.get({ format: 'full' })`. Headers via `headerValue`. `
   on success, so a document with a missing body must not be emitted. `--no-body` never
   fetches body parts and is unaffected.
 
-Dependencies added: `turndown` (runtime) and `@types/turndown` (dev), the library the Outlook
-`get-message` CLI uses.
+Dependencies added: `turndown` (runtime) and `@types/turndown` (dev) for HTML-to-Markdown
+conversion.
 
 ## `gmail-download-attachment`
 
@@ -294,15 +293,14 @@ The full existing suite must pass after the extraction.
 ## Documentation
 
 - `docs/gmail-cli.md`: setup (`npm run build`, `gmail-search --auth`, `npm link`), the three
-  usage blocks, output shapes, exit codes, and the epoch-seconds note, laid out like the
-  Outlook `search-mail-cli.md`.
+  usage blocks, output shapes, exit codes, and the epoch-seconds note.
 - README: a "Command-line tools" section linking to `docs/gmail-cli.md` and stating the Node
   18.3 requirement. `package.json` `engines.node` is `>=18.3.0`.
 
 ## Definition of done
 
 - `npm test`, `npm run build`, and `npm link` succeed.
-- Smoke run against the real mailbox: `gmail-search -q "after:<epoch minus 1 day>"`, one ID
+- Smoke run against a live mailbox: `gmail-search -q "after:<epoch minus 1 day>"`, one ID
   piped to `gmail-get-message`, one attachment downloaded to a scratch directory, and the JSON
   shapes checked against this document. The commands and their stderr are in the report;
   stdout is summarised, not pasted, to keep mailbox content out of the transcript.

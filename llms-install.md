@@ -1,10 +1,11 @@
-# Gmail AutoAuth MCP Installation Guide
+# Gmail MCP Server Installation Guide
 
-This guide will help you install and configure the Gmail AutoAuth MCP server for managing Gmail operations through Claude Desktop with auto authentication support.
+This guide will help you install and configure the Gmail MCP server for managing Gmail operations through an MCP client such as Claude Desktop, with automatic OAuth authentication.
 
 ## Requirements
 
 - Node.js and npm installed
+- A local clone of this repository, built with `npm install` and `npm run build`
 - Access to create a Google Cloud Project
 - Local directory for configuration storage
 - Web browser for OAuth authentication
@@ -31,9 +32,9 @@ This guide will help you install and configure the Gmail AutoAuth MCP server for
    mv gcp-oauth.keys.json ~/.gmail-mcp/
    ```
 
-3. Run authentication:
+3. Run authentication from the repository checkout:
    ```bash
-   npx @artymclabin/gmail-mcp auth
+   node dist/index.js auth
    ```
    This will:
    - Look for gcp-oauth.keys.json in current directory or ~/.gmail-mcp/
@@ -43,7 +44,7 @@ This guide will help you install and configure the Gmail AutoAuth MCP server for
 
    By default the local OAuth server listens on port 3000 at /oauth2callback. To use a different port or path (for example if port 3000 is unavailable), pass a full callback URL; the listener binds to the port and path from that URL:
    ```bash
-   npx @artymclabin/gmail-mcp auth http://localhost:8080/oauth2callback
+   node dist/index.js auth http://localhost:8080/oauth2callback
    ```
    The URL must exactly match one of the authorized redirect URIs registered in the Google Cloud Console.
 
@@ -52,9 +53,9 @@ This guide will help you install and configure the Gmail AutoAuth MCP server for
    {
      "mcpServers": {
        "gmail": {
-         "command": "npx",
+         "command": "node",
          "args": [
-           "@artymclabin/gmail-mcp"
+           "/absolute/path/to/Gmail-MCP-Server/dist/index.js"
          ]
        }
      }

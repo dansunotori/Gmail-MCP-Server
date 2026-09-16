@@ -343,7 +343,7 @@ async function main() {
     const server = new Server(
         {
             name: "gmail",
-            version: "1.0.0",
+            version: "1.2.3",
         },
         {
             capabilities: {

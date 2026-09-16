@@ -8,16 +8,16 @@ user-invocable: false
 
 ## Project Philosophy (Read First - Governs Every Review)
 
-**SSoT: README.md § Philosophy.** This fork is **lean and pragmatic**. Local stdio MCP server, minimal dependencies, maintainer dogfoods it daily - "if I wouldn't run it or maintain it myself, it doesn't go in." The **maximalist** direction lives in the downstream fork **klodr/gmail-mcp** (unaffiliated); feature-hungry users get redirected there, politely, with the standard caveat that we don't track its security.
+This project is **lean and pragmatic**: a local stdio MCP server with minimal dependencies. A change goes in only if the maintainer would run and maintain it themselves.
 
 **Every PR and issue assessment MUST include a philosophy verdict: MATCH / MISMATCH / NEUTRAL.**
 
 Heuristics:
 - **MATCH:** bugfixes, correctness/reliability of the existing surface, docs accuracy, test coverage for existing behavior, zero-dependency improvements, credential-safety per the local threat model.
-- **MISMATCH (default decline + redirect to klodr fork):** new feature surface the maintainer wouldn't use daily, new dependencies, infra/deployment expansion (Docker images, hosting), hardening classes the local threat model explicitly excludes (see Security Standards below), capabilities with an existing simple workaround (e.g. registering the server twice ≈ multi-account).
+- **MISMATCH (default decline):** new feature surface the maintainer wouldn't use daily, new dependencies, infra/deployment expansion (Docker images, hosting), hardening classes the local threat model explicitly excludes (see Security Standards below), capabilities with an existing simple workaround (e.g. registering the server twice ≈ multi-account).
 - **NEUTRAL:** repo hygiene, triage, support/environmental issues, distribution of the existing lean server.
 
-MISMATCH handling: don't build it, don't merge it. **Pitch the item to the maintainer FIRST (angry-king style) and close only after his explicit call** - never auto-close a contributor's PR/issue on philosophy grounds alone (Arty directive 2026-07-10: outward-facing closures are his judgment, MISMATCH verdict or not). Once he says close: comment kindly, point to klodr/gmail-mcp, close.
+MISMATCH handling: don't build it, don't merge it. **Pitch the item to the maintainer FIRST and close only after their explicit call** - never auto-close a contributor's PR/issue on philosophy grounds alone; outward-facing closures are the maintainer's judgment, MISMATCH verdict or not. Once they say close: comment kindly, explain the scope decision, close.
 
 ## Branch Workflow
 
@@ -27,15 +27,14 @@ MISMATCH handling: don't build it, don't merge it. **Pitch the item to the maint
 2. PR merges and own changes go into `experimental` first. Never merge PRs directly into `main`.
 3. After a batch is complete on `experimental`: wait for user confirmation, then merge `experimental` → `main`.
 4. **After every push to any branch:** run `gh run list --branch {branch} --limit 1` and verify CI passes. If CI fails, fix immediately - do NOT leave broken CI for the user to discover. This applies to every `git push` in the session, not just merges.
-5. **End of each dev round (batch merged to `experimental`, awaiting soak):** create a task in the user's Personal CRM (`mcp__claude_ai_Personal_CRM__crm_create_task`, load via ToolSearch) titled "Promote Gmail-MCP experimental→main if soak clean", due ~1 week out (or whatever fits the round's size). The user tracks promotions there, not in GitHub. (Arty directive 2026-07-11.)
+5. **End of each dev round (batch merged to `experimental`, awaiting soak):** remind the user that `experimental` is awaiting promotion to `main` once the soak is clean. The user decides where to track that reminder.
 
 ## Distribution
 
-This downstream fork is not a separate npm, MCP Registry, or Smithery distribution. The package and registry metadata describe the upstream release and remain only for source compatibility.
+This repository is installed from source only. `package.json` is marked `"private": true` and there is no npm or MCP Registry listing, by design.
 
-- Do not create or push release tags from this fork.
-- Do not publish the upstream package or registry identities from this fork.
-- Direct users who need the published package or general upstream support to `ArtyMcLabin/Gmail-MCP-Server`.
+- Do not create or push release tags.
+- Do not run `npm publish`, remove the `private` flag, or submit the server to any registry.
 
 ## PR Review Checklist (All Steps Mandatory)
 
@@ -51,7 +50,7 @@ This downstream fork is not a separate npm, MCP Registry, or Smithery distributi
 
 ### Step 3: Security Audit (Conditional)
 - **Skip security audit for PRs with "help wanted" label that are still waiting for community testing/volunteers.** These PRs are parked - auditing them wastes resources. Report a one-liner instead: "PR #N: still waiting for community help, no action needed."
-- For all other PRs: run comprehensive security audit using `security-auditor` subagent.
+- For all other PRs: run a comprehensive security audit using a general-purpose subagent with a security-review brief.
 - Explicitly report verdict: "Security audit: **PASS**" or "Security audit: **FAIL** - [findings]"
 - Never present a PR review to user without a completed security audit (unless skipped per above).
 - For FAIL verdicts: list all findings with severity (CRITICAL/HIGH/MEDIUM/LOW/INFO).
@@ -63,14 +62,14 @@ This downstream fork is not a separate npm, MCP Registry, or Smithery distributi
 - Note missing tests, documentation gaps, dependency concerns.
 
 ### Step 5: Philosophy Alignment (Mandatory)
-- Assess against **Project Philosophy** (top of this file; SSoT = README.md § Philosophy).
+- Assess against **Project Philosophy** (top of this file).
 - Verdict per PR: **MATCH / MISMATCH / NEUTRAL** with one-line reasoning.
-- MISMATCH default action: request changes or close + redirect to klodr/gmail-mcp - regardless of code quality or security PASS.
+- MISMATCH default action: request changes or close with a scope explanation - regardless of code quality or security PASS.
 
 ### Step 6: Present Findings
 - Each PR gets: security verdict, **philosophy verdict**, comment summary, label status, code review findings, recommendation (approve/request changes/close).
 - **All tables (PRs and issues) MUST include the author/opener name AND the created date** (last-update date too when it differs meaningfully). Never omit who created the PR/issue or when - the user needs both for context.
-- **Pitch decisions in Angry King style by default** (`~/.claude/output-styles/angry-king.md`): one PR at a time, self-contained ≤300-char pitch with date + author, closed A/B/C options, `→ rec:` marked. No technical detail unless asked.
+- **Pitch decisions tersely by default:** one PR at a time, self-contained ≤300-char pitch with date + author, closed A/B/C options, `→ rec:` marked. No technical detail unless asked.
 
 ## Merge Flow (When Approving)
 
@@ -93,13 +92,13 @@ After merging a PR that adds new tools or features, rebuild from source (`npm ru
 
 ## Staleness Policy
 
-- PRs with "help wanted" label: keep open for up to **8 months from creation** (Arty directive 2026-07-10, supersedes the earlier 6-month rule). Close as stale if no community participation by then.
+- PRs with "help wanted" label: keep open for up to **8 months from creation**. Close as stale if no community participation by then.
 - Stale PRs without label: assess on a case-by-case basis.
 
 ## Issue Review (Same Rules Apply)
 
 When scanning issues:
-- **Philosophy verdict (MATCH / MISMATCH / NEUTRAL) mandatory per issue**, same heuristics as PRs. Feature requests default MISMATCH -> decline + redirect to klodr/gmail-mcp unless maintainer would use it daily.
+- **Philosophy verdict (MATCH / MISMATCH / NEUTRAL) mandatory per issue**, same heuristics as PRs. Feature requests default MISMATCH -> decline unless the maintainer would use it daily.
 - Read all comments.
 - Check labels ("help wanted", "needs help", "bug", "enhancement", etc.).
 - Assess actionability: is someone working on it? Is it stale? Is help still needed?
