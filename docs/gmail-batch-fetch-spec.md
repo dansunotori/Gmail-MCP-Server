@@ -46,15 +46,13 @@ for `readOnlyHint: true`.)
   `manifest.json` and `window-metadata.json`. It must delete and recreate `messages/` on every
   run (numbered files are replaced each fetch) and must not touch anything else in `output_dir`.
   Guard (added 2026-09-15, marker added 2026-09-16): before deleting anything, the tool checks
-  that `messages/` is absent, empty, or holds nothing but regular files named `NNN.json` or
-  `.publish-*` plus the `.batch-fetch-window` marker file the tool writes into `messages/`
-  immediately after creating it on every run. An output written before the marker existed is
-  accepted when the `manifest.json` beside it lists every `NNN.json` present, each under that
-  same `messages/` path. If `messages/` holds anything else (a foreign name, a directory or
-  symlink under an owned name, or a pattern-named file the manifest does not list), or exists
-  but is not a directory, the tool throws `refusing to delete …` naming the first offending
-  entry and leaves every earlier output in place, so an `output_dir` pointed at the wrong
-  place cannot erase a caller's data.
+  that `messages/` is absent, empty, or holds the `.batch-fetch-window` marker file the tool
+  writes into `messages/` immediately after creating it on every run and nothing but regular
+  files named `NNN.json` or `.publish-*`. If `messages/` has no marker, holds anything else (a
+  foreign name, or a directory or symlink under an owned name), or exists but is not a
+  directory, the tool throws `refusing to delete …` naming the offending entry and leaves
+  every earlier output in place, so an `output_dir` pointed at the wrong place cannot erase
+  data that is not the tool's own. The marker is private to the tool.
 - `max_messages` (integer, optional, default 2000): a hard cap on how many window IDs the tool
   will download. If the listing exceeds it, the tool stops, downloads nothing, and returns
   `truncated: true` with the listed count so the caller can rerun with a larger cap. Never
