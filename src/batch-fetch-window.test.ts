@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
-import { batchFetchWindow, handleBatchFetchWindow, type BatchFetchWindowInput } from './batch-fetch-window.js';
+import { MESSAGES_DIR_MARKER, batchFetchWindow, handleBatchFetchWindow, type BatchFetchWindowInput } from './batch-fetch-window.js';
 import { GMAIL_RETRY_MAX_ATTEMPTS } from './gmail-sync.js';
 import { hasScope } from './scopes.js';
 import {
@@ -126,6 +126,11 @@ function run(gmail: ReturnType<typeof fakeGmail>, dir: string, overrides: Partia
 }
 
 const readJson = (file: string) => JSON.parse(fs.readFileSync(file, 'utf8'));
+const MARKER = MESSAGES_DIR_MARKER;
+
+// The message files of a run, sorted, without the ownership marker.
+const messageFiles = (dir: string) =>
+  fs.readdirSync(path.join(dir, 'messages')).filter(name => name !== MARKER).sort();
 
 // Every regular file under a directory with its exact bytes, so a test can prove a run
 // touched nothing.
@@ -165,7 +170,7 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     expect(result.inWindow).toBe(3);
     expect(gmail.get).toHaveBeenCalledTimes(3);
     expect(gmail.get).toHaveBeenCalledWith({ userId: 'me', id: 'a', format: 'full' });
-    expect(fs.readdirSync(path.join(dir, 'messages')).sort()).toEqual(['001.json', '002.json', '003.json']);
+    expect(messageFiles(dir)).toEqual(['001.json', '002.json', '003.json']);
     expect(readJson(path.join(dir, 'messages', '001.json')).id).toBe('a');
     expect(readJson(path.join(dir, 'messages', '002.json')).id).toBe('c');
     expect(readJson(path.join(dir, 'messages', '003.json')).id).toBe('b');
@@ -253,7 +258,7 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     expect(result.listed).toBe(0);
     expect(result.inWindow).toBe(0);
     expect(result.triage).toEqual([]);
-    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual([]);
+    expect(messageFiles(dir)).toEqual([]);
     expect(readJson(path.join(dir, 'manifest.json')).messages).toEqual([]);
     expect(readJson(path.join(dir, 'window-metadata.json')).messages).toEqual([]);
   });
@@ -300,13 +305,25 @@ describe('batchFetchWindow: owned paths and atomic publication', () => {
   beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
   afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
 
-  it('replaces messages/ completely on rerun', async () => {
-    fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'messages', '009.json'), '{}');
+  it('writes an ownership marker into messages/ on every run', async () => {
     const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
     await run(gmail, dir);
 
-    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual(['001.json']);
+    expect(fs.readdirSync(path.join(dir, 'messages')).sort()).toEqual([MARKER, '001.json']);
+    expect(fs.statSync(path.join(dir, 'messages', MARKER)).isFile()).toBe(true);
+  });
+
+  it('replaces the files of a previous run completely on rerun, including a stale higher-numbered file', async () => {
+    const first = fakeGmail({ lists: windowOnly(['x', 'y']), messages: { x: message('x', BOUNDARY + 1), y: message('y', BOUNDARY + 2) } });
+    await run(first, dir);
+    expect(messageFiles(dir)).toEqual(['001.json', '002.json']);
+
+    const second = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    await run(second, dir);
+
+    expect(messageFiles(dir)).toEqual(['001.json']);
+    expect(readJson(path.join(dir, 'messages', '001.json')).id).toBe('a');
+    expect(readJson(path.join(dir, 'manifest.json')).messages.map((entry: { id: string }) => entry.id)).toEqual(['a']);
   });
 
   it('refuses to delete a messages/ that holds files the tool did not write, before touching anything', async () => {
@@ -314,14 +331,90 @@ describe('batchFetchWindow: owned paths and atomic publication', () => {
     await run(first, dir);
     fs.writeFileSync(path.join(dir, 'messages', 'photo.jpg'), 'not ours');
     fs.mkdirSync(path.join(dir, 'messages', 'archive'));
+    const before = snapshotDir(dir);
 
     const second = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
     await expect(run(second, dir)).rejects.toThrow(/refusing to delete .*messages.*archive, photo\.jpg/);
 
     expect(second.get).not.toHaveBeenCalled();
-    expect(fs.readdirSync(path.join(dir, 'messages')).sort()).toEqual(['001.json', 'archive', 'photo.jpg']);
+    expect(snapshotDir(dir)).toEqual(before);
+    expect(fs.readdirSync(path.join(dir, 'messages')).sort()).toEqual([MARKER, '001.json', 'archive', 'photo.jpg']);
     expect(readJson(path.join(dir, 'manifest.json')).messages[0].id).toBe('old');
     expect(readJson(path.join(dir, 'window-metadata.json')).messages[0].id).toBe('old');
+  });
+
+  it('refuses a messages/ without the ownership marker or a manifest listing its files, even when the names match the pattern', async () => {
+    fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'messages', '001.json'), 'someone else wrote this');
+    fs.writeFileSync(path.join(dir, 'manifest.json'), 'someone else wrote this too');
+    const before = snapshotDir(dir);
+
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    await expect(run(gmail, dir)).rejects.toThrow(new RegExp(`refusing to delete .*messages: it has no ${MARKER} marker and .*manifest\\.json does not list 001\\.json`));
+
+    expect(gmail.get).not.toHaveBeenCalled();
+    expect(snapshotDir(dir)).toEqual(before);
+  });
+
+  it('refuses a messages/ without the marker when there is no manifest beside it at all', async () => {
+    fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'messages', '001.json'), '{}');
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    await expect(run(gmail, dir)).rejects.toThrow(/refusing to delete .*messages: it has no .* marker and .*manifest\.json does not list 001\.json/);
+    expect(fs.readFileSync(path.join(dir, 'messages', '001.json'), 'utf8')).toBe('{}');
+  });
+
+  // Outputs written before the marker existed carry a manifest that lists every message file;
+  // that listing is accepted as proof of ownership so an upgrade needs no manual cleanup.
+  it('accepts a pre-marker messages/ whose files are all listed in the manifest beside it, and replaces them', async () => {
+    fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'messages', '001.json'), '{"id":"old1"}');
+    fs.writeFileSync(path.join(dir, 'messages', '002.json'), '{"id":"old2"}');
+    fs.writeFileSync(path.join(dir, 'messages', '.publish-manifest.json'), '{}');
+    fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
+      messages: [
+        { file: path.join(dir, 'messages', '001.json'), id: 'old1' },
+        { file: path.join(dir, 'messages', '002.json'), id: 'old2' },
+      ],
+    }));
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    const result = await run(gmail, dir);
+
+    expect(result.inWindow).toBe(1);
+    expect(fs.readdirSync(path.join(dir, 'messages')).sort()).toEqual([MARKER, '001.json']);
+    expect(readJson(path.join(dir, 'messages', '001.json')).id).toBe('a');
+  });
+
+  it('refuses a pre-marker messages/ when the manifest lists the same file name under a different directory', async () => {
+    fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'messages', '001.json'), '{"id":"here"}');
+    fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ messages: [{ file: path.join(os.tmpdir(), 'elsewhere', 'messages', '001.json'), id: 'there' }] }));
+    const before = snapshotDir(dir);
+
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    await expect(run(gmail, dir)).rejects.toThrow(/refusing to delete .*messages: it has no .* marker and .*manifest\.json does not list 001\.json/);
+    expect(snapshotDir(dir)).toEqual(before);
+  });
+
+  it('refuses a pre-marker messages/ holding a pattern-named file the manifest beside it does not list', async () => {
+    fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'messages', '001.json'), '{"id":"old1"}');
+    fs.writeFileSync(path.join(dir, 'messages', '007.json'), 'not listed');
+    fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ messages: [{ file: path.join(dir, 'messages', '001.json'), id: 'old1' }] }));
+    const before = snapshotDir(dir);
+
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    await expect(run(gmail, dir)).rejects.toThrow(/refusing to delete .*messages: it has no .* marker and .*manifest\.json does not list 007\.json/);
+    expect(snapshotDir(dir)).toEqual(before);
+  });
+
+  it('proceeds when messages/ exists but is empty, since deleting it loses nothing', async () => {
+    fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: message('a', BOUNDARY + 1) } });
+    const result = await run(gmail, dir);
+
+    expect(result.inWindow).toBe(1);
+    expect(messageFiles(dir)).toEqual(['001.json']);
   });
 
   it('refuses when an owned name is a directory or a symlink rather than a regular file', async () => {
@@ -359,9 +452,9 @@ describe('batchFetchWindow: owned paths and atomic publication', () => {
     expect(fs.existsSync(path.join(dir, 'window-metadata.json'))).toBe(false);
     // Every messages.get completes before any message file is written; only a later
     // body-part fetch can fail after some files exist, and no manifest is written in that
-    // case either, so the failed rerun leaves messages/ present but empty: the old content
-    // was removed, and nothing new was written.
-    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual([]);
+    // case either, so the failed rerun leaves messages/ holding only the marker: the old
+    // content was removed, and nothing new was written. The marker lets the next run recover.
+    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual([MARKER]);
   });
 
   it('leaves window-metadata but no manifest when the manifest publish fails', async () => {
@@ -444,7 +537,7 @@ describe('batchFetchWindow: boundary and label filtering', () => {
 
     expect(result.inWindow).toBe(1);
     expect(result.belowBoundaryOrExcluded).toBe(1);
-    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual(['001.json']);
+    expect(messageFiles(dir)).toEqual(['001.json']);
   });
 
   // Regression guard: passes already, because the kept-message filter already excludes
@@ -461,7 +554,7 @@ describe('batchFetchWindow: boundary and label filtering', () => {
 
     expect(result.inWindow).toBe(1);
     expect(result.belowBoundaryOrExcluded).toBe(1);
-    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual(['001.json']);
+    expect(messageFiles(dir)).toEqual(['001.json']);
   });
 });
 
@@ -521,7 +614,7 @@ describe('batchFetchWindow: numbering width', () => {
     const gmail = fakeGmail({ lists: windowOnly(ids), messages });
     await run(gmail, dir);
 
-    const files = fs.readdirSync(path.join(dir, 'messages')).sort();
+    const files = messageFiles(dir);
     expect(files).toHaveLength(1000);
     expect(files[0]).toBe('0001.json');
     expect(files[999]).toBe('1000.json');
@@ -546,7 +639,7 @@ describe('batchFetchWindow: per-message failures', () => {
     expect(result.inWindow).toBe(2);
     expect(result.belowBoundaryOrExcluded).toBe(0);
     expect(readJson(path.join(dir, 'manifest.json')).failures).toEqual([failure]);
-    expect(fs.readdirSync(path.join(dir, 'messages')).sort()).toEqual(['001.json', '002.json']);
+    expect(messageFiles(dir)).toEqual(['001.json', '002.json']);
     expect(result.crossCheck).toMatchObject({ window: 3, spam: 0, trash: 0, anywhere: 3, unexplainedIds: [], complete: true, consistent: true });
     expect(gmail.get.mock.calls.filter(([params]) => params.id === 'bad')).toHaveLength(GMAIL_RETRY_MAX_ATTEMPTS);
   });
@@ -621,7 +714,7 @@ describe('batchFetchWindow: per-message failures', () => {
     await expect(run(gmail, dir)).rejects.toBe(unauthorised);
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
     expect(fs.existsSync(path.join(dir, 'window-metadata.json'))).toBe(false);
-    expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual([]);
+    expect(messageFiles(dir)).toEqual([]);
   });
 
   it('rejects on a 403 insufficientPermissions from messages.get', async () => {

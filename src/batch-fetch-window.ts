@@ -79,18 +79,53 @@ function publishJson(messagesDir: string, target: string, value: unknown): void 
   fs.renameSync(temporary, target);
 }
 
-// The tool only ever writes zero-padded numbered files and its own publish temporaries into
-// messages/, and only as regular files, so anything else there (a foreign name, or a
-// directory or symlink under an owned name) was put there by someone else and must not be
-// deleted.
+// Written into messages/ immediately after the tool creates it. Its presence is the proof, on
+// the next run, that the directory is the tool's own and may be deleted; a crashed run leaves
+// it in place, so recovery never needs manual cleanup.
+export const MESSAGES_DIR_MARKER = '.batch-fetch-window';
+
+// The tool only ever writes the marker, zero-padded numbered files and its own publish
+// temporaries into messages/, and only as regular files, so anything else there (a foreign
+// name, or a directory or symlink under an owned name) was put there by someone else and must
+// not be deleted.
 const OWNED_MESSAGE_FILE = /^\d{3,}\.json$/;
 
 function isOwnedEntry(entry: fs.Dirent): boolean {
   const name = String(entry.name);
-  return entry.isFile() && (OWNED_MESSAGE_FILE.test(name) || name.startsWith('.publish-'));
+  return entry.isFile() && (name === MESSAGES_DIR_MARKER || OWNED_MESSAGE_FILE.test(name) || name.startsWith('.publish-'));
 }
 
-function assertMessagesDirDeletable(messagesDir: string): void {
+// The names of the message files an existing manifest.json lists directly inside this
+// messages/ directory, or an empty set when there is no readable manifest. A path under any
+// other directory is ignored, so a stale or unrelated manifest vouches for nothing here.
+// Outputs written before the marker existed are recognised by this listing instead.
+function manifestFileNames(manifestPath: string, messagesDir: string): Set<string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch {
+    return new Set();
+  }
+  const messages = (parsed as { messages?: unknown })?.messages;
+  if (!Array.isArray(messages)) {
+    return new Set();
+  }
+  const resolvedDir = path.resolve(messagesDir);
+  return new Set(messages.flatMap(entry => {
+    const file = (entry as { file?: unknown })?.file;
+    if (typeof file !== 'string' || !path.isAbsolute(file)) {
+      return [];
+    }
+    const resolved = path.resolve(file);
+    return path.dirname(resolved) === resolvedDir ? [path.basename(resolved)] : [];
+  }));
+}
+
+// The guard: messages/ may be deleted only when it is absent, empty, or holds nothing but the
+// tool's own files and either the marker or, for an output written before the marker existed,
+// a manifest.json beside it that lists every numbered file present. The first foreign entries
+// are named in the refusal.
+function assertMessagesDirDeletable(messagesDir: string, manifestPath: string): void {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(messagesDir, { withFileTypes: true });
@@ -104,10 +139,21 @@ function assertMessagesDirDeletable(messagesDir: string): void {
     }
     throw error;
   }
+  const names = entries.map(entry => String(entry.name));
   const foreign = entries.filter(entry => !isOwnedEntry(entry)).map(entry => String(entry.name)).sort();
   if (foreign.length > 0) {
     const shown = foreign.slice(0, 5).join(', ') + (foreign.length > 5 ? `, … (${foreign.length} entries)` : '');
     throw new Error(`refusing to delete ${messagesDir}: it contains entries batch_fetch_window did not write: ${shown}`);
+  }
+  if (names.length === 0 || names.includes(MESSAGES_DIR_MARKER)) {
+    return;
+  }
+  const listed = manifestFileNames(manifestPath, messagesDir);
+  const unlisted = names.filter(name => OWNED_MESSAGE_FILE.test(name) && !listed.has(name)).sort();
+  if (unlisted.length > 0) {
+    throw new Error(
+      `refusing to delete ${messagesDir}: it has no ${MESSAGES_DIR_MARKER} marker and ${manifestPath} does not list ${unlisted[0]}`,
+    );
   }
 }
 
@@ -238,12 +284,13 @@ export async function batchFetchWindow(
   // the final publish no manifest exists that could describe deleted or partial files.
   // Nothing else under output_dir is read, matched or deleted, and the guard runs before
   // the first deletion so a refused run leaves every earlier output intact.
-  assertMessagesDirDeletable(messagesDir);
+  assertMessagesDirDeletable(messagesDir, manifestPath);
   fs.mkdirSync(outputDir, { recursive: true });
   fs.rmSync(manifestPath, { force: true });
   fs.rmSync(windowMetadataPath, { force: true });
   fs.rmSync(messagesDir, { recursive: true, force: true });
   fs.mkdirSync(messagesDir);
+  writeJson(path.join(messagesDir, MESSAGES_DIR_MARKER), { tool: 'batch_fetch_window' });
 
   const kept: KeptMessage[] = [];
   let belowBoundaryOrExcluded = 0;
