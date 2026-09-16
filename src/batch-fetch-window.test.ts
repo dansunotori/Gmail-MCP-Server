@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 import { batchFetchWindow, handleBatchFetchWindow, type BatchFetchWindowInput } from './batch-fetch-window.js';
+import { GMAIL_RETRY_MAX_ATTEMPTS } from './gmail-sync.js';
 import { hasScope } from './scopes.js';
 import {
   BatchFetchWindowOutputSchema,
@@ -31,10 +32,10 @@ function httpError(status: number, reason?: string) {
   });
 }
 
-type Page = { ids: string[] } | Error;
 type FakeMessage = Record<string, unknown>;
 // An array is consumed one entry per call, so a fixture can fail and then succeed.
 type Sequenced<T> = T | Error | Array<T | Error>;
+type Page = Sequenced<{ ids: string[] }>;
 
 function nextOutcome<T>(found: Sequenced<T>): T | Error {
   if (!Array.isArray(found)) return found;
@@ -72,7 +73,7 @@ function fakeGmail(config: {
     const pages = config.lists[params.q];
     if (!pages) throw new Error(`unexpected query ${params.q}`);
     const index = params.pageToken ? Number(params.pageToken.slice('page-'.length)) : 0;
-    const page = pages[index];
+    const page = nextOutcome(pages[index]);
     if (page instanceof Error) throw page;
     const next = index + 1 < pages.length ? `page-${index + 1}` : undefined;
     return { data: { messages: page.ids.map(id => ({ id })), ...(next ? { nextPageToken: next } : {}) } };
@@ -125,6 +126,21 @@ function run(gmail: ReturnType<typeof fakeGmail>, dir: string, overrides: Partia
 }
 
 const readJson = (file: string) => JSON.parse(fs.readFileSync(file, 'utf8'));
+
+// Every regular file under a directory with its exact bytes, so a test can prove a run
+// touched nothing.
+function snapshotDir(root: string): Map<string, string> {
+  const files = new Map<string, string>();
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, String(entry.name));
+      if (entry.isDirectory()) walk(full);
+      else files.set(path.relative(root, full), fs.readFileSync(full, 'latin1'));
+    }
+  };
+  walk(root);
+  return files;
+}
 
 describe('batchFetchWindow: listing, fetching and output files', () => {
   let dir: string;
@@ -242,10 +258,9 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     expect(readJson(path.join(dir, 'window-metadata.json')).messages).toEqual([]);
   });
 
-  it('rejects when the first window page fails and writes nothing', async () => {
-    const failure = new Error('network down');
-    const gmail = fakeGmail({ lists: { [WINDOW_QUERY]: [failure] } });
-    await expect(run(gmail, dir)).rejects.toBe(failure);
+  it('rejects when the first window page fails, naming the query, page and status, and writes nothing', async () => {
+    const gmail = fakeGmail({ lists: { [WINDOW_QUERY]: [httpError(404)] } });
+    await expect(run(gmail, dir)).rejects.toThrow(`window listing failed: query "${WINDOW_QUERY}" page 1 status 404 after 1 attempt`);
     expect(fs.readdirSync(dir)).toEqual([]);
   });
 
@@ -518,43 +533,75 @@ describe('batchFetchWindow: per-message failures', () => {
   beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
   afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  it('records one messages.get failure with its status and still writes the rest', async () => {
+  it('records a messages.get failure that exhausts its retries with status and attempts, and still writes the rest', async () => {
     const gmail = fakeGmail({
       lists: windowOnly(['a', 'bad', 'c']),
-      messages: { a: message('a', BOUNDARY + 1), bad: httpError(500), c: message('c', BOUNDARY + 2) },
+      messages: { a: message('a', BOUNDARY + 1), bad: httpError(503), c: message('c', BOUNDARY + 2) },
     });
     const result = await run(gmail, dir);
 
+    const failure = { id: 'bad', error: '503', operation: 'messages.get', status: 503, attempts: GMAIL_RETRY_MAX_ATTEMPTS };
     expect(result.status).toBe('incomplete');
-    expect(result.failures).toEqual([{ id: 'bad', error: '500' }]);
+    expect(result.failures).toEqual([failure]);
     expect(result.inWindow).toBe(2);
     expect(result.belowBoundaryOrExcluded).toBe(0);
-    expect(readJson(path.join(dir, 'manifest.json')).failures).toEqual([{ id: 'bad', error: '500' }]);
+    expect(readJson(path.join(dir, 'manifest.json')).failures).toEqual([failure]);
     expect(fs.readdirSync(path.join(dir, 'messages')).sort()).toEqual(['001.json', '002.json']);
-    expect(result.crossCheck).toEqual({ window: 3, spam: 0, trash: 0, anywhere: 3, unexplainedIds: [], complete: true, consistent: true });
-    // A 500 is retried up to the budget before it is recorded as a failure.
-    expect(gmail.get.mock.calls.filter(([params]) => params.id === 'bad')).toHaveLength(3);
+    expect(result.crossCheck).toMatchObject({ window: 3, spam: 0, trash: 0, anywhere: 3, unexplainedIds: [], complete: true, consistent: true });
+    expect(gmail.get.mock.calls.filter(([params]) => params.id === 'bad')).toHaveLength(GMAIL_RETRY_MAX_ATTEMPTS);
   });
 
-  it('recovers a message whose messages.get fails twice with 503 then 429 and records no failure', async () => {
+  it('downloads a message whose messages.get returns 429 twice then succeeds, with no failure recorded', async () => {
     const gmail = fakeGmail({
       lists: windowOnly(['a']),
-      messages: { a: [httpError(503), httpError(429), message('a', BOUNDARY + 1)] },
+      messages: { a: [httpError(429), httpError(429), message('a', BOUNDARY + 1)] },
     });
     const result = await run(gmail, dir);
 
     expect(result.status).toBe('ok');
     expect(result.failures).toEqual([]);
     expect(result.inWindow).toBe(1);
+    expect(readJson(path.join(dir, 'manifest.json')).messages.map((entry: { id: string }) => entry.id)).toEqual(['a']);
     expect(gmail.get).toHaveBeenCalledTimes(3);
   });
 
-  it('does not retry a 404 from messages.get', async () => {
+  it('does not retry a 404 from messages.get and records a single attempt', async () => {
     const gmail = fakeGmail({ lists: windowOnly(['gone']), messages: { gone: httpError(404) } });
     const result = await run(gmail, dir);
 
-    expect(result.failures).toEqual([{ id: 'gone', error: '404' }]);
+    expect(result.failures).toEqual([{ id: 'gone', error: '404', operation: 'messages.get', status: 404, attempts: 1 }]);
     expect(gmail.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a network error code as the status of a messages.get failure', async () => {
+    const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+    const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: reset } });
+    const result = await run(gmail, dir);
+
+    expect(result.failures).toEqual([{ id: 'a', error: 'ECONNRESET', operation: 'messages.get', status: 'ECONNRESET', attempts: GMAIL_RETRY_MAX_ATTEMPTS }]);
+  });
+
+  it('waits the Retry-After seconds before retrying a 429 on messages.get', async () => {
+    vi.useFakeTimers();
+    try {
+      const throttled = Object.assign(httpError(429), { response: { status: 429, headers: new Headers({ 'Retry-After': '2' }) } });
+      const gmail = fakeGmail({ lists: windowOnly(['a']), messages: { a: [throttled, message('a', BOUNDARY + 1)] } });
+      // Real timers drive the wait here, so the fixture must not substitute the sleep.
+      const pending = batchFetchWindow(gmail as never, { watermark: WATERMARK, output_dir: dir, cross_check: true, max_messages: 2000 }, FIXED_NOW);
+      let settled = false;
+      pending.then(() => { settled = true; }, () => { settled = true; });
+
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(gmail.get).toHaveBeenCalledTimes(1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await pending;
+      expect(gmail.get).toHaveBeenCalledTimes(2);
+      expect(result.failures).toEqual([]);
+      expect(result.inWindow).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reports status ok with no failures for a clean run', async () => {
@@ -611,13 +658,13 @@ describe('batchFetchWindow: body-part failures', () => {
     const result = await run(gmail, dir);
 
     expect(result.status).toBe('incomplete');
-    expect(result.failures).toEqual([{ id: 'a', error: 'body-part-fetch: 429' }]);
+    expect(result.failures).toEqual([{ id: 'a', error: 'body-part-fetch: 429', operation: 'body-part-fetch', status: 429, attempts: GMAIL_RETRY_MAX_ATTEMPTS }]);
     // A written message with a body-part failure is still in the window; a derived count
     // (listed - inWindow - failures.length) would give -1 here, so the direct count is pinned.
     expect(result.inWindow).toBe(1);
     expect(result.belowBoundaryOrExcluded).toBe(0);
     expect(readJson(path.join(dir, 'messages', '001.json')).body).toBe('');
-    expect(gmail.attachmentsGet).toHaveBeenCalledTimes(3);
+    expect(gmail.attachmentsGet).toHaveBeenCalledTimes(GMAIL_RETRY_MAX_ATTEMPTS);
   });
 
   it('recovers a body part whose fetch fails once with 429', async () => {
@@ -651,7 +698,7 @@ describe('batchFetchWindow: body-part failures', () => {
     });
     const result = await run(gmail, dir);
 
-    expect(result.failures).toEqual([{ id: 'a', error: 'body-part-fetch: 429' }]);
+    expect(result.failures).toMatchObject([{ id: 'a', error: 'body-part-fetch: 429' }]);
     expect(readJson(path.join(dir, 'messages', '001.json')).id).toBe('a');
     expect(readJson(path.join(dir, 'manifest.json')).messages[0].id).toBe('a');
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true);
@@ -776,7 +823,7 @@ describe('batchFetchWindow: cross-check outcomes', () => {
     const result = await run(gmail, dir);
 
     expect(result.status).toBe('incomplete');
-    expect(result.failures).toEqual([{ id: `cross-check:${SPAM_QUERY}`, error: '503' }]);
+    expect(result.failures).toEqual([{ id: `cross-check:${SPAM_QUERY}`, error: '503', operation: 'cross-check', status: 503, attempts: GMAIL_RETRY_MAX_ATTEMPTS }]);
     expect(result.crossCheck?.spam).toBe(0);
     expect(fs.existsSync(path.join(dir, 'messages', '001.json'))).toBe(true);
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true);
@@ -806,7 +853,7 @@ describe('batchFetchWindow: cross-check outcomes', () => {
     expect(result.crossCheck).toMatchObject({ anywhere: 0, unexplainedIds: [], complete: false, consistent: false });
   });
 
-  it('reports the network error code for a later cross-check page failure', async () => {
+  it('reports the network error code for a later cross-check page failure after retrying it', async () => {
     const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
     const gmail = fakeGmail({
       lists: windowOnly(['a'], { [TRASH_QUERY]: [{ ids: [] }, reset] }),
@@ -815,7 +862,13 @@ describe('batchFetchWindow: cross-check outcomes', () => {
     const result = await run(gmail, dir);
 
     expect(result.status).toBe('incomplete');
-    expect(result.failures).toEqual([{ id: `cross-check:${TRASH_QUERY}`, error: 'ECONNRESET' }]);
+    expect(result.failures).toEqual([{
+      id: `cross-check:${TRASH_QUERY}`,
+      error: 'ECONNRESET',
+      operation: 'cross-check',
+      status: 'ECONNRESET',
+      attempts: GMAIL_RETRY_MAX_ATTEMPTS,
+    }]);
     // A partial listing (page one succeeded, page two failed) is incomplete too.
     expect(result.crossCheck).toMatchObject({ complete: false, consistent: false });
   });
@@ -834,39 +887,56 @@ describe('batchFetchWindow: cross-check outcomes', () => {
   });
 });
 
-describe('batchFetchWindow: partial window listings', () => {
+describe('batchFetchWindow: window listing failures', () => {
   let dir: string;
   beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
   afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  it('continues with a partial window listing when page two fails', async () => {
+  it('retries a window page that fails transiently and lists the window in full', async () => {
     const gmail = fakeGmail({
-      lists: windowOnly(['a'], { [WINDOW_QUERY]: [{ ids: ['a'] }, httpError(503)] }),
-      messages: { a: message('a', BOUNDARY + 1) },
+      lists: windowOnly(['a', 'b'], { [WINDOW_QUERY]: [{ ids: ['a'] }, [httpError(503), httpError(500), { ids: ['b'] }]] }),
+      messages: { a: message('a', BOUNDARY + 1), b: message('b', BOUNDARY + 2) },
     });
     const result = await run(gmail, dir);
 
-    expect(result.status).toBe('incomplete');
-    expect(result.listingComplete).toBe(false);
-    expect(result.pages).toBe(1);
-    expect(result.failures).toEqual([{ id: 'window-listing:page-2', error: '503' }]);
-    expect(readJson(path.join(dir, 'manifest.json')).listingComplete).toBe(false);
-    expect(fs.existsSync(path.join(dir, 'messages', '001.json'))).toBe(true);
-    // The window set is one of the four the cross-check compares, so a partial window
-    // listing makes the check incomplete as well.
-    expect(result.crossCheck).toMatchObject({ complete: false, consistent: false });
+    expect(result.status).toBe('ok');
+    expect(result.listed).toBe(2);
+    expect(result.pages).toBe(2);
+    expect(result.listingComplete).toBe(true);
+    expect(result.failures).toEqual([]);
+    expect(gmail.list.mock.calls.filter(([params]) => params.q === WINDOW_QUERY)).toHaveLength(4);
   });
 
-  it('reports the network error code for a later window page failure', async () => {
+  it('rejects when window page two fails on every attempt, naming the page, and leaves earlier outputs byte-for-byte unchanged', async () => {
+    const first = fakeGmail({ lists: windowOnly(['old']), messages: { old: message('old', BOUNDARY + 1) } });
+    await run(first, dir);
+    const before = snapshotDir(dir);
+    expect(before.size).toBeGreaterThan(0);
+
+    const gmail = fakeGmail({
+      lists: windowOnly(['a'], { [WINDOW_QUERY]: [{ ids: ['a'] }, httpError(500)] }),
+      messages: { a: message('a', BOUNDARY + 1) },
+    });
+    await expect(run(gmail, dir)).rejects.toThrow(
+      `window listing failed: query "${WINDOW_QUERY}" page 2 status 500 after ${GMAIL_RETRY_MAX_ATTEMPTS} attempts`,
+    );
+
+    expect(gmail.get).not.toHaveBeenCalled();
+    expect(gmail.list.mock.calls.filter(([params]) => params.q === WINDOW_QUERY)).toHaveLength(1 + GMAIL_RETRY_MAX_ATTEMPTS);
+    expect(snapshotDir(dir)).toEqual(before);
+    expect(readJson(path.join(dir, 'manifest.json')).messages[0].id).toBe('old');
+  });
+
+  it('names the network error code when a later window page fails after retries', async () => {
     const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
     const gmail = fakeGmail({
       lists: windowOnly(['a'], { [WINDOW_QUERY]: [{ ids: ['a'] }, reset] }),
       messages: { a: message('a', BOUNDARY + 1) },
     });
-    const result = await run(gmail, dir);
-
-    expect(result.failures).toEqual([{ id: 'window-listing:page-2', error: 'ECONNRESET' }]);
-    expect(readJson(path.join(dir, 'manifest.json')).failures).toEqual([{ id: 'window-listing:page-2', error: 'ECONNRESET' }]);
+    await expect(run(gmail, dir)).rejects.toThrow(
+      `window listing failed: query "${WINDOW_QUERY}" page 2 status ECONNRESET after ${GMAIL_RETRY_MAX_ATTEMPTS} attempts`,
+    );
+    expect(fs.readdirSync(dir)).toEqual([]);
   });
 
   it('writes the complete manifest summary and returns it with status and triage', async () => {
@@ -910,23 +980,19 @@ describe('batchFetchWindow: partial window listings', () => {
   });
 });
 
-describe('batchFetchWindow: status precedence when truncated', () => {
+describe('batchFetchWindow: listing failure takes precedence over truncation', () => {
   let dir: string;
   beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bfw-')); });
   afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  it('reports incomplete with truncated true when the listing fails after exceeding the cap', async () => {
+  it('rejects when the listing fails after exceeding the cap and leaves earlier outputs in place', async () => {
     fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'messages', '009.json'), '{}');
     const gmail = fakeGmail({
       lists: { [WINDOW_QUERY]: [{ ids: ['a', 'b'] }, { ids: ['c'] }, httpError(503)] },
     });
-    const result = await run(gmail, dir, { max_messages: 2 });
+    await expect(run(gmail, dir, { max_messages: 2 })).rejects.toThrow(/window listing failed: .* page 3 status 503/);
 
-    expect(result.status).toBe('incomplete');
-    expect(result.truncated).toBe(true);
-    expect(result.listingComplete).toBe(false);
-    expect(result.failures).toEqual([{ id: 'window-listing:page-3', error: '503' }]);
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
     expect(fs.readdirSync(path.join(dir, 'messages'))).toEqual(['009.json']);
   });
@@ -995,6 +1061,15 @@ describe('BatchFetchWindowOutputSchema', () => {
       crossCheck: { window: 0, spam: 0, trash: 0, anywhere: 0, unexplainedIds: [], complete: true, consistent: true },
     };
     expect(BatchFetchWindowOutputSchema.parse(withCheck)).toEqual(withCheck);
+  });
+
+  it('accepts a numeric or string status on a failure entry and requires operation and attempts', () => {
+    const http = { id: 'm1', error: '503', operation: 'messages.get', status: 503, attempts: 5 };
+    const network = { id: 'm2', error: 'ECONNRESET', operation: 'body-part-fetch', status: 'ECONNRESET', attempts: 5 };
+    expect(BatchFetchWindowOutputSchema.parse({ ...base, failures: [http, network] }).failures).toEqual([http, network]);
+    expect(() => BatchFetchWindowOutputSchema.parse({ ...base, failures: [{ id: 'm1', error: '503' }] })).toThrow();
+    expect(() => BatchFetchWindowOutputSchema.parse({ ...base, failures: [{ ...http, operation: 'other' }] })).toThrow();
+    expect(() => BatchFetchWindowOutputSchema.parse({ ...base, failures: [{ ...http, attempts: 0 }] })).toThrow();
   });
 
   it('rejects unknown statuses and extra fields', () => {

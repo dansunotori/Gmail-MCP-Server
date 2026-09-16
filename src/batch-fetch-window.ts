@@ -7,9 +7,12 @@ import {
   getGmailEmailAddress,
   isAuthError,
   listAllGmailMessageIds,
+  retryAttempts,
   structuredResult,
+  toGmailRequestError,
   withGmailRetry,
   type GmailRetryOptions,
+  type ListAllMessageIdsResult,
 } from './gmail-sync.js';
 import { headerValue, resolveMessageBody, type MessageHeader, type MessagePart } from './message-body.js';
 import { BatchFetchWindowOutputSchema, BatchFetchWindowSchema } from './tools.js';
@@ -17,7 +20,29 @@ import { BatchFetchWindowOutputSchema, BatchFetchWindowSchema } from './tools.js
 export type BatchFetchWindowInput = z.infer<typeof BatchFetchWindowSchema>;
 export type BatchFetchWindowResult = z.infer<typeof BatchFetchWindowOutputSchema>;
 
-type Failure = { id: string; error: string };
+type Failure = BatchFetchWindowResult['failures'][number];
+type FailureOperation = Failure['operation'];
+
+// The typed counterpart of failureCode: the numeric HTTP status when there is one,
+// otherwise the network code or error name that failureCode would render.
+function failureStatus(error: unknown): number | string {
+  return toGmailRequestError(error).status ?? failureCode(error);
+}
+
+function failure(id: string, operation: FailureOperation, error: unknown, code = failureCode(error)): Failure {
+  return { id, error: code, operation, status: failureStatus(error), attempts: retryAttempts(error) };
+}
+
+// A listing that failed after its retries, as `failure` would describe it plus the page.
+function listingFailure(id: string, operation: FailureOperation, listing: ListAllMessageIdsResult): Failure {
+  return {
+    id,
+    error: failureCode(listing.error),
+    operation,
+    status: failureStatus(listing.error),
+    attempts: listing.attempts ?? 1,
+  };
+}
 
 type KeptMessage = {
   // The listed ID, which is always non-empty; used for the file, the manifest and any
@@ -92,18 +117,20 @@ async function crossCheckListing(
   gmail: gmail_v1.Gmail,
   query: string,
   failures: Failure[],
+  retry: GmailRetryOptions,
 ): Promise<CrossCheckListing> {
   try {
-    const result = await listAllGmailMessageIds(gmail, { query, includeSpamTrash: true });
-    if (!result.complete && result.error) {
-      failures.push({ id: `cross-check:${query}`, error: failureCode(result.error) });
+    const result = await listAllGmailMessageIds(gmail, { query, includeSpamTrash: true, retry });
+    if (!result.complete) {
+      failures.push(listingFailure(`cross-check:${query}`, 'cross-check', result));
     }
     return { ids: new Set(result.ids), complete: result.complete };
   } catch (error) {
+    // Only auth errors and malformed responses escape the listing's own failure result.
     if (isAuthError(error)) {
       throw error;
     }
-    failures.push({ id: `cross-check:${query}`, error: failureCode(error) });
+    failures.push(failure(`cross-check:${query}`, 'cross-check', error));
     return { ids: new Set(), complete: false };
   }
 }
@@ -120,9 +147,15 @@ export async function batchFetchWindow(
 
   const emailAddress = await getGmailEmailAddress(gmail);
   const failures: Failure[] = [];
-  const windowList = await listAllGmailMessageIds(gmail, { query: windowQuery, includeSpamTrash: true });
-  if (!windowList.complete && windowList.error) {
-    failures.push({ id: `window-listing:page-${windowList.pages + 1}`, error: failureCode(windowList.error) });
+  const windowList = await listAllGmailMessageIds(gmail, { query: windowQuery, includeSpamTrash: true, retry });
+  // A window whose listing is incomplete is not a window: fail here, before the guard and
+  // before any deletion, so nothing under output_dir changes.
+  if (!windowList.complete) {
+    const attempts = windowList.attempts ?? 1;
+    throw new Error(
+      `window listing failed: query "${windowQuery}" page ${windowList.failedPage} `
+      + `status ${failureStatus(windowList.error)} after ${attempts} attempt${attempts === 1 ? '' : 's'}`,
+    );
   }
 
   const base = {
@@ -133,14 +166,16 @@ export async function batchFetchWindow(
     pages: windowList.pages,
     listed: windowList.ids.length,
     maxMessages: input.max_messages,
-    listingComplete: windowList.complete,
+    // Always true in a returned result: an incomplete listing fails the call above. Kept so
+    // the result shape is stable.
+    listingComplete: true,
   };
 
   if (windowList.ids.length > input.max_messages) {
     return BatchFetchWindowOutputSchema.parse({
       checkedAt: now().toISOString(),
       ...base,
-      status: failures.length > 0 || !windowList.complete ? 'incomplete' : 'truncated',
+      status: 'truncated',
       truncated: true,
       inWindow: 0,
       belowBoundaryOrExcluded: 0,
@@ -174,7 +209,7 @@ export async function batchFetchWindow(
       if (isAuthError(error)) {
         throw error;
       }
-      failures.push({ id, error: failureCode(error) });
+      failures.push(failure(id, 'messages.get', error));
       continue;
     }
     const internal = Number(data.internalDate);
@@ -194,8 +229,14 @@ export async function batchFetchWindow(
   for (const [index, { id, data, labels }] of kept.entries()) {
     const headers = (data.payload?.headers ?? []) as MessageHeader[];
     const resolved = await resolveMessageBody(gmail, id, data.payload as MessagePart | undefined, retry);
-    for (const failure of resolved.failures) {
-      failures.push({ id, error: failure.code });
+    for (const bodyFailure of resolved.failures) {
+      failures.push({
+        id,
+        error: bodyFailure.code,
+        operation: 'body-part-fetch',
+        status: failureStatus(bodyFailure.error),
+        attempts: bodyFailure.attempts,
+      });
     }
     const body = resolved.body;
     const attachments = resolved.attachments;
@@ -237,9 +278,9 @@ export async function batchFetchWindow(
 
   let crossCheck: BatchFetchWindowResult['crossCheck'];
   if (input.cross_check) {
-    const spam = await crossCheckListing(gmail, `after:${epoch - 1} in:spam`, failures);
-    const trash = await crossCheckListing(gmail, `after:${epoch - 1} in:trash`, failures);
-    const anywhere = await crossCheckListing(gmail, `after:${epoch - 1} in:anywhere`, failures);
+    const spam = await crossCheckListing(gmail, `after:${epoch - 1} in:spam`, failures, retry);
+    const trash = await crossCheckListing(gmail, `after:${epoch - 1} in:trash`, failures, retry);
+    const anywhere = await crossCheckListing(gmail, `after:${epoch - 1} in:anywhere`, failures, retry);
     const windowIds = new Set(windowList.ids);
     const unexplainedIds = [...anywhere.ids].filter(id => !windowIds.has(id) && !spam.ids.has(id) && !trash.ids.has(id));
     // A listing that failed or stopped early cannot explain or reveal anything, so the check
@@ -270,7 +311,7 @@ export async function batchFetchWindow(
   const triage = manifestMessages.map(entry =>
     [entry.file, entry.from, entry.subject, entry.dateHeader, `${entry.attachments} att`].join(' | ')
   );
-  const status = failures.length > 0 || !windowList.complete || (crossCheck !== undefined && !crossCheck.consistent)
+  const status = failures.length > 0 || (crossCheck !== undefined && !crossCheck.consistent)
     ? 'incomplete'
     : 'ok';
   // Validate before publishing, so a schema rejection can never follow a published manifest.

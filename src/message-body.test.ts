@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { GmailRequestError } from './gmail-sync.js';
+import { GMAIL_RETRY_MAX_ATTEMPTS, GmailRequestError } from './gmail-sync.js';
 import {
   decodeBase64Url,
   extractMessageParts,
@@ -160,9 +160,19 @@ describe('resolveMessageBody', () => {
     expect(result.failures[0].code).toBe('body-part-fetch: 429');
     expect(result.failures[0].error).toBeInstanceOf(GmailRequestError);
     expect(result.failures[0].error.status).toBe(429);
+    expect(result.failures[0].attempts).toBe(GMAIL_RETRY_MAX_ATTEMPTS);
     expect(result.body).toBe('ok');
-    expect(gmail.users.messages.attachments.get).toHaveBeenCalledTimes(4);
-    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(gmail.users.messages.attachments.get).toHaveBeenCalledTimes(1 + GMAIL_RETRY_MAX_ATTEMPTS);
+    expect(sleep).toHaveBeenCalledTimes(GMAIL_RETRY_MAX_ATTEMPTS - 1);
+  });
+
+  it('records a single attempt for a body part that fails with a non-retryable status', async () => {
+    const gmail = gmailWithAttachments(async () => { throw httpError(404); });
+    const result = await resolveMessageBody(gmail as never, 'm1', {
+      parts: [{ mimeType: 'text/plain', body: { attachmentId: 'gone' } }],
+    }, { sleep: async () => {} });
+    expect(result.failures[0]).toMatchObject({ code: 'body-part-fetch: 404', attempts: 1 });
+    expect(gmail.users.messages.attachments.get).toHaveBeenCalledTimes(1);
   });
 
   it('rethrows an auth failure', async () => {

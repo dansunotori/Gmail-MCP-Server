@@ -169,9 +169,24 @@ export function isAuthError(error: unknown): boolean {
   return false;
 }
 
-// Transient: Gmail asks for a retry on 429 and on a 403 carrying a rate-limit reason, and a
-// 5xx is a server-side hiccup. Everything else (auth, 404, network errors) is left to the
-// caller so a missing message or a dropped socket is reported once, not three times.
+// Node network error codes for a connection that was reset, refused, timed out or could not
+// be resolved. A request that never reached Gmail can safely be repeated.
+const NETWORK_ERROR_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EPIPE',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+]);
+
+// Transient: Gmail asks for a retry on 429 and on a 403 carrying a rate-limit reason, a 5xx
+// is a server-side hiccup, and a network-level failure means the request may never have
+// arrived. Everything else (auth, 404, any other 4xx) is thrown to the caller on the first
+// attempt so a missing message or a bad request is reported once.
 export function isRetryableGmailError(error: unknown): boolean {
   const wrapped = toGmailRequestError(error);
   if (wrapped.status === 429) {
@@ -180,34 +195,91 @@ export function isRetryableGmailError(error: unknown): boolean {
   if (wrapped.status !== undefined && wrapped.status >= 500 && wrapped.status <= 599) {
     return true;
   }
-  return wrapped.status === 403 && wrapped.reason !== undefined && RATE_LIMIT_REASONS.has(wrapped.reason);
+  if (wrapped.status === 403) {
+    return wrapped.reason !== undefined && RATE_LIMIT_REASONS.has(wrapped.reason);
+  }
+  return wrapped.status === undefined && wrapped.code !== undefined && NETWORK_ERROR_CODES.has(wrapped.code);
 }
 
+// Retry policy: total calls per request, the ceiling of the first backoff, and the ceiling
+// every later backoff (and any Retry-After) is capped at.
+export const GMAIL_RETRY_MAX_ATTEMPTS = 5;
+export const GMAIL_RETRY_BASE_DELAY_MS = 500;
+export const GMAIL_RETRY_MAX_DELAY_MS = 30_000;
+
 export interface GmailRetryOptions {
-  // Total calls including the first; default 3.
+  // Total calls including the first; default GMAIL_RETRY_MAX_ATTEMPTS.
   attempts?: number;
-  // Wait before the first retry; doubles on each further retry. Default 500 ms.
+  // Ceiling of the wait before the first retry; the ceiling doubles on each further retry
+  // and the actual wait is a uniformly random fraction of it (full jitter). Default
+  // GMAIL_RETRY_BASE_DELAY_MS.
   baseDelayMs?: number;
+  // Cap on every wait, including one taken from a Retry-After header. Default GMAIL_RETRY_MAX_DELAY_MS.
+  maxDelayMs?: number;
   sleep?: (ms: number) => Promise<void>;
+  // Source of the jitter fraction in [0, 1); default Math.random.
+  random?: () => number;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+// How many calls withGmailRetry made before it threw a given error. Kept beside the error
+// rather than on it so the helper can rethrow the caller's error object unchanged.
+const attemptsByError = new WeakMap<object, number>();
+
+export function retryAttempts(error: unknown): number {
+  return (typeof error === 'object' && error !== null ? attemptsByError.get(error) : undefined) ?? 1;
+}
+
+// gaxios responses carry a fetch Headers object; a plain record is accepted as well.
+function readRetryAfterHeader(error: unknown): string | undefined {
+  const headers = (error as { response?: { headers?: unknown } })?.response?.headers;
+  if (typeof headers !== 'object' || headers === null) {
+    return undefined;
+  }
+  if (typeof (headers as Headers).get === 'function') {
+    return (headers as Headers).get('retry-after') ?? undefined;
+  }
+  const record = headers as Record<string, unknown>;
+  const raw = record['retry-after'] ?? record['Retry-After'];
+  return typeof raw === 'string' ? raw : undefined;
+}
+
+// Retry-After as delay seconds or an HTTP date; undefined when absent or unparseable.
+function retryAfterMs(error: unknown): number | undefined {
+  const raw = readRetryAfterHeader(error);
+  if (raw === undefined || raw === '') {
+    return undefined;
+  }
+  if (/^\d+$/.test(raw)) {
+    return Number(raw) * 1000;
+  }
+  const at = Date.parse(raw);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now());
+}
 
 export async function withGmailRetry<T>(
   request: () => Promise<T>,
   options: GmailRetryOptions = {},
 ): Promise<T> {
-  const attempts = options.attempts ?? 3;
-  const baseDelayMs = options.baseDelayMs ?? 500;
+  const attempts = options.attempts ?? GMAIL_RETRY_MAX_ATTEMPTS;
+  const baseDelayMs = options.baseDelayMs ?? GMAIL_RETRY_BASE_DELAY_MS;
+  const maxDelayMs = options.maxDelayMs ?? GMAIL_RETRY_MAX_DELAY_MS;
   const sleep = options.sleep ?? defaultSleep;
+  const random = options.random ?? Math.random;
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await request();
     } catch (error) {
+      if (typeof error === 'object' && error !== null) {
+        attemptsByError.set(error, attempt);
+      }
       if (attempt >= attempts || !isRetryableGmailError(error)) {
         throw error;
       }
-      await sleep(baseDelayMs * 2 ** (attempt - 1));
+      const requested = retryAfterMs(error);
+      const ceiling = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
+      await sleep(requested === undefined ? Math.round(random() * ceiling) : Math.min(maxDelayMs, requested));
     }
   }
 }
@@ -253,14 +325,19 @@ export interface ListAllMessageIdsOptions {
   query: string;
   includeSpamTrash: boolean;
   limit?: number;
+  retry?: GmailRetryOptions;
 }
 
 export interface ListAllMessageIdsResult {
   ids: string[];
   pages: number;
   hasMore: boolean;
+  // False when a page failed after its retries; `error`, `failedPage` (1-based) and
+  // `attempts` (calls made for that page) then describe the failure. Auth errors are thrown.
   complete: boolean;
   error?: GmailRequestError;
+  failedPage?: number;
+  attempts?: number;
 }
 
 export async function listAllGmailMessageIds(
@@ -278,19 +355,27 @@ export async function listAllGmailMessageIds(
       : Math.min(500, options.limit - ids.length);
     let response;
     try {
-      response = await gmail.users.messages.list({
+      response = await withGmailRetry(() => gmail.users.messages.list({
         userId: 'me',
         q: options.query,
         includeSpamTrash: options.includeSpamTrash,
         maxResults,
         pageToken,
         fields: 'messages/id,nextPageToken',
-      });
+      }), options.retry);
     } catch (error) {
-      if (pages === 0 || isAuthError(error)) {
+      if (isAuthError(error)) {
         throw error;
       }
-      return { ids, pages, hasMore: false, complete: false, error: toGmailRequestError(error) };
+      return {
+        ids,
+        pages,
+        hasMore: false,
+        complete: false,
+        error: toGmailRequestError(error),
+        failedPage: pages + 1,
+        attempts: retryAttempts(error),
+      };
     }
     pages += 1;
 

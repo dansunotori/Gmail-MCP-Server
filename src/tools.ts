@@ -322,9 +322,16 @@ export const BatchFetchWindowSchema = z.object({
     .describe("Also list spam, trash and in:anywhere since the watermark to detect silently dropped messages"),
 }).strict();
 
+// One entry per Gmail call that was given up on after its retries. `error` is the failure
+// string (HTTP status, network code or error name, prefixed `body-part-fetch: ` for a body
+// part); `status` is the same value typed: the numeric HTTP status, or the network code or
+// error name as a string.
 const BatchFetchFailureSchema = z.object({
   id: NonEmptyString,
   error: z.string(),
+  operation: z.enum(['messages.get', 'body-part-fetch', 'cross-check']),
+  status: z.union([z.number().int(), NonEmptyString]),
+  attempts: z.number().int().min(1),
 }).strict();
 
 const BatchFetchCrossCheckSchema = z.object({

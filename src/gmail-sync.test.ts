@@ -2,6 +2,9 @@ import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import fs from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  GMAIL_RETRY_BASE_DELAY_MS,
+  GMAIL_RETRY_MAX_ATTEMPTS,
+  GMAIL_RETRY_MAX_DELAY_MS,
   GmailRequestError,
   failureCode,
   getGmailEmailAddress,
@@ -10,6 +13,7 @@ import {
   listAllGmailMessageIds,
   listGmailAddedHistory,
   listGmailMessageIds,
+  retryAttempts,
   structuredResult,
   toGmailRequestError,
   withGmailRetry,
@@ -407,6 +411,16 @@ function pagedList(pages: Array<{ ids: string[]; next?: string } | Error>) {
 
 describe('withGmailRetry', () => {
   const noSleep = { sleep: vi.fn(async () => {}) };
+  const networkError = (code: string) => Object.assign(new Error(code), { code });
+  const withRetryAfter = (status: number, retryAfter: string) => Object.assign(httpError(status), {
+    response: { status, headers: { 'retry-after': retryAfter } },
+  });
+
+  it('exposes the retry policy as named constants', () => {
+    expect(GMAIL_RETRY_MAX_ATTEMPTS).toBe(5);
+    expect(GMAIL_RETRY_BASE_DELAY_MS).toBe(500);
+    expect(GMAIL_RETRY_MAX_DELAY_MS).toBe(30_000);
+  });
 
   it('returns the first successful result without sleeping', async () => {
     const request = vi.fn(async () => 'ok');
@@ -415,39 +429,111 @@ describe('withGmailRetry', () => {
     expect(noSleep.sleep).not.toHaveBeenCalled();
   });
 
-  it('retries a 429, a 503 and a 403 rate limit with doubling backoff, then succeeds', async () => {
+  it('retries a 429, a 503 and a 403 rate limit with exponential full-jitter backoff, then succeeds', async () => {
     const sleep = vi.fn(async () => {});
     const request = vi.fn()
       .mockRejectedValueOnce(httpError(429))
       .mockRejectedValueOnce(httpError(503))
       .mockRejectedValueOnce(httpError(403, 'userRateLimitExceeded'))
       .mockResolvedValueOnce('ok');
-    await expect(withGmailRetry(request, { attempts: 4, sleep })).resolves.toBe('ok');
+    await expect(withGmailRetry(request, { sleep, random: () => 0.5 })).resolves.toBe('ok');
     expect(request).toHaveBeenCalledTimes(4);
-    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([500, 1000, 2000]);
+    // Full jitter: each wait is random() times the doubling ceiling of 500, 1000, 2000 ms.
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([250, 500, 1000]);
   });
 
-  it('gives up after the attempt budget and throws the last error unchanged', async () => {
+  it('makes five attempts by default and throws the last error unchanged', async () => {
+    const sleep = vi.fn(async () => {});
     const last = httpError(502);
     const request = vi.fn()
       .mockRejectedValueOnce(httpError(500))
       .mockRejectedValueOnce(httpError(503))
+      .mockRejectedValueOnce(httpError(504))
+      .mockRejectedValueOnce(httpError(429))
       .mockRejectedValueOnce(last);
-    await expect(withGmailRetry(request, noSleep)).rejects.toBe(last);
-    expect(request).toHaveBeenCalledTimes(3);
+    await expect(withGmailRetry(request, { sleep, random: () => 1 })).rejects.toBe(last);
+    expect(request).toHaveBeenCalledTimes(5);
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([500, 1000, 2000, 4000]);
+    expect(retryAttempts(last)).toBe(5);
   });
 
-  it('does not retry auth, not-found or network errors', async () => {
-    for (const error of [httpError(401), httpError(403), httpError(404), Object.assign(new Error('reset'), { code: 'ECONNRESET' })]) {
+  it('caps the backoff ceiling at the maximum delay', async () => {
+    const sleep = vi.fn(async () => {});
+    const request = vi.fn().mockRejectedValue(httpError(503));
+    await expect(withGmailRetry(request, { sleep, random: () => 1, baseDelayMs: 20_000 })).rejects.toBeDefined();
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([20_000, 30_000, 30_000, 30_000]);
+  });
+
+  it('honours a Retry-After header in seconds without jitter, capped at the maximum delay', async () => {
+    const sleep = vi.fn(async () => {});
+    const request = vi.fn()
+      .mockRejectedValueOnce(withRetryAfter(429, '2'))
+      .mockRejectedValueOnce(withRetryAfter(503, '120'))
+      .mockResolvedValueOnce('ok');
+    await expect(withGmailRetry(request, { sleep, random: () => 0 })).resolves.toBe('ok');
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([2000, 30_000]);
+  });
+
+  it('reads Retry-After from a fetch Headers object, as googleapis responses carry it', async () => {
+    const sleep = vi.fn(async () => {});
+    const throttled = Object.assign(httpError(429), {
+      response: { status: 429, headers: new Headers({ 'Retry-After': '3' }) },
+    });
+    const request = vi.fn().mockRejectedValueOnce(throttled).mockResolvedValueOnce('ok');
+    await expect(withGmailRetry(request, { sleep, random: () => 0 })).resolves.toBe('ok');
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([3000]);
+  });
+
+  it('honours a Retry-After header given as an HTTP date', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-09-16T12:00:00Z'));
+      const sleep = vi.fn(async () => {});
+      const request = vi.fn()
+        .mockRejectedValueOnce(withRetryAfter(429, 'Wed, 16 Sep 2026 12:00:03 GMT'))
+        .mockResolvedValueOnce('ok');
+      await expect(withGmailRetry(request, { sleep, random: () => 0 })).resolves.toBe('ok');
+      expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([3000]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to jittered backoff when Retry-After is unparseable', async () => {
+    const sleep = vi.fn(async () => {});
+    const request = vi.fn()
+      .mockRejectedValueOnce(withRetryAfter(429, 'soon'))
+      .mockResolvedValueOnce('ok');
+    await expect(withGmailRetry(request, { sleep, random: () => 1 })).resolves.toBe('ok');
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([500]);
+  });
+
+  it('retries network-level errors', async () => {
+    for (const code of ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE', 'ECONNABORTED']) {
+      const request = vi.fn().mockRejectedValueOnce(networkError(code)).mockResolvedValueOnce('ok');
+      await expect(withGmailRetry(request, noSleep)).resolves.toBe('ok');
+      expect(request).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it('does not retry auth, not-found, other 4xx or unclassified errors and records one attempt', async () => {
+    for (const error of [httpError(400), httpError(401), httpError(403), httpError(404), httpError(409), new Error('plain')]) {
       const request = vi.fn().mockRejectedValue(error);
       await expect(withGmailRetry(request, noSleep)).rejects.toBe(error);
       expect(request).toHaveBeenCalledTimes(1);
+      expect(retryAttempts(error)).toBe(1);
     }
+  });
+
+  it('reports one attempt for an error the helper never saw', () => {
+    expect(retryAttempts(new Error('never retried'))).toBe(1);
+    expect(retryAttempts('not an object')).toBe(1);
   });
 });
 
 describe('listAllGmailMessageIds', () => {
   const options = { query: 'after:1 -in:spam -in:trash', includeSpamTrash: true };
+  const noSleep = { sleep: async () => {} };
 
   it('follows every page, deduplicates, and reports pages and completion', async () => {
     const listMessages = pagedList([
@@ -509,10 +595,22 @@ describe('listAllGmailMessageIds', () => {
     expect(listMessages).toHaveBeenNthCalledWith(2, expect.objectContaining({ maxResults: 1 }));
   });
 
-  it('returns a partial result when a later page fails with a non-auth error', async () => {
-    const failure = httpError(503);
-    const listMessages = pagedList([{ ids: ['a'], next: 'page-1' }, failure]);
-    const result = await listAllGmailMessageIds(gmailWith({ listMessages }) as never, options);
+  it('retries a page that fails transiently and reports the listing complete', async () => {
+    const listMessages = vi.fn()
+      .mockResolvedValueOnce({ data: { messages: [{ id: 'a' }], nextPageToken: 'page-1' } })
+      .mockRejectedValueOnce(httpError(503))
+      .mockRejectedValueOnce(httpError(429))
+      .mockResolvedValueOnce({ data: { messages: [{ id: 'b' }] } });
+    const result = await listAllGmailMessageIds(gmailWith({ listMessages }) as never, { ...options, retry: noSleep });
+
+    expect(result).toEqual({ ids: ['a', 'b'], pages: 2, hasMore: false, complete: true });
+    expect(listMessages).toHaveBeenCalledTimes(4);
+    expect(listMessages).toHaveBeenNthCalledWith(3, expect.objectContaining({ pageToken: 'page-1' }));
+  });
+
+  it('returns a partial result naming the page and attempts when a later page exhausts its retries', async () => {
+    const listMessages = pagedList([{ ids: ['a'], next: 'page-1' }, httpError(503)]);
+    const result = await listAllGmailMessageIds(gmailWith({ listMessages }) as never, { ...options, retry: noSleep });
 
     expect(result.ids).toEqual(['a']);
     expect(result.pages).toBe(1);
@@ -520,26 +618,37 @@ describe('listAllGmailMessageIds', () => {
     expect(result.hasMore).toBe(false);
     expect(result.error).toBeInstanceOf(GmailRequestError);
     expect(result.error?.status).toBe(503);
+    expect(result.failedPage).toBe(2);
+    expect(result.attempts).toBe(GMAIL_RETRY_MAX_ATTEMPTS);
+    expect(listMessages).toHaveBeenCalledTimes(1 + GMAIL_RETRY_MAX_ATTEMPTS);
   });
 
-  it('keeps a network error code on a partial result', async () => {
+  it('returns a failed result for a first-page failure instead of throwing', async () => {
+    const listMessages = pagedList([httpError(404)]);
+    const result = await listAllGmailMessageIds(gmailWith({ listMessages }) as never, { ...options, retry: noSleep });
+
+    expect(result).toMatchObject({ ids: [], pages: 0, complete: false, failedPage: 1, attempts: 1 });
+    expect(result.error?.status).toBe(404);
+  });
+
+  it('keeps a network error code on a partial result after retrying it', async () => {
     const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
     const listMessages = pagedList([{ ids: ['a'], next: 'page-1' }, reset]);
-    const result = await listAllGmailMessageIds(gmailWith({ listMessages }) as never, options);
+    const result = await listAllGmailMessageIds(gmailWith({ listMessages }) as never, { ...options, retry: noSleep });
 
     expect(result.complete).toBe(false);
     expect(result.error?.code).toBe('ECONNRESET');
     expect(failureCode(result.error)).toBe('ECONNRESET');
+    expect(result.attempts).toBe(GMAIL_RETRY_MAX_ATTEMPTS);
   });
 
-  it('rejects on a 401 on a later page and on any first-page failure', async () => {
+  it('rejects on a 401 on any page', async () => {
     const unauthorised = httpError(401);
     const later = pagedList([{ ids: ['a'], next: 'page-1' }, unauthorised]);
     await expect(listAllGmailMessageIds(gmailWith({ listMessages: later }) as never, options)).rejects.toBe(unauthorised);
 
-    const first = new Error('network');
-    const firstPage = pagedList([first]);
-    await expect(listAllGmailMessageIds(gmailWith({ listMessages: firstPage }) as never, options)).rejects.toBe(first);
+    const firstPage = pagedList([unauthorised]);
+    await expect(listAllGmailMessageIds(gmailWith({ listMessages: firstPage }) as never, options)).rejects.toBe(unauthorised);
   });
 });
 

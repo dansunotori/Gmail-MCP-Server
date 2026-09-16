@@ -3,6 +3,7 @@ import {
   failureCode,
   GmailRequestError,
   isAuthError,
+  retryAttempts,
   toGmailRequestError,
   withGmailRetry,
   type GmailRetryOptions,
@@ -48,6 +49,8 @@ export interface ExtractedParts {
 export interface BodyFailure {
   code: string;
   error: GmailRequestError;
+  // Calls made to attachments.get for this part before it was given up on.
+  attempts: number;
 }
 
 export interface ResolvedBody extends ExtractedParts {
@@ -153,6 +156,7 @@ export async function resolveMessageBody(
       failures.push({
         code: `body-part-fetch: ${failureCode(error)}`,
         error: toGmailRequestError(error),
+        attempts: retryAttempts(error),
       });
     }
   }
