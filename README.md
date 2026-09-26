@@ -366,6 +366,36 @@ Tools then surface as `mcp__gmail-personal__personal_search_emails`, `mcp__gmail
 
 The `auth` subcommand runs before the server starts and is unaffected - invoke it without `--tool-prefix`.
 
+## Command-line tools
+
+Four read-only commands expose four MCP tools with the same semantics and nothing more, for scripts that need Gmail without an MCP session. Each calls the same code the server calls.
+
+| Command | MCP tool | Prints |
+|-|-|-|
+| `gmail-search '<gmail query>' [--max-results N]` | `search_emails` | `{query, count, messages: [{id, subject, from, date}]}` |
+| `gmail-get-message <message_id> [--format text\|markdown]` | `read_email` | `{id, threadId, subject, from, to, cc, date, labels, body, attachments: [{id, filename, mimeType, size}]}` |
+| `gmail-download-attachment <message_id> <attachment_id> --save-path <dir> [--filename <name>]` | `download_attachment` | `{path, size, mimeType}` |
+| `gmail-batch-fetch-window --watermark <ISO 8601 with zone> --output-dir <absolute dir> [--no-cross-check] [--max-messages N]` | `batch_fetch_window` | the tool's result, unchanged (see the [result contract](#batch_fetch_window-result-contract)) |
+
+Every command:
+
+- prints JSON on stdout and diagnostics on stderr; on failure it exits non-zero with nothing on stdout (exit codes: 1 failure, 2 usage error, 3 not signed in or missing scope, 4 Gmail rate limit, 5 not found)
+- writes the JSON to a file instead with `--output`/`-o <file>`, refusing a file the command itself writes or relies on (credentials, the downloaded attachment, the batch outputs), however the path is spelt: symlinks and `..` are resolved in the order the operating system resolves them, on macOS and Windows capitalisation is ignored, and a hard link to one of those files is refused too
+- signs in with `--auth` (it re-requests the scopes already saved, or the default scopes on first sign-in) and shows help, with one example per flag, with `--help`/`-h`
+- uses the server's credentials (`~/.gmail-mcp/`, or `GMAIL_OAUTH_PATH`/`GMAIL_CREDENTIALS_PATH`) and refuses a tool the saved scopes do not grant, as the server does
+
+`gmail-get-message --format markdown` converts the HTML part to Markdown; without an HTML part it prints the plain text. `gmail-download-attachment` treats every failed download as an error. `gmail-batch-fetch-window` has the tool's defaults (`cross_check` true, `max_messages` 2000) and guards: it deletes `messages/` only when that directory carries the marker a previous run wrote, and a window larger than `--max-messages` writes nothing. No command sends, replies, forwards, labels, trashes or modifies a message.
+
+Install them with:
+
+```bash
+npm run install-cli
+```
+
+This builds the project and symlinks every `bin` in `package.json` into `~/.local/bin`, which must be on your `PATH`. An existing link is replaced only when it already points into this checkout; a link to another checkout or installation, or a file that is not a link, is left alone and reported, and the command then exits non-zero. The links point into this checkout, so they survive switching or removing Node versions; re-run the command after pulling, to rebuild and to link any new command. Do not use `npm link` or `npm install -g`, which install into one Node version's directory.
+
+The full specification is in [docs/gmail-cli-spec.md](docs/gmail-cli-spec.md).
+
 ## Available Tools
 
 The server provides the following tools that can be used through Claude Desktop:

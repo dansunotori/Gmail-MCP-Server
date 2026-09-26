@@ -8,9 +8,6 @@
  */
 
 import { describe, it, expect } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   gmailMessageToJson,
   emailToTxt,
@@ -20,8 +17,7 @@ import {
 } from "./email-export.js";
 import { toolDefinitions, getToolByName, DownloadEmailSchema } from "./tools.js";
 import { hasScope } from "./scopes.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { extractHeaders, formatReadEmailText } from "./read-tools.js";
 
 // Shared mock data
 const mockHeaders = [
@@ -244,29 +240,19 @@ describe("DownloadEmailSchema", () => {
 });
 
 // ─────────────────────────────────────────────
-// 4. extractHeaders refactor verification
+// 4. extractHeaders (read-tools.ts) shared by read_email and download_email
 // ─────────────────────────────────────────────
-describe("extractHeaders refactor - source verification", () => {
-  const indexSource = fs.readFileSync(path.join(__dirname, "index.ts"), "utf-8");
-
-  it("extractHeaders function exists and returns rfcMessageId", () => {
-    expect(indexSource).toContain("function extractHeaders");
-    expect(indexSource).toContain("rfcMessageId");
-    expect(indexSource).toContain('getHeader("message-id")');
+describe("extractHeaders", () => {
+  it("returns the RFC Message-ID", () => {
+    expect(extractHeaders({ headers: mockHeaders }).rfcMessageId).toBe("<msg123@example.com>");
   });
 
-  it("read_email uses extractHeaders (not inline header extraction)", () => {
-    // The read_email case should use destructured extractHeaders call
-    expect(indexSource).toContain("const { subject, from, to, cc, bcc, date, rfcMessageId } = extractHeaders(");
-  });
-
-  it("download_email uses extractHeaders", () => {
-    // download_email should also use extractHeaders
-    expect(indexSource).toContain('const { subject, from, date } = extractHeaders(');
-  });
-
-  it("read_email still outputs Message-ID in response", () => {
-    expect(indexSource).toContain("Message-ID: ${rfcMessageId}");
+  it("read_email outputs Message-ID in its response", () => {
+    const text = formatReadEmailText({
+      id: "m", threadId: "t", rfcMessageId: "<msg123@example.com>", subject: "", from: "", to: "", cc: "", bcc: "",
+      date: "", labels: [], text: "", html: "", body: "", attachments: [],
+    });
+    expect(text).toContain("Message-ID: <msg123@example.com>");
   });
 });
 
@@ -316,32 +302,26 @@ describe("email-export parseEmailAddresses", () => {
 // extractHeaders CC/BCC support
 // ─────────────────────────────────────────────
 describe("extractHeaders CC/BCC", () => {
-  // extractHeaders is not exported, so we verify via source inspection
-  const indexSource = fs.readFileSync(path.join(__dirname, "index.ts"), "utf-8");
+  const email = {
+    id: "m", threadId: "t", rfcMessageId: "", subject: "", from: "", to: "", cc: "", bcc: "",
+    date: "", labels: [], text: "", html: "", body: "", attachments: [],
+  };
 
-  it("extractHeaders returns cc and bcc fields in its return type", () => {
-    expect(indexSource).toContain("cc: getHeader(\"cc\")");
-    expect(indexSource).toContain("bcc: getHeader(\"bcc\")");
+  it("extractHeaders returns cc and bcc", () => {
+    const headers = extractHeaders({ headers: mockHeaders });
+    expect(headers.cc).toBe("dave@example.com");
+    expect(headers.bcc).toBe("eve@example.com");
   });
 
-  it("extractHeaders return type includes cc and bcc", () => {
-    // Verify the type annotation includes cc and bcc
-    expect(indexSource).toMatch(/function extractHeaders.*cc: string.*bcc: string/);
+  it("read_email output includes CC and BCC when present", () => {
+    const text = formatReadEmailText({ ...email, cc: "dave@example.com", bcc: "eve@example.com" });
+    expect(text).toContain("\nCC: dave@example.com");
+    expect(text).toContain("\nBCC: eve@example.com");
   });
 
-  it("read_email output includes CC conditionally", () => {
-    // The template should conditionally include CC
-    expect(indexSource).toContain("CC: ${cc}");
-  });
-
-  it("read_email output includes BCC conditionally", () => {
-    // The template should conditionally include BCC
-    expect(indexSource).toContain("BCC: ${bcc}");
-  });
-
-  it("CC and BCC lines are conditional (not always shown)", () => {
-    // Verify the conditional pattern - only show when value exists
-    expect(indexSource).toContain("${cc ? `\\nCC: ${cc}` : ''}");
-    expect(indexSource).toContain("${bcc ? `\\nBCC: ${bcc}` : ''}");
+  it("CC and BCC lines are omitted when empty", () => {
+    const text = formatReadEmailText(email);
+    expect(text).not.toContain("CC:");
+    expect(text).not.toContain("BCC:");
   });
 });

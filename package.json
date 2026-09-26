@@ -6,10 +6,15 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "gmail-mcp": "./dist/index.js"
+    "gmail-mcp": "./dist/index.js",
+    "gmail-search": "./dist/cli/gmail-search.js",
+    "gmail-get-message": "./dist/cli/gmail-get-message.js",
+    "gmail-download-attachment": "./dist/cli/gmail-download-attachment.js",
+    "gmail-batch-fetch-window": "./dist/cli/gmail-batch-fetch-window.js"
   },
   "scripts": {
     "build": "tsc",
+    "install-cli": "npm run build && node scripts/install-cli.mjs",
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "auth": "node dist/index.js auth",
@@ -44,7 +49,7 @@
   },
   "homepage": "https://github.com/dansunotori/Gmail-MCP-Server#readme",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.3.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
@@ -54,6 +59,7 @@
     "mime-types": "^3.0.1",
     "nodemailer": "^7.0.11",
     "open": "^10.0.0",
+    "turndown": "^7.2.4",
     "zod": "^3.22.4",
     "zod-to-json-schema": "^3.22.1"
   },
@@ -61,6 +67,7 @@
     "@types/mime-types": "^2.1.4",
     "@types/node": "^20.10.5",
     "@types/nodemailer": "^6.4.17",
+    "@types/turndown": "^5.0.6",
     "lockfile-lint": "^5.0.0",
     "mcp-evals": "^1.0.18",
     "typescript": "^5.3.3",

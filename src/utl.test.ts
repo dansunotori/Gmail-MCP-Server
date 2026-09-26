@@ -7,7 +7,7 @@
  * 3. No References/In-Reply-To headers on new emails
  * 4. Source verification: createEmailWithNodemailer uses references field
  * 5. Source verification: handleEmailAction auto-resolves threading headers
- * 6. Source verification: read_email returns Message-ID
+ * 6. read_email returns Message-ID
  */
 
 import { describe, it, expect } from 'vitest';
@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createEmailMessage } from './utl.js';
+import { extractHeaders, formatReadEmailText } from './read-tools.js';
 
 // Resolve src directory
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -83,10 +84,15 @@ describe('Source verification', () => {
         expect(source).toContain("validatedArgs.references = allMessageIds.join(' ')");
     });
 
+});
+
+describe('read_email Message-ID', () => {
     it('read_email returns Message-ID', () => {
-        const source = fs.readFileSync(path.join(srcDir, 'index.ts'), 'utf-8');
-        expect(source).toContain('message-id');
-        expect(source).toContain('rfcMessageId');
-        expect(source).toContain('Message-ID: ${rfcMessageId}');
+        const headers = extractHeaders({ headers: [{ name: 'Message-ID', value: '<m@x>' }] });
+        const text = formatReadEmailText({
+            id: 'm', threadId: 't', rfcMessageId: headers.rfcMessageId, subject: '', from: '', to: '', cc: '', bcc: '',
+            date: '', labels: [], text: '', html: '', body: '', attachments: [],
+        });
+        expect(text).toContain('Message-ID: <m@x>');
     });
 });

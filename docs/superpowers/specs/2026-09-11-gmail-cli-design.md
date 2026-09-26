@@ -1,5 +1,9 @@
 # Gmail read-only CLIs — design
 
+> Superseded on 2026-09-25 and never implemented: the CLIs as built mirror one MCP tool each,
+> with the tool's own output, and install with `npm run install-cli` rather than `npm link`.
+> `docs/gmail-cli-spec.md` is the current specification.
+
 Date: 2026-09-11. Source request: `docs/gmail-cli-spec.md`. Depends on the
 `batch_fetch_window` design of the same date, which introduces `src/message-body.ts` and the
 `listAllGmailMessageIds` export this design reuses.
