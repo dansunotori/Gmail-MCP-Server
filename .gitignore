@@ -35,5 +35,6 @@ credentials.json
 tmp/
 .codex-review/
 .claude/skills/gitnexus/
+.claude/skills/gitnexus-*/
 .superpowers/
 .superpowers-state/
