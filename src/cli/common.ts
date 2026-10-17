@@ -250,6 +250,31 @@ export function commonFlags(name: string, outputExample: string): Record<string,
     };
 }
 
+// The width help text is wrapped to. Examples are not wrapped: each stays one command line.
+export const HELP_WIDTH = 100;
+
+// The words of text in lines of at most HELP_WIDTH, the first starting with `first` and the
+// rest with `rest`. A single word longer than the room keeps a line of its own.
+function wrap(text: string, first = '', rest = first): string[] {
+    const lines: string[] = [];
+    let line = first;
+    let started = false;
+    for (const word of text.split(/\s+/).filter(Boolean)) {
+        if (started && line.length + 1 + word.length > HELP_WIDTH) {
+            lines.push(line);
+            line = rest + word;
+        } else {
+            line += (started ? ' ' : '') + word;
+        }
+        started = true;
+    }
+    lines.push(line);
+    return lines;
+}
+
+// A line written to fit is kept as it is; a longer one is wrapped.
+const fit = (line: string) => (line.length <= HELP_WIDTH ? [line] : wrap(line));
+
 export function renderHelp(spec: CommandSpec): string {
     const flagLabel = (flag: string, entry: FlagSpec) =>
         (entry.short ? `-${entry.short}, ` : '    ') + `--${flag}` + (entry.placeholder ? ` ${entry.placeholder}` : '');
@@ -258,28 +283,31 @@ export function renderHelp(spec: CommandSpec): string {
         ...Object.entries(spec.flags).map(([flag, entry]): [string, string] => [flagLabel(flag, entry), entry.description]),
     ];
     const width = Math.max(...rows.map(([label]) => label.length));
-    const row = ([label, text]: [string, string]) => `  ${label.padEnd(width)}  ${text}`;
+    // A description too long for its row continues under itself, after the label column.
+    const row = ([label, text]: [string, string]) => wrap(text, `  ${label.padEnd(width)}  `, ' '.repeat(width + 4));
     const lines = [
-        `Usage: ${spec.synopsis}`,
+        ...wrap(spec.synopsis, 'Usage: ', '       '),
         `       ${spec.name} --auth`,
         '',
-        spec.description,
+        ...spec.description.split('\n').flatMap(fit),
         '',
     ];
     if (spec.arguments.length > 0) {
-        lines.push('Arguments:', ...spec.arguments.map(row), '');
+        lines.push('Arguments:', ...spec.arguments.flatMap(row), '');
     }
-    lines.push('Options:', ...Object.entries(spec.flags).map(([flag, entry]) => row([flagLabel(flag, entry), entry.description])), '');
+    lines.push('Options:', ...Object.entries(spec.flags).flatMap(([flag, entry]) => row([flagLabel(flag, entry), entry.description])), '');
     lines.push('Examples:', `  ${spec.example}`, ...Object.values(spec.flags).map(entry => `  ${entry.example}`), '');
     if (spec.notes && spec.notes.length > 0) {
-        lines.push(...spec.notes, '');
+        lines.push(...spec.notes.flatMap(fit), '');
     }
     lines.push(
         'Output: JSON on stdout (or in the --output file); diagnostics on stderr.',
-        'Exit codes: 0 success, 1 failure, 2 usage error, 3 not signed in or missing scope,',
-        `4 Gmail rate limit, 5 not found${spec.exitCodes ? `, ${spec.exitCodes}` : ''}. On failure nothing is written to stdout, and stderr`,
-        'gets one line: Failed to <action>: <message> (code <reason>, HTTP <status>;',
-        'rejected parameter: <name>, ...), each part present when Gmail supplies it.',
+        ...wrap([
+            'Exit codes: 0 success, 1 failure, 2 usage error, 3 not signed in or missing scope,',
+            `4 Gmail rate limit, 5 not found${spec.exitCodes ? `, ${spec.exitCodes}` : ''}. On failure nothing is written to stdout,`,
+            'and stderr gets one line: Failed to <action>: <message> (code <reason>, HTTP <status>;',
+            'rejected parameter: <name>, ...), each part present when Gmail supplies it.',
+        ].join(' ')),
     );
     return lines.join('\n') + '\n';
 }

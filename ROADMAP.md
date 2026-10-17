@@ -11,15 +11,6 @@ Done when:
 - A git pre-commit hook runs `npm run roadmap:check` on the staged `ROADMAP.md` and refuses the commit on a finding, without weakening any review that already runs at commit time.
 - A commit with finished-work wording in a staged `ROADMAP.md` is refused locally, whatever made the change.
 
-## 18. Wrap a command's own exit codes in the CLI help
-
-`renderHelp` (`src/cli/common.ts`) appends a command's `exitCodes` to the shared exit-code line without rewrapping it, so `gmail-get-attachment-text --help` prints one line of about 150 characters ("… 6 attachment protected, encrypted, corrupt or unsupported. On failure nothing is written to stdout, and stderr"), where every other help line keeps under 100.
-
-Done when:
-
-- The exit-code paragraph is wrapped after the command's codes are added, at the width the rest of the help uses.
-- A test fails when any line of any command's `--help` exceeds that width.
-
 ## 19. Drop or replace mcp-evals, whose dependencies carry unfixed advisories
 
 `mcp-evals` (a dev dependency, used only by `src/evals/evals.ts`) pulls in `ai`, `@ai-sdk/*` and `jsondiffpatch`, for which `npm audit` reports a high advisory (`jsondiffpatch`: XSS and prototype pollution) and a moderate one (`@ai-sdk/provider-utils`), both with no fix available. Production dependencies are clean; CI passes only because its audit step fails on critical advisories alone.

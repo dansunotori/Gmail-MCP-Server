@@ -17,7 +17,7 @@ import {
   searchCommand,
   type CliDeps,
 } from './commands.js';
-import { ScopeError, UsageError, mapErrorToExitCode, parseCliArgs, runCli } from './common.js';
+import { HELP_WIDTH, ScopeError, UsageError, mapErrorToExitCode, parseCliArgs, runCli } from './common.js';
 
 const b64 = (value: string) => Buffer.from(value, 'utf8').toString('base64');
 
@@ -105,6 +105,14 @@ describe('common', () => {
     const options = { name: { type: 'string' as const } };
     expect(() => parseCliArgs(['--nope'], options)).toThrow(UsageError);
     expect(() => parseCliArgs(['--name'], options)).toThrow(UsageError);
+  });
+
+  it('keeps every help line within the help width, except examples, which stay one command each', () => {
+    for (const command of COMMANDS) {
+      const long = command.help().split('\n')
+        .filter(line => !line.startsWith(`  ${command.name} `) && line.length > HELP_WIDTH);
+      expect(long, command.name).toEqual([]);
+    }
   });
 
   it('documents every flag of every command with an example that uses it', () => {
