@@ -322,14 +322,16 @@ export const BatchFetchWindowSchema = z.object({
     .describe("Also list spam, trash and in:anywhere since the watermark to detect silently dropped messages. The result's crossCheck.status is then consistent, inconsistent (crossCheck.unexplainedIds names IDs seen in in:anywhere but in none of window, spam or trash) or failed (a listing did not complete after retries; crossCheck.errors names each query); false gives status skipped. crossCheck.consistent is true only for status consistent"),
 }).strict();
 
-// One entry per Gmail call that was given up on after its retries. `error` is the failure
-// string (HTTP status, network code or error name, prefixed `body-part-fetch: ` for a body
-// part); `status` is the same value typed: the numeric HTTP status, or the network code or
-// error name as a string.
+// One entry per Gmail call that was given up on after its retries, and per calendar part
+// that could not be read. `error` is the failure string (HTTP status, network code or error
+// name, prefixed `body-part-fetch: ` for a body part and `calendar-part-fetch: ` for a
+// calendar part, or `calendar-part: <reason>` for a calendar part that could not be parsed);
+// `status` is the same value typed: the numeric HTTP status, the network code or error name
+// as a string, or "unparseable".
 const BatchFetchFailureSchema = z.object({
   id: NonEmptyString,
   error: z.string(),
-  operation: z.enum(['messages.get', 'body-part-fetch', 'cross-check']),
+  operation: z.enum(['messages.get', 'body-part-fetch', 'calendar-part', 'cross-check']),
   status: z.union([z.number().int(), NonEmptyString]),
   attempts: z.number().int().min(1),
 }).strict();

@@ -461,12 +461,14 @@ The first four tools never request or return subjects, addresses, snippets, head
 
 **Body.** Each message file carries `body` and `bodySource`. `bodySource` is `text` when the body is the plain-text part, `html` when the message has no plain part and the body is its HTML part converted to text, and `html-over-stub` when the plain part is only a stub pointing at the HTML part ("This is an HTML message…", "Your email client doesn't support HTML…", "Plain text version not available", "view it in your browser") and the body is the HTML part converted to text instead. A stub is a plain part of at most 400 characters that matches one of the stub phrasings kept in `src/message-body.ts`. `read_email` and `gmail-get-message` choose the body by the same rule (for an HTML-only message they keep the HTML itself), report `bodySource` (`gmail-get-message` as a field, `read_email` as a note line), and convert the HTML of a stubbed message to text the same way. `gmail-get-message --format markdown` converts the HTML part whenever there is one and then reports `html`, or `html-over-stub` when the plain part is a stub.
 
+**Calendar.** A message with a `text/calendar` part (an invitation, a cancellation, an attendee's reply) carries `calendarMethod`, the part's `METHOD` (`REQUEST`, `CANCEL`, `REPLY`, `PUBLISH`, …), and for a `REPLY` also `calendarReply: { "attendee": "<address>", "partstat": "<PARTSTAT>" }` (`ACCEPTED`, `DECLINED`, `TENTATIVE`, `DELEGATED`, …), all read from the part itself, inline or stored as an attachment such as `invite.ics`. The attendee is the one who replied: the reply's only attendee (one address repeated across the components of a recurring event is one attendee); in a delegation reply that lists both parties, the one attendee who answered (any `PARTSTAT` but `NEEDS-ACTION` and `DELEGATED`, so the delegate once they accept or decline), or when nobody has answered yet, the delegator. Their `PARTSTAT` is taken from the event's master component, not from a single changed occurrence. A message without such a part carries neither field. A calendar part that cannot be fetched or parsed (no `METHOD`, or a `REPLY` without an `ATTENDEE`, without a `PARTSTAT`, or with several attendees and no single replier) is a `failures` entry with `operation` `"calendar-part"`; another calendar part in the same message that parses still supplies the fields.
+
 **`failures[]` entry** — `{ id, error, operation, status, attempts }`:
 
 - `id`: the listed message ID, or `cross-check:<query>` for a cross-check listing.
-- `error`: the failure string: the HTTP status (`"503"`), the network code (`"ECONNRESET"`) or the error name, prefixed `body-part-fetch: ` for a body part.
-- `operation`: `"messages.get"`, `"body-part-fetch"` or `"cross-check"`.
-- `status`: the numeric HTTP status, or the network code or error name as a string.
+- `error`: the failure string: the HTTP status (`"503"`), the network code (`"ECONNRESET"`) or the error name, prefixed `body-part-fetch: ` for a body part and `calendar-part-fetch: ` for a calendar part; `calendar-part: <reason>` for a calendar part that could not be parsed.
+- `operation`: `"messages.get"`, `"body-part-fetch"`, `"calendar-part"` or `"cross-check"`.
+- `status`: the numeric HTTP status, the network code or error name as a string, or `"unparseable"` for a calendar part that could not be parsed.
 - `attempts`: calls made before giving up (1 when the error was not retryable, otherwise up to 5).
 
 ```json

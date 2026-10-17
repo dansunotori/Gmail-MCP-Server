@@ -14,6 +14,7 @@ import {
   type GmailRetryOptions,
   type ListAllMessageIdsResult,
 } from './gmail-sync.js';
+import { resolveCalendarPart } from './calendar-part.js';
 import { withContext } from './error-text.js';
 import { headerValue, optionalHeader, resolveMessageBody, type MessageHeader, type MessagePart } from './message-body.js';
 import { BatchFetchWindowOutputSchema, BatchFetchWindowSchema } from './tools.js';
@@ -303,6 +304,16 @@ export async function batchFetchWindow(
         attempts: bodyFailure.attempts,
       });
     }
+    const { calendar, failures: calendarFailures } = await resolveCalendarPart(gmail, id, data.payload as MessagePart | undefined, retry);
+    for (const calendarFailure of calendarFailures) {
+      failures.push({
+        id,
+        error: calendarFailure.code,
+        operation: 'calendar-part',
+        status: calendarFailure.status,
+        attempts: calendarFailure.attempts,
+      });
+    }
     const from = headerValue(headers, 'From');
     const subject = headerValue(headers, 'Subject');
     const dateHeader = headerValue(headers, 'Date');
@@ -325,6 +336,9 @@ export async function batchFetchWindow(
         attachments: resolved.attachments,
         body: resolved.body,
         bodySource: resolved.bodySource,
+        // Only a message with a text/calendar part carries these.
+        ...(calendar === undefined ? {} : { calendarMethod: calendar.method }),
+        ...(calendar?.reply === undefined ? {} : { calendarReply: calendar.reply }),
       },
       manifest: {
         file,

@@ -131,6 +131,8 @@ for `readOnlyHint: true`.)
 
 `messageIdHeader` is the RFC 822 `Message-ID` header exactly as the message holds it, or `null` when it has none. Two message files with different `id` and the same `messageIdHeader` hold one message, for example the sent and received copies of a self-addressed message. The manifest entry carries the same field.
 
+A message with a `text/calendar` part also carries `"calendarMethod": "REQUEST"` (the part's `METHOD`) and, for a `REPLY`, `"calendarReply": { "attendee": "<address>", "partstat": "ACCEPTED" }`, read from the part itself, inline or fetched as an attachment. A message without such a part carries neither field. A calendar part that cannot be fetched or parsed is a `failures` entry with `operation` `"calendar-part"`.
+
 `manifest.json`:
 
 ```json
@@ -150,9 +152,11 @@ for `readOnlyHint: true`.)
 
 `failures[]`: `id` is the listed message ID or `cross-check:<query>`; `error` is the failure
 string (HTTP status, network code or error name, prefixed `body-part-fetch: ` for a body
-part); `operation` is `"messages.get"`, `"body-part-fetch"` or `"cross-check"`; `status` is the
-numeric HTTP status or the network code / error name as a string; `attempts` is the number of
-calls made (1 when not retryable, otherwise up to 5).
+part and `calendar-part-fetch: ` for a calendar part, or `calendar-part: <reason>` for a
+calendar part that could not be parsed); `operation` is `"messages.get"`, `"body-part-fetch"`,
+`"calendar-part"` or `"cross-check"`; `status` is the numeric HTTP status, the network code /
+error name as a string, or `"unparseable"`; `attempts` is the number of calls made (1 when not
+retryable, otherwise up to 5).
 
 `crossCheck` is always present. When the check ran it has the shape above with `status`
 `"consistent"`, `"inconsistent"` or `"failed"`, `errors[]` entries of

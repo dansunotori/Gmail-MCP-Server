@@ -207,6 +207,57 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     ]);
   });
 
+  it('writes the calendar method and reply fields of meeting messages, and neither field for ordinary mail', async () => {
+    const ics = (...lines: string[]) => ['BEGIN:VCALENDAR', ...lines, 'BEGIN:VEVENT', 'UID:u1', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+    const withCalendar = (id: string, at: number, calendar: string) => message(id, at, { payload: {
+      mimeType: 'multipart/mixed',
+      headers: [{ name: 'From', value: `${id}@example.com` }, { name: 'Subject', value: id }],
+      parts: [
+        { mimeType: 'text/plain', body: { data: b64(`body of ${id}`) } },
+        { mimeType: 'text/calendar', filename: 'invite.ics', body: { attachmentId: `ics-${id}`, size: calendar.length } },
+      ],
+    } });
+    const calendars: Record<string, string> = {
+      invite: ics('METHOD:REQUEST'),
+      cancel: ics('METHOD:CANCEL'),
+      accept: ics('METHOD:REPLY', 'ATTENDEE;CN=Nadia;PARTSTAT=ACCEPTED:mailto:nadia@example.com'),
+      decline: ics('METHOD:REPLY', 'ATTENDEE;PARTSTAT=DECLINED:mailto:chris@example.com'),
+      broken: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR',
+    };
+    const ids = ['invite', 'cancel', 'accept', 'decline', 'broken', 'plain'];
+    const gmail = fakeGmail({
+      lists: windowOnly(ids),
+      messages: Object.fromEntries(ids.map((id, index) => [
+        id,
+        id === 'plain' ? message(id, BOUNDARY + 1000 * (index + 1)) : withCalendar(id, BOUNDARY + 1000 * (index + 1), calendars[id]),
+      ])),
+      attachments: Object.fromEntries(Object.entries(calendars).map(([id, text]) => [`ics-${id}`, b64(text)])),
+    });
+    const result = await run(gmail, dir);
+    const files = messageFiles(dir).map(name => readJson(path.join(dir, 'messages', name)));
+    const fields = (id: string) => {
+      const file = files.find(entry => entry.id === id);
+      return { calendarMethod: file.calendarMethod, calendarReply: file.calendarReply };
+    };
+    expect(fields('invite')).toEqual({ calendarMethod: 'REQUEST', calendarReply: undefined });
+    expect(fields('cancel')).toEqual({ calendarMethod: 'CANCEL', calendarReply: undefined });
+    expect(fields('accept')).toEqual({ calendarMethod: 'REPLY', calendarReply: { attendee: 'nadia@example.com', partstat: 'ACCEPTED' } });
+    expect(fields('decline')).toEqual({ calendarMethod: 'REPLY', calendarReply: { attendee: 'chris@example.com', partstat: 'DECLINED' } });
+    const plain = files.find(entry => entry.id === 'plain');
+    expect(plain).not.toHaveProperty('calendarMethod');
+    expect(plain).not.toHaveProperty('calendarReply');
+    const broken = files.find(entry => entry.id === 'broken');
+    expect(broken).not.toHaveProperty('calendarMethod');
+    expect(result.failures).toEqual([{
+      id: 'broken',
+      error: 'calendar-part: no METHOD property',
+      operation: 'calendar-part',
+      status: 'unparseable',
+      attempts: 1,
+    }]);
+    expect(result.status).toBe('incomplete');
+  });
+
   it('gives both copies of a self-addressed message their own id and the same Message-ID header', async () => {
     const header = (value: string) => ({ name: 'Message-Id', value });
     const withMessageId = (id: string, internalDate: number, labelIds: string[]) => {
