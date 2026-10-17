@@ -21,13 +21,10 @@ MISMATCH handling: don't build it, don't merge it. **Pitch the item to the maint
 
 ## Branch Workflow
 
-**Two-branch model: `main` (stable) and `experimental` (staging).**
+**Single branch: `main`.** This is not a public repository, so there is no staging branch and no promotion step.
 
-1. Before starting a new batch of PR reviews/changes: merge `experimental` → `main` IF the experiment is confirmed successful. If no evidence, ask the user.
-2. PR merges and own changes go into `experimental` first. Never merge PRs directly into `main`.
-3. After a batch is complete on `experimental`: wait for user confirmation, then merge `experimental` → `main`.
-4. **After every push to any branch:** run `gh run list --repo dansunotori/Gmail-MCP-Server --branch {branch} --limit 1` and verify CI passes. If CI fails, fix immediately - do NOT leave broken CI for the user to discover. This applies to every `git push` in the session, not just merges.
-5. **End of each dev round (batch merged to `experimental`, awaiting soak):** remind the user that `experimental` is awaiting promotion to `main` once the soak is clean. The user decides where to track that reminder.
+1. PR merges and own changes land on `main` directly.
+2. **After every push:** verify CI for exactly what was pushed, as **CI Verification** below describes (a push to `main` and a push to a PR branch are checked differently). If CI fails, fix immediately - do NOT leave broken CI for the user to discover. This applies to every `git push` in the session, not just merges.
 
 ## Distribution
 
@@ -75,12 +72,12 @@ This repository is installed from source only. `package.json` is marked `"privat
 
 **Use GitHub's merge to get the purple "merged" badge - do NOT close manually.**
 
-1. `gh pr edit {N} --base experimental` (retarget PR to experimental BEFORE any local merge)
+1. `gh pr edit {N} --base main` (make sure the PR targets main BEFORE any local merge)
 2. If post-merge fixes are needed (indentation, lockfiles, missing annotations, etc.):
-   a. Fetch and fix locally on experimental, push - the PR diff updates automatically.
+   a. Fetch and fix locally on the PR branch, push - the PR diff updates automatically. Then verify the PR's own checks: `gh pr checks {N} --repo dansunotori/Gmail-MCP-Server --watch`.
    b. Or: merge first via GitHub, then commit fixes on top.
 3. `gh pr merge {N} --merge` (merge via GitHub - shows purple "merged" badge, credits the contributor)
-4. **Verify CI:** `gh run list --repo dansunotori/Gmail-MCP-Server --branch experimental --limit 1` - wait for result. If CI fails, fix before proceeding.
+4. **Verify CI:** `gh run list --repo dansunotori/Gmail-MCP-Server --branch main --limit 1` - wait for result. If CI fails, fix before proceeding.
 5. Comment on PR explaining security audit result + any post-merge fixes applied.
 
 **Why not manual close:** "Closed" (red) looks like rejection to contributors and doesn't credit their work on their GitHub profile. Always use `gh pr merge` for accepted PRs.
@@ -122,12 +119,13 @@ Established hardening from commits `95071e7` and `208ce00`:
 
 ## CI Verification (Mandatory)
 
-After every push (to any branch), check CI status: `gh run list --repo dansunotori/Gmail-MCP-Server --branch {branch} --limit 1`. Pass `--repo` explicitly: `gh` otherwise resolves the `upstream` remote.
+After every push, check the CI run for what was pushed. Pass `--repo` explicitly: `gh` otherwise resolves the `upstream` remote.
+- **Push or merge to `main`:** `gh run list --repo dansunotori/Gmail-MCP-Server --branch main --limit 1`, and confirm the run's commit is the one just pushed before trusting its result.
+- **Push to a PR branch:** CI runs on the pull request, not on the branch push, so check the PR itself: `gh pr checks {N} --repo dansunotori/Gmail-MCP-Server --watch`.
 - If CI fails: investigate and fix before moving on. Do NOT leave broken CI.
 - **Build & Test** is the only job: clean install, lockfile lint, `npm audit`, typecheck, build, tests. If it fails, fix the code.
-- CI triggers on both `main` and `experimental` pushes, and PRs targeting either branch.
+- CI triggers on pushes to `main`, PRs targeting `main`, and manual runs.
 
 ## Session Hygiene
 
-- **Always end on `experimental` branch.** Before finishing a session, verify: `git branch --show-current` = `experimental`. If not, `git checkout experimental`.
-- Local working copy should always track `experimental` since that's the active development branch.
+- **Always end on `main`.** Before finishing a session, verify: `git branch --show-current` = `main`. If not, `git checkout main`.

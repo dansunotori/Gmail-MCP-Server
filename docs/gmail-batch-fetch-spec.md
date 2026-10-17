@@ -249,6 +249,6 @@ and its output.
 
 Commit policy (amended 2026-09-11 so that the brainstorming, writing-plans and
 subagent-driven-development skills are followed in full): each implementation task ends
-in its own commit on its feature branch, which is integrated into `experimental` at finish,
+in its own commit on its feature branch, which is integrated into the development line at finish,
 and review happens through git history rather than an uncommitted working tree. The original
 text here said "Do not commit. Leave the working tree for review."

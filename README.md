@@ -1150,23 +1150,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### Branch workflow
 
-This repo uses a **two-branch model**:
-
-- **`main`** - stable. Only receives changes promoted from `experimental` after they're confirmed working. PRs are **never** merged directly into `main`.
-- **`experimental`** - staging / active development. All PRs are retargeted here and merged into `experimental` first.
-
-Lifecycle of a contribution:
-
-```
-PR opened (any base)
-  → retargeted to `experimental`
-  → security audit + review + CI
-  → merged into `experimental`
-  → soak / verify on experimental
-  → `experimental` promoted to `main` (maintainer confirms)
-```
-
-Open your PR against `experimental` when possible. If you target `main`, a maintainer will retarget it to `experimental` before merge.
+This repo has a single branch, **`main`**. Changes land on `main` directly; open pull requests against `main`. Each pull request gets a security audit, a review and CI before it is merged.
 
 CI runs a clean install, lockfile lint, dependency audit, typecheck, build and the test suite on every push and pull request.
 
