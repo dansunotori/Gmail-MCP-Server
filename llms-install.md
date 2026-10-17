@@ -4,7 +4,7 @@ This guide will help you install and configure the Gmail MCP server for managing
 
 ## Requirements
 
-- Node.js and npm installed
+- Node.js 24 or later, with npm
 - A local clone of this repository, built with `npm install` and `npm run build`
 - Access to create a Google Cloud Project
 - Local directory for configuration storage

@@ -1,32 +1,6 @@
 # Roadmap
 
-Work to implement, in order. Item 6 comes from the prompt `figaro-pa-predecessor/docs/prompts/gmail-attachment-text.md` and keeps its contract and done-when criteria. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
-
-## 6. Attachment text extraction
-
-Source: `gmail-attachment-text.md` (related: issue #48)
-
-The server can download an attachment (`download_attachment`, `gmail-download-attachment`) but cannot return its text, so a caller must convert every format itself and cannot read a Word file or a spreadsheet at all. Add the MCP tool `get_attachment_text` and the CLI `gmail-get-attachment-text`.
-
-Contract:
-
-- Input: a message id and an attachment id (CLI: `gmail-get-attachment-text <message_id> <attachment_id>`).
-- Formats: PDF, DOCX, XLSX, XLSM, XLS, CSV, and text parts (TXT, MD, any `text/*`) returned verbatim, UTF-8 or Windows-1252 decoded.
-- Output, one JSON document on stdout: `{"name", "format", "text", "truncated": <bool>, "sheets": [{"name", "rows", "columns"}] | null}`. A spreadsheet's text is one `## Sheet: <name>` heading per sheet followed by tab-separated rows (display values, cached formula results, merged cells once at top-left, leading and trailing empty rows and columns trimmed); `sheets` gives each sheet's populated span. A size ceiling, when reached, cuts on a row or line boundary and sets `truncated: true`.
-- Failure: a protected, encrypted, corrupt or unsupported file exits non-zero with empty stdout and one stderr line naming that cause in those words, so a caller can tell a file fault from a sign-in, network or service fault, which exits with its own code.
-
-Done when:
-
-- Live, a PDF, a DOCX and a two-sheet XLSX attachment each return their text, the XLSX with both sheets and their spans.
-- Live, a password-protected PDF exits non-zero naming it protected.
-- `gmail-get-attachment-text --help` documents the formats, the output and the exit codes.
-
-Approach: `outlook-claude-mcp` already ships the same tool (`get_attachment_text`, `get-attachment-text`) for XLSX/XLSM/XLS/CSV, PDF and DOCX, so this item reuses its design rather than a new one:
-
-- Parsers: `pdf-parse` for PDF, `mammoth` for DOCX, SheetJS `xlsx` 0.20.3 from `cdn.sheetjs.com` for spreadsheets (the npm copy, 0.18.5, carries unpatched high advisories GHSA-4r6h-8v6p-xvw6 and GHSA-5pgg-2g8v-p4x9 and parses untrusted input). `cdn.sheetjs.com` joins lockfile-lint's allowed hosts, pinned by integrity hash.
-- Isolation: extraction runs in a forked worker with a timeout and a sanitised environment (its `src/workers/fork-extractor.ts`, `extract-text-worker.ts`, `sanitise-env.ts`, `extract-spreadsheet.ts`), so a hostile or huge file cannot hang or crash the server.
-- Checks: magic bytes before parsing (a mislabelled file is reported as such), encrypted workbooks and password-protected PDFs reported by name, macros never executed, a size ceiling cut on a row or line boundary.
-- Runtime: Node 24 as the minimum (`engines`, CI), matching `outlook-claude-mcp` and the local standard; current `pdfjs-dist` needs Node 22.13 or later.
+Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
 
 ## 7. Script to import Gmail prompts into this roadmap
 
@@ -45,7 +19,7 @@ Done when:
 
 - `nodemailer` and `googleapis` are on releases with no open advisory, and `npm audit` reports nothing above low for production dependencies.
 - The MIME builder tests (`utl.test.ts`, `inline-images.test.ts`, `reply-all-helpers.test.ts`) and the draft lifecycle script pass unchanged, and a live draft with an attachment and an inline image renders correctly in Gmail.
-- The lockfile is generated so that `npm ci` succeeds under the npm 10 that CI runs (npm 11 prunes optional esbuild entries npm 10 needs; `npx npm@10 install --package-lock-only` restores them).
+- `npm ci` succeeds in CI, and `lockfile-lint` passes.
 
 ## 10. Remove changelogs, history, reports, and trumpet-blowing
 
@@ -107,3 +81,21 @@ Done when:
 
 - A script local to this repository refuses `ROADMAP.md` content that reports finished work, run as a pre-commit check and as a project-level PreToolUse hook on edits to that file, with fenced and inline code exempt.
 - Its tests cover each pattern and the exemptions.
+
+## 17. download_attachment loses the attachment's name and type
+
+Gmail issues a new attachment id each time a message is read, so the id a caller holds almost never appears in the fresh `messages.get` that `downloadAttachment` (`src/read-tools.ts`) searches for the attachment's part. The part is then not found: without `filename` the file is saved as `attachment-<id>`, and the reported `mimeType` (always looked up by `gmail-download-attachment`) is `application/octet-stream`, whatever the attachment is. `get_attachment_text` already finds the part by exact id, else by the bytes' size, else as the only attachment (`findPart` in `src/attachment-text/attachment-text.ts`).
+
+Done when:
+
+- `download_attachment` and `gmail-download-attachment` find the part the way `get_attachment_text` does, through one shared function, and save the file under its real name with its real type.
+- Live, downloading an attachment by an id from an earlier read of the message saves it under its own name and reports its own MIME type.
+
+## 18. Wrap a command's own exit codes in the CLI help
+
+`renderHelp` (`src/cli/common.ts`) appends a command's `exitCodes` to the shared exit-code line without rewrapping it, so `gmail-get-attachment-text --help` prints one line of about 150 characters ("… 6 attachment protected, encrypted, corrupt or unsupported. On failure nothing is written to stdout, and stderr"), where every other help line keeps under 100.
+
+Done when:
+
+- The exit-code paragraph is wrapped after the command's codes are added, at the width the rest of the help uses.
+- A test fails when any line of any command's `--help` exceeds that width.

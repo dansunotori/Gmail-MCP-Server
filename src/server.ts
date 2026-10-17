@@ -20,7 +20,8 @@ import { createFilter, listFilters, getFilter, deleteFilter, filterTemplates, Gm
 import { parseEmailAddresses, filterOutEmail, addRePrefix, buildReferencesHeader, buildReplyAllRecipients } from "./reply-all-helpers.js";
 import { hasScope } from "./scopes.js";
 import { toolDefinitions, toMcpTools, getToolByName, SendEmailSchema, ReadEmailSchema, SearchEmailsSchema, ModifyEmailSchema, DeleteEmailSchema, BatchModifyEmailsSchema, ReportPhishingSchema, BatchReportPhishingSchema, BatchDeleteEmailsSchema, CreateLabelSchema, UpdateLabelSchema, DeleteLabelSchema, GetOrCreateLabelSchema, CreateFilterSchema, GetFilterSchema, DeleteFilterSchema, CreateFilterFromTemplateSchema, DownloadAttachmentSchema, ReplyAllSchema, GetThreadSchema, ListInboxThreadsSchema, GetInboxWithThreadsSchema, DownloadEmailSchema, ModifyThreadSchema, SendDraftSchema, DeleteDraftSchema, UpdateDraftSchema } from "./tools.js";
-import { BatchGetGmailIndexMetadataSchema, GetGmailProfileSchema, ListGmailAddedHistorySchema, ListGmailMessageIdsSchema } from "./tools.js";
+import { BatchGetGmailIndexMetadataSchema, GetAttachmentTextSchema, GetGmailProfileSchema, ListGmailAddedHistorySchema, ListGmailMessageIdsSchema } from "./tools.js";
+import { getAttachmentText } from "./attachment-text/attachment-text.js";
 import { gmailMessageToJson, emailToTxt, emailToHtml, EmailAttachment } from "./email-export.js";
 import { getGmailProfile, listGmailAddedHistory, listGmailMessageIds, structuredResult } from "./gmail-sync.js";
 import { batchGetGmailIndexMetadata } from "./gmail-batch.js";
@@ -826,6 +827,11 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                             },
                         ],
                     };
+                }
+
+                case "get_attachment_text": {
+                    const validatedArgs = GetAttachmentTextSchema.parse(args);
+                    return structuredResult({ ...await getAttachmentText(gmail, validatedArgs) });
                 }
 
                 case "get_thread": {

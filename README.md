@@ -267,7 +267,7 @@ The server automatically filters available tools based on your authorized scopes
 
 | Tools | Required Scope (any) |
 |-------|---------------------|
-| `read_email`, `search_emails`, `download_attachment`, `get_thread`, `list_inbox_threads`, `get_inbox_with_threads`, `download_email`, `get_gmail_profile`, `list_gmail_message_ids`, `list_gmail_added_history`, `batch_get_gmail_index_metadata`, `batch_fetch_window` | `gmail.readonly` or `gmail.modify` |
+| `read_email`, `search_emails`, `download_attachment`, `get_attachment_text`, `get_thread`, `list_inbox_threads`, `get_inbox_with_threads`, `download_email`, `get_gmail_profile`, `list_gmail_message_ids`, `list_gmail_added_history`, `batch_get_gmail_index_metadata`, `batch_fetch_window` | `gmail.readonly` or `gmail.modify` |
 | `list_email_labels` | `gmail.readonly`, `gmail.modify`, or `gmail.labels` |
 | `send_email`, `draft_email`, `reply_all`, `send_draft` | `gmail.modify`, `gmail.compose`, or `gmail.send` |
 | `delete_draft`, `update_draft` | `gmail.modify` or `gmail.compose` |
@@ -307,11 +307,12 @@ Then add to your Claude Code MCP settings (`~/.claude/mcp_settings.json` or proj
 }
 ```
 
-With a read-only Gmail scope, these 13 tools will be available to Claude. The scope prevents Gmail mutations, but `download_attachment`, `download_email` and `batch_fetch_window` can still write files to paths you provide locally.
+With a read-only Gmail scope, these 14 tools will be available to Claude. The scope prevents Gmail mutations, but `download_attachment`, `download_email` and `batch_fetch_window` can still write files to paths you provide locally.
 - `read_email` - Read email content
 - `search_emails` - Search your inbox
 - `list_email_labels` - List available labels
 - `download_attachment` - Download attachments
+- `get_attachment_text` - Read an attachment's text (PDF, Word, spreadsheets, text files)
 - `get_thread` - Read every message in a thread
 - `list_inbox_threads` - List matching threads
 - `get_inbox_with_threads` - List and optionally expand matching threads
@@ -368,13 +369,14 @@ The `auth` subcommand runs before the server starts and is unaffected - invoke i
 
 ## Command-line tools
 
-Five commands expose five MCP tools with the same semantics and nothing more, for scripts that need Gmail without an MCP session. Each calls the same code the server calls. Four only read; `gmail-create-draft` saves a draft and never sends it.
+Six commands expose six MCP tools with the same semantics and nothing more, for scripts that need Gmail without an MCP session. Each calls the same code the server calls. Five only read; `gmail-create-draft` saves a draft and never sends it.
 
 | Command | MCP tool | Prints |
 |-|-|-|
 | `gmail-search '<gmail query>' [--max-results N]` | `search_emails` | `{query, count, messages: [{id, subject, from, date}]}` |
 | `gmail-get-message <message_id> [--format text\|markdown]` | `read_email` | `{id, threadId, subject, from, to, cc, date, messageIdHeader, labels, body, bodySource, attachments: [{id, filename, mimeType, size}]}` |
 | `gmail-download-attachment <message_id> <attachment_id> --save-path <dir> [--filename <name>]` | `download_attachment` | `{path, size, mimeType}` |
+| `gmail-get-attachment-text <message_id> <attachment_id>` | `get_attachment_text` | `{name, format, text, truncated, sheets}` (see [Get attachment text](#get-attachment-text-get_attachment_text)); exits 6 when the file is protected, encrypted, corrupt or unsupported |
 | `gmail-batch-fetch-window --watermark <ISO 8601 with zone> --output-dir <absolute dir> [--no-cross-check] [--max-messages N]` | `batch_fetch_window` | the tool's result, unchanged (see the [result contract](#batch_fetch_window-result-contract)) |
 | `gmail-create-draft --to <addresses> --subject <text> (--body <text> \| --body-file <file>) [options]` | `draft_email` | `{draft_id, message_id, thread_id, to, cc, bcc, subject, attachments: [{name, size}]}`, read back from the saved draft |
 
@@ -621,6 +623,25 @@ Parameters:
 - `attachmentId`: The attachment ID (shown in enhanced email display)
 - `savePath`: Directory to save the file (optional, defaults to current directory)
 - `filename`: Custom filename (optional, uses original filename if not provided)
+
+### Get attachment text (`get_attachment_text`)
+Returns an attachment's text, so a caller does not convert files itself.
+
+```json
+{
+  "messageId": "182ab45cd67ef",
+  "attachmentId": "ANGjdJ9fkTs-i3GCQo5o97f_itG..."
+}
+```
+
+The result (the MCP tool's structured content, or `gmail-get-attachment-text`'s JSON) is `{ "name", "format", "text", "truncated", "sheets" }`:
+
+- Formats: PDF, DOCX, XLSX, XLSM, XLS and CSV are parsed; TXT, MD and any other `text/*` part are returned as they are, decoded as UTF-8 or, when not valid UTF-8, Windows-1252. `format` is `pdf`, `docx`, `xlsx`, `xlsm`, `xls`, `csv`, `txt`, `md` or `text`.
+- A spreadsheet's `text` is one `## Sheet: <name>` heading per sheet followed by tab-separated rows of display values: formulas as their cached results, merged cells once at their top-left, leading and trailing empty rows and columns trimmed. `sheets` gives each sheet's populated span as `{ name, rows, columns }`; it is `null` for other formats.
+- Text over 500 KB is cut on a line boundary and `truncated` is `true`.
+- A file that cannot be read fails with a message that names the cause in these words: `protected file` (a password is needed), `encrypted file`, `corrupt file` (damaged, or not the format its name or type claims, checked by its first bytes) or `unsupported file` (a format not listed above). The command exits 6 for these; a sign-in, network or Gmail failure exits with its own code.
+- Files are parsed in a separate process with a 30-second limit, a 256 MB memory cap and an environment that carries no credential path or token; macros and formulas are never run.
+- Gmail issues a new attachment id each time a message is read, so the tool finds the attachment's part by its exact id, else by the bytes' exact size, else as the message's only attachment, and fails rather than guess when attachments cannot be told apart.
 
 ### 5. Search Emails (`search_emails`)
 Searches for emails using Gmail search syntax.

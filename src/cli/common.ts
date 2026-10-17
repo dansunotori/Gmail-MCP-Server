@@ -9,6 +9,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { google, type gmail_v1 } from 'googleapis';
 import { z } from 'zod';
+import { AttachmentFileError } from '../attachment-text/formats.js';
 import { authenticate, credentialsPath, CredentialsError, loadCredentials, localOAuthPath, oauthPath } from '../auth.js';
 import { cliAction, describeFailure, scopeRefusal } from '../error-text.js';
 import { isAuthError, toGmailRequestError } from '../gmail-sync.js';
@@ -21,6 +22,8 @@ export const EXIT_USAGE = 2;
 export const EXIT_AUTH = 3;
 export const EXIT_RATE_LIMITED = 4;
 export const EXIT_NOT_FOUND = 5;
+// The attachment itself cannot be read: protected, encrypted, corrupt or unsupported.
+export const EXIT_FILE = 6;
 
 export class UsageError extends Error {
     constructor(message: string) {
@@ -47,6 +50,9 @@ export function mapErrorToExitCode(error: unknown): number {
     }
     if (error instanceof CredentialsError || error instanceof ScopeError) {
         return EXIT_AUTH;
+    }
+    if (error instanceof AttachmentFileError) {
+        return EXIT_FILE;
     }
     const wrapped = toGmailRequestError(error);
     if (wrapped.status === 429 || (wrapped.reason !== undefined && RATE_LIMIT_REASONS.has(wrapped.reason))) {
@@ -208,6 +214,8 @@ export interface CommandSpec {
     example: string;
     flags: Record<string, FlagSpec>;
     notes?: string[];
+    // Exit codes only this command returns, appended to the common list, e.g. "6 …".
+    exitCodes?: string;
 }
 
 // The flags every tool takes. --output is listed first among them so that tool-specific flags
@@ -262,7 +270,7 @@ export function renderHelp(spec: CommandSpec): string {
     lines.push(
         'Output: JSON on stdout (or in the --output file); diagnostics on stderr.',
         'Exit codes: 0 success, 1 failure, 2 usage error, 3 not signed in or missing scope,',
-        '4 Gmail rate limit, 5 not found. On failure nothing is written to stdout, and stderr',
+        `4 Gmail rate limit, 5 not found${spec.exitCodes ? `, ${spec.exitCodes}` : ''}. On failure nothing is written to stdout, and stderr`,
         'gets one line: Failed to <action>: <message> (code <reason>, HTTP <status>;',
         'rejected parameter: <name>, ...), each part present when Gmail supplies it.',
     );

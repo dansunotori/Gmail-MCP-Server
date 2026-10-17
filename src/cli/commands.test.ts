@@ -11,6 +11,7 @@ import {
   batchFetchWindowCommand,
   createDraftCommand,
   downloadAttachmentCommand,
+  getAttachmentTextCommand,
   getMessageCommand,
   searchCommand,
   type CliDeps,
@@ -741,6 +742,64 @@ describe('gmail-create-draft', () => {
       .rejects.toThrow(/would overwrite the body file/);
     expect(deps.gmail).not.toHaveBeenCalled();
     expect(fs.readFileSync(body, 'utf8')).toBe('keep me');
+  });
+});
+
+describe('gmail-get-attachment-text', () => {
+  const fixtureFile = (name: string) => fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'attachment-text', '__fixtures__', name));
+  const attachmentGmail = (filename: string, mimeType: string, bytes: Buffer) => ({ users: { messages: {
+    attachments: { get: vi.fn(async () => ({ data: { data: bytes.toString('base64url') } })) },
+    get: vi.fn(async () => ({ data: { payload: { mimeType: 'multipart/mixed', parts: [
+      { mimeType, filename, body: { attachmentId: 'refetched', size: bytes.length } },
+    ] } } })),
+  } } }) as unknown as gmail_v1.Gmail;
+
+  it('prints {name, format, text, truncated, sheets}', async () => {
+    const workbook = fixtureFile('two-sheets.xlsx');
+    const { deps, json } = harness(attachmentGmail('sales.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', workbook));
+    await getAttachmentTextCommand(['m1', 'a1'], deps);
+    expect(deps.gmail).toHaveBeenCalledWith('get_attachment_text');
+    const result = json();
+    expect(Object.keys(result)).toEqual(['name', 'format', 'text', 'truncated', 'sheets']);
+    expect(result).toMatchObject({ name: 'sales.xlsx', format: 'xlsx', truncated: false, sheets: [{ name: 'Sales', rows: 4, columns: 4 }, { name: 'Notes', rows: 2, columns: 3 }] });
+  });
+
+  it('exits 6 with one line naming the cause for a file it cannot read, and nothing on stdout', async () => {
+    const stderr: string[] = [];
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => { stderr.push(String(chunk)); return true; });
+    try {
+      for (const [filename, mimeType, bytes, line] of [
+        ['secret.pdf', 'application/pdf', fixtureFile('protected.pdf'), 'Failed to get attachment text: protected file: the PDF needs a password to open'],
+        ['locked.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', fixtureFile('encrypted.xlsx'), 'Failed to get attachment text: encrypted file: the workbook is encrypted with a password'],
+        ['broken.pdf', 'application/pdf', Buffer.from('%PDF-1.4 truncated'), 'Failed to get attachment text: corrupt file: the PDF cannot be read'],
+      ] as const) {
+        stderr.length = 0;
+        const { deps, out } = harness(attachmentGmail(filename, mimeType, bytes));
+        expect(await runCli('gmail-get-attachment-text', getAttachmentTextCommand, ['m1', 'a1'], deps)).toBe(6);
+        expect(out).toEqual([]);
+        expect(stderr).toEqual([`${line}\n`]);
+      }
+      const { deps } = harness(attachmentGmail('logo.png', 'image/png', Buffer.from('89504e47', 'hex')));
+      expect(await runCli('gmail-get-attachment-text', getAttachmentTextCommand, ['m1', 'a1'], deps)).toBe(6);
+      expect(stderr.at(-1)).toMatch(/^Failed to get attachment text: unsupported file: logo\.png \(image\/png\)/);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('documents the formats, the output and the exit codes in --help', async () => {
+    const { deps, out } = harness();
+    await getAttachmentTextCommand(['--help'], deps);
+    const help = out.join('');
+    for (const expected of ['PDF', 'DOCX', 'XLSX', 'XLSM', 'XLS', 'CSV', 'text/*', '{name, format, text, truncated, sheets', '6 ', 'protected', 'encrypted', 'corrupt', 'unsupported']) {
+      expect(help, expected).toContain(expected);
+    }
+  });
+
+  it('needs both ids', async () => {
+    const { deps } = harness();
+    await expect(getAttachmentTextCommand(['m1'], deps)).rejects.toThrow(UsageError);
+    expect(deps.gmail).not.toHaveBeenCalled();
   });
 });
 

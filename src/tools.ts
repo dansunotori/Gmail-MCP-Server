@@ -179,6 +179,19 @@ export const DownloadAttachmentSchema = z.object({
   savePath: z.string().optional().describe("Directory path to save the attachment (defaults to current directory)"),
 });
 
+export const GetAttachmentTextSchema = z.object({
+  messageId: z.string().min(1).describe("ID of the email message containing the attachment"),
+  attachmentId: z.string().min(1).describe("ID of the attachment, as read_email lists it"),
+}).strict();
+
+export const AttachmentTextOutputSchema = z.object({
+  name: z.string(),
+  format: z.enum(['pdf', 'docx', 'xlsx', 'xlsm', 'xls', 'csv', 'txt', 'md', 'text']),
+  text: z.string(),
+  truncated: z.boolean(),
+  sheets: z.array(z.object({ name: z.string(), rows: z.number().int().min(0), columns: z.number().int().min(0) }).strict()).nullable(),
+}).strict();
+
 export const DownloadEmailSchema = z.object({
   messageId: z.string().describe("ID of the email message to download"),
   savePath: z.string().describe("Directory path to save the email file"),
@@ -486,6 +499,14 @@ export const toolDefinitions: ToolDefinition[] = [
     schema: DownloadAttachmentSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Download Attachment", readOnlyHint: true },
+  },
+  {
+    name: "get_attachment_text",
+    description: "Returns an attachment's text as { name, format, text, truncated, sheets }. Reads PDF, DOCX, XLSX, XLSM, XLS and CSV, and returns TXT, MD and any other text/* part as it is (decoded as UTF-8, or Windows-1252 when it is not valid UTF-8). A spreadsheet's text is one '## Sheet: <name>' heading per sheet followed by tab-separated rows of display values (formula results, merged cells once at their top-left, leading and trailing empty rows and columns trimmed), and sheets gives each sheet's populated span; sheets is null for other formats. Text over 500 KB is cut on a line boundary with truncated true. A protected, encrypted, corrupt or unsupported file is an error result whose message starts with that word ('protected file: …'). Files are parsed in a separate process with a 30-second limit; macros and formulas are never run.",
+    schema: GetAttachmentTextSchema,
+    outputSchema: AttachmentTextOutputSchema,
+    scopes: ["gmail.readonly", "gmail.modify"],
+    annotations: { title: "Get Attachment Text", readOnlyHint: true },
   },
 
   // Thread-level operations

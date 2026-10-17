@@ -95,6 +95,34 @@ describe('draft_email and send_email', () => {
   });
 });
 
+describe('get_attachment_text', () => {
+  const pdfGmail = (file: string) => {
+    const bytes = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), 'attachment-text', '__fixtures__', file));
+    return { users: { messages: {
+      attachments: { get: async () => ({ data: { data: bytes.toString('base64url') } }) },
+      get: async () => ({ data: { payload: { mimeType: 'multipart/mixed', parts: [
+        { mimeType: 'application/pdf', filename: file, body: { attachmentId: 'refetched', size: bytes.length } },
+      ] } } }),
+    } } };
+  };
+
+  it('returns the attachment\'s name, format, text, truncated flag and sheets', async () => {
+    const client = await connect(pdfGmail('report.pdf'));
+    const result = await client.callTool({ name: 'get_attachment_text', arguments: { messageId: 'm1', attachmentId: 'a1' } });
+    await client.close();
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({ name: 'report.pdf', format: 'pdf', truncated: false, sheets: null });
+    expect((result.structuredContent as { text: string }).text).toContain('Quarterly report 2026');
+  });
+
+  it('reports a protected file as an error result naming the cause', async () => {
+    expect(await call(pdfGmail('protected.pdf'), 'get_attachment_text', { messageId: 'm1', attachmentId: 'a1' })).toEqual({
+      isError: true,
+      text: 'Failed to get attachment text: protected file: the PDF needs a password to open',
+    });
+  });
+});
+
 describe('MCP tool failures', () => {
   const notFound = () => gmailError(404, 'Requested entity was not found.', 'notFound');
 

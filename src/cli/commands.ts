@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import TurndownService from 'turndown';
+import { getAttachmentText } from '../attachment-text/attachment-text.js';
 import { batchFetchWindow } from '../batch-fetch-window.js';
 import { createDraft, readDraft, type ComposeArgs } from '../compose.js';
 import { validateEmail } from '../utl.js';
@@ -269,6 +270,48 @@ export const batchFetchWindowCommand: Command = async (argv, deps) => {
     await emitJson(result, args.output, deps);
 };
 
+const GET_ATTACHMENT_TEXT: CommandSpec = {
+    name: 'gmail-get-attachment-text',
+    synopsis: 'gmail-get-attachment-text <message_id> <attachment_id> [-o <file>]',
+    description: [
+        "Prints an attachment's text like the get_attachment_text MCP tool, as",
+        '{name, format, text, truncated, sheets}.',
+        '',
+        'Formats: PDF, DOCX, XLSX, XLSM, XLS and CSV are parsed; TXT, MD and any other text/* part',
+        'are returned as they are, decoded as UTF-8 or, when not valid UTF-8, Windows-1252.',
+        "A spreadsheet's text is one '## Sheet: <name>' heading per sheet followed by tab-separated",
+        'rows of display values (formula results, merged cells once at their top-left, leading and',
+        "trailing empty rows and columns trimmed); sheets gives each sheet's populated span as",
+        '{name, rows, columns}, and is null for other formats. Text over 500 KB is cut on a line',
+        'boundary and truncated is true. Files are parsed in a separate process with a 30-second',
+        'limit; macros and formulas are never run.',
+    ].join('\n'),
+    arguments: [
+        ['<message_id>', 'The Gmail message ID.'],
+        ['<attachment_id>', 'The attachment ID, as gmail-get-message lists it.'],
+    ],
+    example: 'gmail-get-attachment-text 18f2a9c4e1b7d3a0 ANGjdJ8x',
+    flags: {
+        ...commonFlags('gmail-get-attachment-text', 'gmail-get-attachment-text 18f2a9c4e1b7d3a0 ANGjdJ8x --output text.json'),
+    },
+    notes: [
+        'When the file itself cannot be read the command exits 6, and the stderr line names the',
+        'cause in these words: protected file (a password is needed), encrypted file, corrupt file',
+        '(damaged, or not the format its name or type claims) or unsupported file (a format not',
+        'listed above). A sign-in, network or Gmail failure exits with its own code instead.',
+    ],
+    exitCodes: '6 attachment protected, encrypted, corrupt or unsupported',
+};
+
+export const getAttachmentTextCommand: Command = async (argv, deps) => {
+    const args = await start(GET_ATTACHMENT_TEXT, argv, deps);
+    if (!args) return;
+    expectPositionals(args.positionals, ['<message_id>', '<attachment_id>']);
+    const [messageId, attachmentId] = args.positionals;
+    const result = await getAttachmentText(deps.gmail('get_attachment_text'), { messageId, attachmentId });
+    await emitJson(result, args.output, deps);
+};
+
 const CREATE_DRAFT: CommandSpec = {
     name: 'gmail-create-draft',
     synopsis: "gmail-create-draft --to <addresses> --subject <text> (--body <text> | --body-file <file>) [options] [-o <file>]",
@@ -509,6 +552,7 @@ export const COMMANDS: CliCommand[] = [
     command(SEARCH, searchCommand),
     command(GET_MESSAGE, getMessageCommand),
     command(DOWNLOAD_ATTACHMENT, downloadAttachmentCommand),
+    command(GET_ATTACHMENT_TEXT, getAttachmentTextCommand),
     command(BATCH_FETCH_WINDOW, batchFetchWindowCommand),
     command(CREATE_DRAFT, createDraftCommand),
 ];
