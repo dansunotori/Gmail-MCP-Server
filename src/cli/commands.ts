@@ -97,7 +97,7 @@ export const searchCommand: Command = async (argv, deps) => {
 const GET_MESSAGE: CommandSpec = {
     name: 'gmail-get-message',
     synopsis: 'gmail-get-message <message_id> [--format text|markdown] [-o <file>]',
-    description: 'Reads one message like the read_email MCP tool and prints id, threadId, subject, from, to, cc, date, labels, body and attachments [{id, filename, mimeType, size}].',
+    description: 'Reads one message like the read_email MCP tool and prints id, threadId, subject, from, to, cc, date, messageIdHeader (the Message-ID header, null when absent), labels, body and attachments [{id, filename, mimeType, size}].',
     arguments: [['<message_id>', 'A Gmail message ID, as gmail-search prints it.']],
     example: 'gmail-get-message 18f2a9c4e1b7d3a0',
     flags: {
@@ -137,6 +137,7 @@ export const getMessageCommand: Command = async (argv, deps) => {
         to: email.to,
         cc: email.cc,
         date: email.date,
+        messageIdHeader: email.messageIdHeader,
         labels: email.labels,
         body: format === 'markdown' ? markdownBody(email) : email.body,
         attachments: email.attachments,

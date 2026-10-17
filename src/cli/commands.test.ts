@@ -422,10 +422,23 @@ describe('gmail-get-message', () => {
       to: 'me@example.com',
       cc: 'boss@example.com',
       date: 'Mon, 07 Sep 2026 14:00:00 +0000',
+      messageIdHeader: null,
       labels: ['INBOX'],
       body: 'Plain body',
       attachments: [{ id: 'att-1', filename: 'invoice.pdf', mimeType: 'application/pdf', size: 14 }],
     });
+  });
+
+  it('prints the Message-ID header as messageIdHeader, null when the message has none', async () => {
+    const withHeader = { ...message, payload: { ...message.payload, headers: [...message.payload.headers, { name: 'Message-ID', value: '<inv.1@example.com>' }] } };
+    const gmail = { users: { messages: { get: async () => ({ data: withHeader }) } } } as unknown as gmail_v1.Gmail;
+    const first = harness(gmail);
+    await getMessageCommand(['m1'], first.deps);
+    expect(first.json().messageIdHeader).toBe('<inv.1@example.com>');
+
+    const second = harness();
+    await getMessageCommand(['m1'], second.deps);
+    expect(second.json()).toHaveProperty('messageIdHeader', null);
   });
 
   it('converts the HTML part to Markdown with --format markdown', async () => {

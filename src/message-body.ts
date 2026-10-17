@@ -64,8 +64,14 @@ export function decodeBase64Url(data: string | null | undefined): string {
 }
 
 export function headerValue(headers: MessageHeader[] | null | undefined, name: string): string {
+  return optionalHeader(headers, name) ?? '';
+}
+
+// The header's value exactly as the message holds it, or null when the message has no such
+// header, so a caller can tell an absent header from an empty one.
+export function optionalHeader(headers: MessageHeader[] | null | undefined, name: string): string | null {
   const found = (headers ?? []).find(header => (header.name ?? '').toLowerCase() === name.toLowerCase());
-  return found?.value ?? '';
+  return found === undefined ? null : found.value ?? '';
 }
 
 function walk(payload: MessagePart | null | undefined, out: ExtractedParts): void {

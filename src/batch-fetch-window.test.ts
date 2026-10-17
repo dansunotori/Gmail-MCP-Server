@@ -181,6 +181,33 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     ]);
   });
 
+  it('gives both copies of a self-addressed message their own id and the same Message-ID header', async () => {
+    const header = (value: string) => ({ name: 'Message-Id', value });
+    const withMessageId = (id: string, internalDate: number, labelIds: string[]) => {
+      const base = message(id, internalDate, { labelIds });
+      const payload = base.payload as { headers: Array<{ name: string; value: string }> };
+      return { ...base, payload: { ...payload, headers: [...payload.headers, header('<self.1@mail.example.com>')] } };
+    };
+    const gmail = fakeGmail({
+      lists: windowOnly(['sent', 'received']),
+      messages: {
+        sent: withMessageId('sent', BOUNDARY + 1000, ['SENT']),
+        received: withMessageId('received', BOUNDARY + 2000, ['INBOX']),
+      },
+    });
+    await run(gmail, dir);
+    const files = messageFiles(dir).map(name => readJson(path.join(dir, 'messages', name)));
+    expect(files.map(file => [file.id, file.messageIdHeader])).toEqual([
+      ['sent', '<self.1@mail.example.com>'],
+      ['received', '<self.1@mail.example.com>'],
+    ]);
+    const manifest = readJson(path.join(dir, 'manifest.json'));
+    expect(manifest.messages.map((entry: { id: string; messageIdHeader: string }) => [entry.id, entry.messageIdHeader])).toEqual([
+      ['sent', '<self.1@mail.example.com>'],
+      ['received', '<self.1@mail.example.com>'],
+    ]);
+  });
+
   it('writes the documented shapes for the message file and window metadata, and lists the file in the manifest', async () => {
     const gmail = fakeGmail({
       lists: windowOnly(['a']),
@@ -202,6 +229,7 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
       cc: '',
       subject: 'Subject a',
       dateHeader: 'Mon, 07 Sep 2026 14:00:00 +0000',
+      messageIdHeader: null,
       snippet: 'snippet a',
       attachments: [],
       body: 'body of a',
@@ -234,6 +262,7 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
       from: 'a@example.com',
       subject: 'Subject a',
       dateHeader: 'Mon, 07 Sep 2026 14:00:00 +0000',
+      messageIdHeader: null,
       attachments: 0,
     }]);
     expect(path.isAbsolute(manifest.messages[0].file)).toBe(true);
@@ -1159,6 +1188,7 @@ describe('batchFetchWindow: window listing failures', () => {
         from: 'a@example.com',
         subject: 'Subject a',
         dateHeader: 'Mon, 07 Sep 2026 14:00:00 +0000',
+        messageIdHeader: null,
         attachments: 0,
       }],
     });

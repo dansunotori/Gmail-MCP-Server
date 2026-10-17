@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import type { gmail_v1 } from 'googleapis';
 import { EmailAttachment } from './email-export.js';
+import { optionalHeader } from './message-body.js';
 
 // Type definitions for Gmail API responses
 export interface GmailMessagePart {
@@ -154,7 +155,8 @@ export function formatSearchEmailsText(results: SearchEmailsResult[]): string {
 export interface ReadEmailResult {
     id: string;
     threadId: string;
-    rfcMessageId: string;
+    // The RFC 822 Message-ID header as the message holds it, null when it has none.
+    messageIdHeader: string | null;
     subject: string;
     from: string;
     to: string;
@@ -176,7 +178,8 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
         format: 'full',
     });
 
-    const { subject, from, to, cc, bcc, date, rfcMessageId } = extractHeaders(response.data.payload);
+    const { subject, from, to, cc, bcc, date } = extractHeaders(response.data.payload);
+    const messageIdHeader = optionalHeader(response.data.payload?.headers, 'Message-ID');
     const threadId = response.data.threadId || '';
     const { text, html } = extractEmailContent(response.data.payload as GmailMessagePart || {});
     const attachments = extractAttachments(response.data.payload as GmailMessagePart);
@@ -184,7 +187,7 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
     return {
         id: response.data.id || args.messageId,
         threadId,
-        rfcMessageId,
+        messageIdHeader,
         subject,
         from,
         to,
@@ -201,7 +204,7 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
 }
 
 export function formatReadEmailText(email: ReadEmailResult): string {
-    const { threadId, rfcMessageId, subject, from, to, cc, bcc, date, text, html, body, attachments } = email;
+    const { threadId, messageIdHeader, subject, from, to, cc, bcc, date, text, html, body, attachments } = email;
     const contentTypeNote = !text && html ?
         '[Note: This email is HTML-formatted. Plain text version not available.]\n\n' : '';
 
@@ -210,7 +213,7 @@ export function formatReadEmailText(email: ReadEmailResult): string {
         `\n\nAttachments (${attachments.length}):\n` +
         attachments.map(a => `- ${a.filename} (${a.mimeType}, ${Math.round(a.size/1024)} KB, ID: ${a.id})`).join('\n') : '';
 
-    return `Thread ID: ${threadId}\nMessage-ID: ${rfcMessageId}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}${cc ? `\nCC: ${cc}` : ''}${bcc ? `\nBCC: ${bcc}` : ''}\nDate: ${date}\n\n${contentTypeNote}${body}${attachmentInfo}`;
+    return `Thread ID: ${threadId}\nMessage-ID: ${messageIdHeader ?? '(none)'}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}${cc ? `\nCC: ${cc}` : ''}${bcc ? `\nBCC: ${bcc}` : ''}\nDate: ${date}\n\n${contentTypeNote}${body}${attachmentInfo}`;
 }
 
 export interface DownloadAttachmentResult {

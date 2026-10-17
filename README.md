@@ -373,7 +373,7 @@ Four read-only commands expose four MCP tools with the same semantics and nothin
 | Command | MCP tool | Prints |
 |-|-|-|
 | `gmail-search '<gmail query>' [--max-results N]` | `search_emails` | `{query, count, messages: [{id, subject, from, date}]}` |
-| `gmail-get-message <message_id> [--format text\|markdown]` | `read_email` | `{id, threadId, subject, from, to, cc, date, labels, body, attachments: [{id, filename, mimeType, size}]}` |
+| `gmail-get-message <message_id> [--format text\|markdown]` | `read_email` | `{id, threadId, subject, from, to, cc, date, messageIdHeader, labels, body, attachments: [{id, filename, mimeType, size}]}` |
 | `gmail-download-attachment <message_id> <attachment_id> --save-path <dir> [--filename <name>]` | `download_attachment` | `{path, size, mimeType}` |
 | `gmail-batch-fetch-window --watermark <ISO 8601 with zone> --output-dir <absolute dir> [--no-cross-check] [--max-messages N]` | `batch_fetch_window` | the tool's result, unchanged (see the [result contract](#batch_fetch_window-result-contract)) |
 
@@ -456,6 +456,8 @@ The first four tools never request or return subjects, addresses, snippets, head
 | `failures` | array | One entry per call given up on after retries, see below. Empty when none. |
 | `crossCheck` | object | Always present, see below. |
 | `triage` | string[] | `"<file> | <from> | <subject> | <dateHeader> | <n> att"` per written message, in file order. |
+
+**Message-ID.** Each message file and each manifest `messages[]` entry carries `messageIdHeader`: the RFC 822 `Message-ID` header exactly as the message holds it, or `null` when it has none. Two entries with different `id` and the same `messageIdHeader` are one message held twice, such as the sent and received copies of a self-addressed message. `read_email` prints the same value on its `Message-ID:` line (`(none)` when absent) and `gmail-get-message` returns it as `messageIdHeader`.
 
 **`failures[]` entry** — `{ id, error, operation, status, attempts }`:
 

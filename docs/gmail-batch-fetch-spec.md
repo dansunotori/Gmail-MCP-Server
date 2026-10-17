@@ -121,11 +121,13 @@ for `readOnlyHint: true`.)
 ```json
 {
   "id": "...", "threadId": "...", "internalDate": "1757600000000", "labelIds": ["INBOX", "UNREAD"],
-  "from": "...", "to": "...", "cc": "...", "subject": "...", "dateHeader": "...",
+  "from": "...", "to": "...", "cc": "...", "subject": "...", "dateHeader": "...", "messageIdHeader": "<...@...>",
   "snippet": "...", "attachments": [ { "filename": "...", "mimeType": "...", "size": 0, "attachmentId": "..." } ],
   "body": "..."
 }
 ```
+
+`messageIdHeader` is the RFC 822 `Message-ID` header exactly as the message holds it, or `null` when it has none. Two message files with different `id` and the same `messageIdHeader` hold one message, for example the sent and received copies of a self-addressed message. The manifest entry carries the same field.
 
 `manifest.json`:
 
@@ -140,7 +142,7 @@ for `readOnlyHint: true`.)
     "counts": { "window": 0, "spam": 0, "trash": 0, "anywhere": 0 },
     "window": 0, "spam": 0, "trash": 0, "anywhere": 0
   },
-  "messages": [ { "file": "<output_dir>/messages/001.json", "id": "...", "internalDate": "...", "labelIds": [], "from": "...", "subject": "...", "dateHeader": "...", "attachments": 0 } ]
+  "messages": [ { "file": "<output_dir>/messages/001.json", "id": "...", "internalDate": "...", "labelIds": [], "from": "...", "subject": "...", "dateHeader": "...", "messageIdHeader": "<...@...>", "attachments": 0 } ]
 }
 ```
 

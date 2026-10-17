@@ -1,42 +1,6 @@
 # Roadmap
 
-Work to implement, in order. Items 1 to 6 come from the prompts in `figaro-pa-predecessor/docs/prompts/gmail-*.md`; each item keeps its prompt's contract and done-when criteria. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional.
-
-## 1. Errors that say why (done)
-
-Live, Gmail accepts any search syntax (unbalanced parentheses, bad dates and sizes all return results), so the invalid query that Gmail rejects is an oversized one: `Failed to search messages: Request Entity Too Large (HTTP 413)`.
-
-Source: `gmail-error-detail.md`
-
-A failed call prints `error: <message>` and exits with a mapped code, but the message does not reliably carry the upstream status, Gmail's error reason or the parameter Gmail rejected. Make every error result carry them, on every MCP tool and every CLI (`gmail-search`, `gmail-get-message`, `gmail-download-attachment`, `gmail-batch-fetch-window` and any CLI added later).
-
-Contract:
-
-- The one stderr line (and the tool's error text) takes the form `Failed to <action>: <message> (code <reason>, HTTP <status>; rejected parameter: <name>, ...)`, each part present when Gmail supplies it and left out when it does not.
-- Exit codes and their mapping stay as they are; stdout stays empty on failure.
-- No token, credential or request header ever appears in the text.
-
-Done when:
-
-- Live, a search with an invalid query, a get of a message id that does not exist and a download with a malformed attachment id each print the form above with the status and reason Gmail returned.
-- The README's error section documents the form.
-
-## 2. Message-ID header in the window fetch
-
-Source: `gmail-message-id-header.md`
-
-The message files and manifest written by `batch_fetch_window` carry Gmail's `id` and `threadId` but not the RFC 822 `Message-ID` header, so a caller cannot tell when two Gmail ids hold one message (a self-addressed message kept as a sent copy and a received copy). Add the header to `batch_fetch_window` and `gmail-batch-fetch-window`, and to `read_email` and `gmail-get-message`.
-
-Contract:
-
-- Each message file, and each manifest entry, carries `messageIdHeader`: the `Message-ID` header value as the message holds it, or `null` when the message has none.
-- `gmail-get-message` and `read_email` return the same field.
-- Nothing else in the output changes.
-
-Done when:
-
-- Live, a self-addressed message fetched in one window appears as two entries with different `id` values and the same `messageIdHeader`.
-- A message with no `Message-ID` header carries `null`.
+Work to implement, in order. Items 3 to 6 come from the prompts in `figaro-pa-predecessor/docs/prompts/gmail-*.md`; each item keeps its prompt's contract and done-when criteria. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
 
 ## 3. Body from the HTML part when the plain part is a stub
 
@@ -117,17 +81,6 @@ Done when:
 - Running it twice against the same prompts directory adds nothing the second time.
 - A new `gmail-*.md` prompt is appended verbatim under the next number, and prompts for other servers are ignored.
 
-## 8. Retire the staging branch (done)
-
-This is not a public repository, so the two-branch model (`main` stable plus a staging branch for contributor PRs) added a promotion step with no audience. Work lands on `main` directly.
-
-Done when:
-
-- The staging branch is merged into `main` and deleted locally and on `origin`.
-- `CLAUDE.md`, `README.md` and `.claude/skills/pr-review-sop/SKILL.md` describe a single-branch workflow: no staging branch, no promotion or soak step; CI is checked after every push to `main`.
-- `.github/workflows/ci.yml` triggers only on `main` (pushes and PRs) and on manual runs.
-- No file in the repository still names the staging branch.
-
 ## 9. Upgrade nodemailer and googleapis past their advisories
 
 `npm audit` still reports advisories that only a major upgrade fixes: `nodemailer` 7 (high; fixed in 10.1.2), which builds every message this server sends, drafts or replies with attachments, and `uuid` through `googleapis` 129 (moderate; fixed by moving to a current `googleapis`). CI passes only because it fails on critical advisories alone.
@@ -137,3 +90,9 @@ Done when:
 - `nodemailer` and `googleapis` are on releases with no open advisory, and `npm audit` reports nothing above low for production dependencies.
 - The MIME builder tests (`utl.test.ts`, `inline-images.test.ts`, `reply-all-helpers.test.ts`) and the draft lifecycle script pass unchanged, and a live draft with an attachment and an inline image renders correctly in Gmail.
 - The lockfile is generated so that `npm ci` succeeds under the npm 10 that CI runs (npm 11 prunes optional esbuild entries npm 10 needs; `npx npm@10 install --package-lock-only` restores them).
+
+## 10. Remove changelogs, history, reports, and trumpet-blowing
+
+- Add standing rules that no changelogs, history, reports, or trumpet-blowing survive in this repository files or code comments. 
+- Double-check model logic for reporting preservation and close those gaps in the repo instructions, too
+- Review every documend and code file for the violations and remove changelogs, history, reports, and trumpet-blowing.

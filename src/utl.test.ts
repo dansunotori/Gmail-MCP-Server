@@ -90,7 +90,7 @@ describe('read_email Message-ID', () => {
     it('read_email returns Message-ID', () => {
         const headers = extractHeaders({ headers: [{ name: 'Message-ID', value: '<m@x>' }] });
         const text = formatReadEmailText({
-            id: 'm', threadId: 't', rfcMessageId: headers.rfcMessageId, subject: '', from: '', to: '', cc: '', bcc: '',
+            id: 'm', threadId: 't', messageIdHeader: headers.rfcMessageId, subject: '', from: '', to: '', cc: '', bcc: '',
             date: '', labels: [], text: '', html: '', body: '', attachments: [],
         });
         expect(text).toContain('Message-ID: <m@x>');

@@ -136,7 +136,7 @@ describe('readEmail', () => {
     expect(result).toEqual({
       id: 'm1',
       threadId: 't1',
-      rfcMessageId: '<abc@example.com>',
+      messageIdHeader: '<abc@example.com>',
       subject: 'Invoice',
       from: 'Billing <billing@example.com>',
       to: 'me@example.com',
@@ -159,6 +159,18 @@ describe('readEmail', () => {
     expect(result.labels).toEqual([]);
   });
 
+  it('gives messageIdHeader null when the message has no Message-ID header', async () => {
+    const noHeader = { id: 'n', threadId: 't', payload: { mimeType: 'text/plain', headers: [{ name: 'Subject', value: 's' }], body: { data: b64('x') } } };
+    const { gmail } = fakeGmail({ messages: { n: noHeader } });
+    expect((await readEmail(gmail, { messageId: 'n' })).messageIdHeader).toBeNull();
+  });
+
+  it('keeps the Message-ID header exactly as the message holds it, whatever the header name\'s case', async () => {
+    const raw = { id: 'r', threadId: 't', payload: { mimeType: 'text/plain', headers: [{ name: 'message-id', value: ' <Mixed.Case@Example.COM> ' }], body: { data: b64('x') } } };
+    const { gmail } = fakeGmail({ messages: { r: raw } });
+    expect((await readEmail(gmail, { messageId: 'r' })).messageIdHeader).toBe(' <Mixed.Case@Example.COM> ');
+  });
+
   it('formats the message exactly as the read_email tool prints it', async () => {
     const { gmail } = fakeGmail({ messages: { m1: fullMessage } });
     const text = formatReadEmailText(await readEmail(gmail, { messageId: 'm1' }));
@@ -169,17 +181,17 @@ describe('readEmail', () => {
     );
   });
 
-  it('prints CC and BCC only when present, and notes an HTML-only body', () => {
+  it('prints CC and BCC only when present, notes an HTML-only body, and says when there is no Message-ID', () => {
     const base = {
-      id: 'x', threadId: 't', rfcMessageId: '', subject: 's', from: 'f', to: 'to', cc: '', bcc: '', date: 'd',
+      id: 'x', threadId: 't', messageIdHeader: null, subject: 's', from: 'f', to: 'to', cc: '', bcc: '', date: 'd',
       labels: [], text: '', html: '<p>h</p>', body: '<p>h</p>', attachments: [],
     };
     expect(formatReadEmailText(base)).toBe(
-      'Thread ID: t\nMessage-ID: \nSubject: s\nFrom: f\nTo: to\nDate: d\n\n'
+      'Thread ID: t\nMessage-ID: (none)\nSubject: s\nFrom: f\nTo: to\nDate: d\n\n'
       + '[Note: This email is HTML-formatted. Plain text version not available.]\n\n<p>h</p>',
     );
     expect(formatReadEmailText({ ...base, bcc: 'b@x', html: '', body: '' })).toBe(
-      'Thread ID: t\nMessage-ID: \nSubject: s\nFrom: f\nTo: to\nBCC: b@x\nDate: d\n\n',
+      'Thread ID: t\nMessage-ID: (none)\nSubject: s\nFrom: f\nTo: to\nBCC: b@x\nDate: d\n\n',
     );
   });
 });

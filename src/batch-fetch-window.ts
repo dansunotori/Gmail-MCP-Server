@@ -15,7 +15,7 @@ import {
   type ListAllMessageIdsResult,
 } from './gmail-sync.js';
 import { withContext } from './error-text.js';
-import { headerValue, resolveMessageBody, type MessageHeader, type MessagePart } from './message-body.js';
+import { headerValue, optionalHeader, resolveMessageBody, type MessageHeader, type MessagePart } from './message-body.js';
 import { BatchFetchWindowOutputSchema, BatchFetchWindowSchema } from './tools.js';
 
 export type BatchFetchWindowInput = z.infer<typeof BatchFetchWindowSchema>;
@@ -62,6 +62,9 @@ type ManifestEntry = {
   from: string;
   subject: string;
   dateHeader: string;
+  // The RFC 822 Message-ID header, null when the message has none: two Gmail ids with the
+  // same value hold one message (a self-addressed message's sent and received copies).
+  messageIdHeader: string | null;
   attachments: number;
 };
 
@@ -303,6 +306,7 @@ export async function batchFetchWindow(
     const from = headerValue(headers, 'From');
     const subject = headerValue(headers, 'Subject');
     const dateHeader = headerValue(headers, 'Date');
+    const messageIdHeader = optionalHeader(headers, 'Message-ID');
     const file = path.join(messagesDir, `${String(index + 1).padStart(width, '0')}.json`);
     prepared.push({
       file,
@@ -316,6 +320,7 @@ export async function batchFetchWindow(
         cc: headerValue(headers, 'Cc'),
         subject,
         dateHeader,
+        messageIdHeader,
         snippet: data.snippet ?? '',
         attachments: resolved.attachments,
         body: resolved.body,
@@ -328,6 +333,7 @@ export async function batchFetchWindow(
         from,
         subject,
         dateHeader,
+        messageIdHeader,
         attachments: resolved.attachments.length,
       },
       metadata: {
