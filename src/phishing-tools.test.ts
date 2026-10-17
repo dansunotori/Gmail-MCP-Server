@@ -74,7 +74,7 @@ describe('Phishing tool definitions', () => {
 
 describe('Source verification', () => {
     it('single phishing report uses SPAM label flow', () => {
-        const source = fs.readFileSync(path.join(srcDir, 'index.ts'), 'utf-8');
+        const source = fs.readFileSync(path.join(srcDir, 'server.ts'), 'utf-8');
         expect(source).toContain('case "report_phishing"');
         expect(source).toContain("addLabelIds: ['SPAM']");
         expect(source).toContain('closest public Gmail API approximation of reporting phishing');
@@ -82,7 +82,7 @@ describe('Source verification', () => {
     });
 
     it('batch phishing report uses batchModify with SPAM label flow and documents limitation', () => {
-        const source = fs.readFileSync(path.join(srcDir, 'index.ts'), 'utf-8');
+        const source = fs.readFileSync(path.join(srcDir, 'server.ts'), 'utf-8');
         expect(source).toContain('case "batch_report_phishing"');
         expect(source).toContain('gmail.users.messages.batchModify');
         expect(source).toContain('ids: batch');

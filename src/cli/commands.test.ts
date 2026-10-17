@@ -14,7 +14,7 @@ import {
   searchCommand,
   type CliDeps,
 } from './commands.js';
-import { UsageError, mapErrorToExitCode, parseCliArgs } from './common.js';
+import { ScopeError, UsageError, mapErrorToExitCode, parseCliArgs, runCli } from './common.js';
 
 const b64 = (value: string) => Buffer.from(value, 'utf8').toString('base64');
 
@@ -449,6 +449,57 @@ describe('gmail-get-message', () => {
     await expect(missing).rejects.toMatchObject({ response: { status: 404 } });
     expect(mapErrorToExitCode(await missing.catch(error => error))).toBe(5);
     expect(out).toEqual([]);
+  });
+});
+
+describe('runCli error line', () => {
+  let stderr: string[];
+  beforeEach(() => {
+    stderr = [];
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      stderr.push(String(chunk));
+      return true;
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('prints one line naming the action, the reason and the status, and keeps the exit code and empty stdout', async () => {
+    const gmail = {
+      users: { messages: { get: async () => {
+        throw Object.assign(new Error('Requested entity was not found.'), {
+          code: 404,
+          errors: [{ message: 'Requested entity was not found.', domain: 'global', reason: 'notFound' }],
+          response: { status: 404, data: { error: { code: 404, errors: [{ reason: 'notFound' }] } } },
+        });
+      } } },
+    } as unknown as gmail_v1.Gmail;
+    const { deps, out } = harness(gmail);
+    const code = await runCli('gmail-get-message', getMessageCommand, ['nope'], deps);
+    expect(code).toBe(5);
+    expect(out).toEqual([]);
+    expect(stderr).toEqual(['Failed to get message: Requested entity was not found. (code notFound, HTTP 404)\n']);
+  });
+
+  it('puts the help hint for a usage error on the same line', async () => {
+    const { deps, out } = harness();
+    const code = await runCli('gmail-search', searchCommand, [], deps);
+    expect(code).toBe(2);
+    expect(out).toEqual([]);
+    expect(stderr).toEqual(["Failed to search messages: missing <gmail query>; run 'gmail-search --help' for usage\n"]);
+  });
+
+  it('reports a refused scope in the same form, with exit code 3', async () => {
+    const { deps } = harness();
+    vi.mocked(deps.gmail).mockImplementation((toolName: string) => {
+      throw new ScopeError(toolName);
+    });
+    const code = await runCli('gmail-search', searchCommand, ['in:inbox'], deps);
+    expect(code).toBe(3);
+    expect(stderr).toEqual([
+      'Failed to search messages: Tool "search_emails" is not available. You may need to re-authenticate with additional scopes.\n',
+    ]);
   });
 });
 

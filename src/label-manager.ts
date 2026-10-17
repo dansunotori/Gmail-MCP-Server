@@ -1,7 +1,13 @@
 /**
  * Label Manager for Gmail MCP Server
  * Provides comprehensive label management functionality
+ *
+ * A Gmail failure is rethrown as it is, or with a message that adds context through
+ * withContext, so the caller's error text keeps Gmail's reason, status and rejected
+ * parameters.
  */
+
+import { withContext } from './error-text.js';
 
 // Type definitions for Gmail API labels
 export interface GmailLabel {
@@ -47,10 +53,10 @@ export async function createLabel(gmail: any, labelName: string, options: {
     } catch (error: any) {
         // Handle duplicate labels more gracefully
         if (error.message && error.message.includes('already exists')) {
-            throw new Error(`Label "${labelName}" already exists. Please use a different name.`);
+            throw withContext(`Label "${labelName}" already exists. Please use a different name.`, error);
         }
-        
-        throw new Error(`Failed to create label: ${error.message}`);
+
+        throw error;
     }
 }
 
@@ -82,10 +88,10 @@ export async function updateLabel(gmail: any, labelId: string, updates: {
         return response.data;
     } catch (error: any) {
         if (error.code === 404) {
-            throw new Error(`Label with ID "${labelId}" not found.`);
+            throw withContext(`Label with ID "${labelId}" not found.`, error);
         }
-        
-        throw new Error(`Failed to update label: ${error.message}`);
+
+        throw error;
     }
 }
 
@@ -115,10 +121,10 @@ export async function deleteLabel(gmail: any, labelId: string) {
         return { success: true, message: `Label "${label.data.name}" deleted successfully.` };
     } catch (error: any) {
         if (error.code === 404) {
-            throw new Error(`Label with ID "${labelId}" not found.`);
+            throw withContext(`Label with ID "${labelId}" not found.`, error);
         }
-        
-        throw new Error(`Failed to delete label: ${error.message}`);
+
+        throw error;
     }
 }
 
@@ -128,30 +134,26 @@ export async function deleteLabel(gmail: any, labelId: string) {
  * @returns Object containing system and user labels
  */
 export async function listLabels(gmail: any) {
-    try {
-        const response = await gmail.users.labels.list({
-            userId: 'me',
-        });
+    const response = await gmail.users.labels.list({
+        userId: 'me',
+    });
 
-        const labels = response.data.labels || [];
-        
-        // Group labels by type for better organization
-        const systemLabels = labels.filter((label:GmailLabel) => label.type === 'system');
-        const userLabels = labels.filter((label:GmailLabel) => label.type === 'user');
+    const labels = response.data.labels || [];
 
-        return {
-            all: labels,
-            system: systemLabels,
-            user: userLabels,
-            count: {
-                total: labels.length,
-                system: systemLabels.length,
-                user: userLabels.length
-            }
-        };
-    } catch (error: any) {
-        throw new Error(`Failed to list labels: ${error.message}`);
-    }
+    // Group labels by type for better organization
+    const systemLabels = labels.filter((label:GmailLabel) => label.type === 'system');
+    const userLabels = labels.filter((label:GmailLabel) => label.type === 'user');
+
+    return {
+        all: labels,
+        system: systemLabels,
+        user: userLabels,
+        count: {
+            total: labels.length,
+            system: systemLabels.length,
+            user: userLabels.length
+        }
+    };
 }
 
 /**
@@ -161,19 +163,15 @@ export async function listLabels(gmail: any) {
  * @returns The found label or null if not found
  */
 export async function findLabelByName(gmail: any, labelName: string) {
-    try {
-        const labelsResponse = await listLabels(gmail);
-        const allLabels = labelsResponse.all;
-        
-        // Case-insensitive match
-        const foundLabel = allLabels.find(
-            (label: GmailLabel) => label.name.toLowerCase() === labelName.toLowerCase()
-        );
-        
-        return foundLabel || null;
-    } catch (error: any) {
-        throw new Error(`Failed to find label: ${error.message}`);
-    }
+    const labelsResponse = await listLabels(gmail);
+    const allLabels = labelsResponse.all;
+
+    // Case-insensitive match
+    const foundLabel = allLabels.find(
+        (label: GmailLabel) => label.name.toLowerCase() === labelName.toLowerCase()
+    );
+
+    return foundLabel || null;
 }
 
 /**
@@ -187,17 +185,13 @@ export async function getOrCreateLabel(gmail: any, labelName: string, options: {
     messageListVisibility?: string;
     labelListVisibility?: string;
 } = {}) {
-    try {
-        // First try to find an existing label
-        const existingLabel = await findLabelByName(gmail, labelName);
-        
-        if (existingLabel) {
-            return existingLabel;
-        }
-        
-        // If not found, create a new one
-        return await createLabel(gmail, labelName, options);
-    } catch (error: any) {
-        throw new Error(`Failed to get or create label: ${error.message}`);
+    // First try to find an existing label
+    const existingLabel = await findLabelByName(gmail, labelName);
+
+    if (existingLabel) {
+        return existingLabel;
     }
+
+    // If not found, create a new one
+    return await createLabel(gmail, labelName, options);
 }

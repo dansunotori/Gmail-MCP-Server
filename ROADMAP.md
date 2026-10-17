@@ -2,7 +2,9 @@
 
 Work to implement, in order. Items 1 to 6 come from the prompts in `figaro-pa-predecessor/docs/prompts/gmail-*.md`; each item keeps its prompt's contract and done-when criteria. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional.
 
-## 1. Errors that say why
+## 1. Errors that say why (done)
+
+Live, Gmail accepts any search syntax (unbalanced parentheses, bad dates and sizes all return results), so the invalid query that Gmail rejects is an oversized one: `Failed to search messages: Request Entity Too Large (HTTP 413)`.
 
 Source: `gmail-error-detail.md`
 

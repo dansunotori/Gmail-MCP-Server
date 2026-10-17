@@ -10,6 +10,7 @@ import { parseArgs } from 'node:util';
 import { google, type gmail_v1 } from 'googleapis';
 import { z } from 'zod';
 import { authenticate, credentialsPath, CredentialsError, loadCredentials, localOAuthPath, oauthPath } from '../auth.js';
+import { cliAction, describeFailure, scopeRefusal } from '../error-text.js';
 import { isAuthError, toGmailRequestError } from '../gmail-sync.js';
 import { hasScope } from '../scopes.js';
 import { getToolByName } from '../tools.js';
@@ -32,7 +33,7 @@ export class UsageError extends Error {
 // tool in the same case, with the same message.
 export class ScopeError extends Error {
     constructor(toolName: string) {
-        super(`Error: Tool "${toolName}" is not available. You may need to re-authenticate with additional scopes.`);
+        super(scopeRefusal(toolName));
         this.name = 'ScopeError';
     }
 }
@@ -58,21 +59,6 @@ export function mapErrorToExitCode(error: unknown): number {
         return EXIT_NOT_FOUND;
     }
     return EXIT_FAILURE;
-}
-
-export function describeError(error: unknown): string {
-    if (error instanceof z.ZodError) {
-        return error.issues
-            .map(issue => (issue.path.length > 0 ? `${issue.path.join('.')}: ` : '') + issue.message)
-            .join('\n');
-    }
-    if (error instanceof Error) {
-        const status = toGmailRequestError(error).status;
-        return status !== undefined && !error.message.includes(String(status))
-            ? `${error.message} (HTTP ${status})`
-            : error.message;
-    }
-    return String(error);
 }
 
 type ParseOptions = NonNullable<Parameters<typeof parseArgs>[0]>['options'] & {};
@@ -274,7 +260,9 @@ export function renderHelp(spec: CommandSpec): string {
     lines.push(
         'Output: JSON on stdout (or in the --output file); diagnostics on stderr.',
         'Exit codes: 0 success, 1 failure, 2 usage error, 3 not signed in or missing scope,',
-        '4 Gmail rate limit, 5 not found. On failure nothing is written to stdout.',
+        '4 Gmail rate limit, 5 not found. On failure nothing is written to stdout, and stderr',
+        'gets one line: Failed to <action>: <message> (code <reason>, HTTP <status>;',
+        'rejected parameter: <name>, ...), each part present when Gmail supplies it.',
     );
     return lines.join('\n') + '\n';
 }
@@ -345,14 +333,15 @@ export function defaultDeps(): CliDeps {
 
 export type Command = (argv: string[], deps: CliDeps) => Promise<void>;
 
-// Runs a command and returns its exit code; the error, if any, goes to stderr.
+// Runs a command and returns its exit code; the error, if any, goes to stderr as one line in
+// the form every tool shares (see error-text.ts).
 export async function runCli(name: string, command: Command, argv: string[], deps: CliDeps): Promise<number> {
     try {
         await command(argv, deps);
         return EXIT_OK;
     } catch (error) {
-        const hint = error instanceof UsageError ? `\nRun '${name} --help' for usage.` : '';
-        stderrLog(`${name}: ${describeError(error)}${hint}`);
+        const hint = error instanceof UsageError ? `; run '${name} --help' for usage` : '';
+        stderrLog(describeFailure(cliAction(name), error) + hint);
         return mapErrorToExitCode(error);
     }
 }

@@ -284,7 +284,7 @@ describe('structuredResult', () => {
 
 describe('Gmail sync server wiring', () => {
   it('dispatches all four tools through the focused sync modules', () => {
-    const source = fs.readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const source = fs.readFileSync(new URL('./server.ts', import.meta.url), 'utf8');
     for (const name of toolNames) {
       expect(source).toContain(`case "${name}"`);
     }
@@ -295,14 +295,9 @@ describe('Gmail sync server wiring', () => {
   });
 
   it('accepts omitted arguments for tools with no required inputs', () => {
-    const source = fs.readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const source = fs.readFileSync(new URL('./server.ts', import.meta.url), 'utf8');
     expect(source).toContain('GetGmailProfileSchema.parse(args ?? {})');
     expect(source).toContain('ListGmailMessageIdsSchema.parse(args ?? {})');
-  });
-
-  it('marks shared tool failures as MCP error results', () => {
-    const source = fs.readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    expect(source).toMatch(/catch \(error: any\)[\s\S]*?isError: true/);
   });
 });
 

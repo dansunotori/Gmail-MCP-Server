@@ -1,7 +1,13 @@
 /**
  * Filter Manager for Gmail MCP Server
  * Provides comprehensive filter management functionality
+ *
+ * A Gmail failure is rethrown as it is, or with a message that adds context through
+ * withContext, so the caller's error text keeps Gmail's reason, status and rejected
+ * parameters.
  */
+
+import { withContext } from './error-text.js';
 
 // Type definitions for Gmail API filters
 export interface GmailFilterCriteria {
@@ -50,9 +56,9 @@ export async function createFilter(gmail: any, criteria: GmailFilterCriteria, ac
         return response.data;
     } catch (error: any) {
         if (error.code === 400) {
-            throw new Error(`Invalid filter criteria or action: ${error.message}`);
+            throw withContext(`Invalid filter criteria or action: ${error.message}`, error);
         }
-        throw new Error(`Failed to create filter: ${error.message}`);
+        throw error;
     }
 }
 
@@ -62,20 +68,16 @@ export async function createFilter(gmail: any, criteria: GmailFilterCriteria, ac
  * @returns Array of all filters
  */
 export async function listFilters(gmail: any) {
-    try {
-        const response = await gmail.users.settings.filters.list({
-            userId: 'me',
-        });
+    const response = await gmail.users.settings.filters.list({
+        userId: 'me',
+    });
 
-        const filters = response.data.filter || [];
-        
-        return {
-            filters,
-            count: filters.length
-        };
-    } catch (error: any) {
-        throw new Error(`Failed to list filters: ${error.message}`);
-    }
+    const filters = response.data.filter || [];
+
+    return {
+        filters,
+        count: filters.length
+    };
 }
 
 /**
@@ -94,9 +96,9 @@ export async function getFilter(gmail: any, filterId: string) {
         return response.data;
     } catch (error: any) {
         if (error.code === 404) {
-            throw new Error(`Filter with ID "${filterId}" not found.`);
+            throw withContext(`Filter with ID "${filterId}" not found.`, error);
         }
-        throw new Error(`Failed to get filter: ${error.message}`);
+        throw error;
     }
 }
 
@@ -116,9 +118,9 @@ export async function deleteFilter(gmail: any, filterId: string) {
         return { success: true, message: `Filter "${filterId}" deleted successfully.` };
     } catch (error: any) {
         if (error.code === 404) {
-            throw new Error(`Filter with ID "${filterId}" not found.`);
+            throw withContext(`Filter with ID "${filterId}" not found.`, error);
         }
-        throw new Error(`Failed to delete filter: ${error.message}`);
+        throw error;
     }
 }
 

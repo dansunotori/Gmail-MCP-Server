@@ -14,6 +14,7 @@ import {
   type GmailRetryOptions,
   type ListAllMessageIdsResult,
 } from './gmail-sync.js';
+import { withContext } from './error-text.js';
 import { headerValue, resolveMessageBody, type MessageHeader, type MessagePart } from './message-body.js';
 import { BatchFetchWindowOutputSchema, BatchFetchWindowSchema } from './tools.js';
 
@@ -217,9 +218,10 @@ export async function batchFetchWindow(
   // before any deletion, so nothing under output_dir changes.
   if (!windowList.complete) {
     const attempts = windowList.attempts ?? 1;
-    throw new Error(
+    throw withContext(
       `window listing failed: query "${windowQuery}" page ${windowList.failedPage} `
       + `status ${failureStatus(windowList.error)} after ${attempts} attempt${attempts === 1 ? '' : 's'}`,
+      windowList.error,
     );
   }
 

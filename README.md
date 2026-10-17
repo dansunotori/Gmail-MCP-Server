@@ -384,6 +384,23 @@ Every command:
 - signs in with `--auth` (it re-requests the scopes already saved, or the default scopes on first sign-in) and shows help, with one example per flag, with `--help`/`-h`
 - uses the server's credentials (`~/.gmail-mcp/`, or `GMAIL_OAUTH_PATH`/`GMAIL_CREDENTIALS_PATH`) and refuses a tool the saved scopes do not grant, as the server does
 
+#### Errors
+
+A failed call, through an MCP tool or a command, reports one line:
+
+```
+Failed to <action>: <message> (code <reason>, HTTP <status>; rejected parameter: <name>, ...)
+```
+
+- `<action>` names what failed (`search messages`, `get message`, `download attachment`, `fetch window`, …); a command and the MCP tool it exposes name the same action.
+- `<message>` is Gmail's message (an HTML error page is replaced by the HTTP status text); `code` is Gmail's error reason, `HTTP` the status, and `rejected parameter` lists every request parameter Gmail named as invalid. Each part appears only when Gmail supplies it, and the parenthesis is left out when none does.
+- The text is built from those fields alone: no token, credential or request header appears in it.
+- A command prints the line on stderr, with nothing on stdout, and exits with the code above; a usage error appends `; run '<command> --help' for usage` to the same line. An MCP tool returns the line as an error result (`isError: true`), including when the saved scopes do not grant the tool.
+- Where a tool adds context (`Filter with ID "…" not found.`, `window listing failed: …`), the parenthesis still carries Gmail's reason and status.
+- `batch_modify_emails`, `batch_report_phishing` and `batch_delete_emails` list each message that failed as `- <message id>: <message> (code <reason>, HTTP <status>)` in their result.
+
+For example, `gmail-get-message 0000000000000000` prints `Failed to get message: Requested entity was not found. (code notFound, HTTP 404)` and exits 5.
+
 `gmail-get-message --format markdown` converts the HTML part to Markdown; without an HTML part it prints the plain text. `gmail-download-attachment` treats every failed download as an error. `gmail-batch-fetch-window` has the tool's defaults (`cross_check` true, `max_messages` 2000) and guards: it deletes `messages/` only when that directory carries the marker a previous run wrote, and a window larger than `--max-messages` writes nothing. No command sends, replies, forwards, labels, trashes or modifies a message.
 
 Install them with:

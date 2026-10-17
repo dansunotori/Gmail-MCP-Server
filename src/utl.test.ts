@@ -77,7 +77,7 @@ describe('Source verification', () => {
     });
 
     it('handleEmailAction auto-resolves threading headers', () => {
-        const source = fs.readFileSync(path.join(srcDir, 'index.ts'), 'utf-8');
+        const source = fs.readFileSync(path.join(srcDir, 'server.ts'), 'utf-8');
         expect(source).toContain('validatedArgs.threadId && !validatedArgs.inReplyTo');
         expect(source).toContain('gmail.users.threads.get');
         expect(source).toContain('validatedArgs.inReplyTo = lastMessageId');

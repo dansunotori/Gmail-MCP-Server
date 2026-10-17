@@ -1,6 +1,7 @@
 import { setTimeout as wait } from 'node:timers/promises';
 import type { OAuth2Client } from 'google-auth-library';
 import { z } from 'zod';
+import { withContext } from './error-text.js';
 import {
   BatchGetGmailIndexMetadataSchema,
   GmailIndexMetadataOutputSchema,
@@ -42,6 +43,23 @@ function isTransientStatus(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
+// A failed part of a batch response, shaped like the error gaxios throws for the same
+// request on its own, so the caller's error text keeps Gmail's message, reason and status.
+function partError(id: string, status: number, responseBody: string) {
+  let data: { error?: { message?: unknown } } | undefined;
+  try {
+    data = JSON.parse(responseBody.trim());
+  } catch {
+    data = undefined;
+  }
+  const gmailMessage = typeof data?.error?.message === 'string' ? data.error.message : undefined;
+  const upstream = Object.assign(new Error(gmailMessage ?? `HTTP ${status}`), { response: { status, data } });
+  return withContext(
+    `Gmail batch request for ${id} failed with HTTP ${status}${gmailMessage === undefined ? '' : `: ${gmailMessage}`}`,
+    upstream,
+  );
+}
+
 function buildRequestBody(pending: PendingMessage[]): string {
   const parts = pending.map(({ id, contentId }) => [
     `--${REQUEST_BOUNDARY}`,
@@ -74,6 +92,8 @@ function parseBatchResponse(
   const messages = new Map<string, z.infer<typeof GmailIndexMetadataOutputSchema>['messages'][number]>();
   const missing = new Set<string>();
   const retry: PendingMessage[] = [];
+  // The last transient part failure, reported if the retries run out.
+  let retryError: Error | undefined;
 
   for (const rawPart of body.split(`--${boundary}`).slice(1)) {
     if (rawPart.startsWith('--')) {
@@ -125,8 +145,9 @@ function parseBatchResponse(
       missing.add(contentId);
     } else if (isTransientStatus(status)) {
       retry.push(requested);
+      retryError = partError(requested.id, status, responseBody);
     } else {
-      throw new Error(`Gmail batch request for ${requested.id} failed with HTTP ${status}`);
+      throw partError(requested.id, status, responseBody);
     }
   }
 
@@ -134,7 +155,7 @@ function parseBatchResponse(
     throw new Error('Gmail batch response is missing response parts');
   }
 
-  return { messages, missing, retry };
+  return { messages, missing, retry, retryError };
 }
 
 export async function batchGetGmailIndexMetadata(
@@ -149,6 +170,7 @@ export async function batchGetGmailIndexMetadata(
   }));
   const messages = new Map<string, z.infer<typeof GmailIndexMetadataOutputSchema>['messages'][number]>();
   const missing = new Set<string>();
+  let lastError: unknown;
 
   for (let attemptNumber = 1; attemptNumber <= MAX_ATTEMPTS; attemptNumber += 1) {
     if (attemptNumber > 1) {
@@ -167,10 +189,11 @@ export async function batchGetGmailIndexMetadata(
     } catch (error) {
       const status = responseStatus(error);
       if (status !== undefined && isTransientStatus(status) && attemptNumber < MAX_ATTEMPTS) {
+        lastError = error;
         continue;
       }
       if (status !== undefined && isTransientStatus(status)) {
-        throw new Error('Gmail batch failed after three attempts');
+        throw withContext('Gmail batch failed after three attempts', error);
       }
       throw error;
     }
@@ -195,6 +218,7 @@ export async function batchGetGmailIndexMetadata(
     }
 
     pending = dispositions.retry;
+    lastError = dispositions.retryError;
     if (pending.length === 0) {
       const ordered = input.messageIds.map((_, index) => `gmail-index-${index}`);
       return GmailIndexMetadataOutputSchema.parse({
@@ -209,5 +233,5 @@ export async function batchGetGmailIndexMetadata(
     }
   }
 
-  throw new Error('Gmail batch failed after three attempts');
+  throw withContext('Gmail batch failed after three attempts', lastError);
 }

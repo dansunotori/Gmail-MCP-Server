@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { describeFailure } from './error-text.js';
 import { batchGetGmailIndexMetadata } from './gmail-batch.js';
 
 const RESPONSE_BOUNDARY = 'batch_response';
@@ -162,6 +163,37 @@ describe('batchGetGmailIndexMetadata', () => {
     )).rejects.toThrow('three attempts');
     expect(request).toHaveBeenCalledTimes(3);
     expect(sleep.mock.calls).toEqual([[200], [400]]);
+  });
+
+  it('reports the status and reason of the last transient failure once the attempts run out', async () => {
+    const backendError = { error: { code: 503, message: 'Backend Error', errors: [{ reason: 'backendError' }] } };
+    const parts = vi.fn().mockResolvedValue(batchResponse([part(0, 503, backendError)]));
+    const failed = await batchGetGmailIndexMetadata({ request: parts } as never, ['m1'], vi.fn()).catch(error => error);
+    expect(describeFailure('get index metadata', failed))
+      .toBe('Failed to get index metadata: Gmail batch failed after three attempts (code backendError, HTTP 503)');
+
+    const whole = vi.fn().mockRejectedValue(Object.assign(new Error('Service Unavailable'), { response: { status: 503 } }));
+    const rejected = await batchGetGmailIndexMetadata({ request: whole } as never, ['m1'], vi.fn()).catch(error => error);
+    expect(describeFailure('get index metadata', rejected))
+      .toBe('Failed to get index metadata: Gmail batch failed after three attempts (HTTP 503)');
+  });
+
+  it('reads the reason from a whole-request failure whose JSON error body arrives as text', async () => {
+    // The batch request asks for responseType text, so Gaxios keeps the error body a string.
+    const body = JSON.stringify({ error: { code: 503, message: 'Backend Error', errors: [{ message: 'Backend Error', reason: 'backendError' }] } });
+    const request = vi.fn().mockRejectedValue(Object.assign(new Error('Backend Error'), {
+      response: { status: 503, statusText: 'Service Unavailable', data: body },
+    }));
+    const failed = await batchGetGmailIndexMetadata({ request } as never, ['m1'], vi.fn()).catch(error => error);
+    expect(describeFailure('get index metadata', failed))
+      .toBe('Failed to get index metadata: Gmail batch failed after three attempts (code backendError, HTTP 503)');
+
+    const permanent = vi.fn().mockRejectedValue(Object.assign(new Error('Invalid Credentials'), {
+      response: { status: 401, data: JSON.stringify({ error: { code: 401, errors: [{ reason: 'authError' }] } }) },
+    }));
+    const denied = await batchGetGmailIndexMetadata({ request: permanent } as never, ['m1'], vi.fn()).catch(error => error);
+    expect(describeFailure('get index metadata', denied))
+      .toBe('Failed to get index metadata: Invalid Credentials (code authError, HTTP 401)');
   });
 
   it('fails incomplete or mismatched batch responses', async () => {
