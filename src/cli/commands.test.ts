@@ -657,7 +657,9 @@ describe('gmail-create-draft', () => {
   it('sends an HTML-only body as text/html, and both bodies as multipart/alternative, when no --mime-type is given', async () => {
     const htmlOnly = draftGmail();
     await createDraftCommand(['--to', 'a@example.com', '--subject', 's', '--html-body', '<p>Hello <b>there</b></p>'], harness(htmlOnly.gmail).deps);
-    expect(htmlOnly.raw()).toContain('Content-Type: text/html');
+    // The first Content-Type is the message's own: an HTML part alone, not a multipart with an
+    // empty plain part.
+    expect(/^Content-Type: ([^;\r\n]+)/m.exec(htmlOnly.raw())?.[1]).toBe('text/html');
     expect(htmlOnly.raw()).toContain('<p>Hello <b>there</b></p>');
 
     const both = draftGmail();

@@ -38,14 +38,9 @@ function sanitizeHeaderValue(value: string): string {
 
 export function createEmailMessage(validatedArgs: any): string {
     const encodedSubject = encodeEmailHeader(sanitizeHeaderValue(validatedArgs.subject));
-    // Determine content type based on available content and explicit mimeType
-    let mimeType = validatedArgs.mimeType || 'text/plain';
-    
-    // If htmlBody is provided and mimeType isn't explicitly set to text/plain,
-    // use multipart/alternative to include both versions
-    if (validatedArgs.htmlBody && mimeType !== 'text/plain') {
-        mimeType = 'multipart/alternative';
-    }
+    // The content type as given; encodeMessage (src/compose.ts) resolves it from the bodies
+    // when the caller gives none.
+    const mimeType = validatedArgs.mimeType || 'text/plain';
 
     // Generate a random boundary string for multipart messages
     const boundary = `----=_NextPart_${Math.random().toString(36).substring(2)}`;

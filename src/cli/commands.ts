@@ -10,7 +10,7 @@ import path from 'node:path';
 import TurndownService from 'turndown';
 import { getAttachmentText } from '../attachment-text/attachment-text.js';
 import { batchFetchWindow } from '../batch-fetch-window.js';
-import { createDraft, readDraft, type ComposeArgs } from '../compose.js';
+import { contentTypeFor, createDraft, readDraft, type ComposeArgs } from '../compose.js';
 import { validateEmail } from '../utl.js';
 import type { BodySource } from '../message-body.js';
 import { downloadAttachment, readEmail, searchEmails, type ReadEmailResult } from '../read-tools.js';
@@ -502,14 +502,11 @@ export const createDraftCommand: Command = async (argv, deps) => {
     if (merged.body === undefined && merged.htmlBody === undefined) {
         throw new UsageError('missing --body, --body-file, --html-body or --html-body-file');
     }
-    // draft_email defaults to text/plain, which drops an HTML body; with no type given, the
-    // type follows the bodies given, and an explicit text/plain beside an HTML body is refused.
-    const hasHtml = typeof merged.htmlBody === 'string' && merged.htmlBody !== '';
-    const hasText = typeof merged.body === 'string' && merged.body !== '';
-    if (merged.mimeType === undefined && hasHtml) {
-        merged.mimeType = hasText ? 'multipart/alternative' : 'text/html';
-    }
-    if (merged.mimeType === 'text/plain' && hasHtml) {
+    // The type follows the bodies by draft_email's own rule (contentTypeFor); an explicit
+    // text/plain beside an HTML body is a usage error here, before anything reaches Gmail.
+    try {
+        contentTypeFor(merged as Parameters<typeof contentTypeFor>[0]);
+    } catch {
         throw new UsageError('--mime-type text/plain would drop the HTML body; use text/html or multipart/alternative');
     }
     // The tool's own schema supplies the defaults and rejects a missing --to or --subject.

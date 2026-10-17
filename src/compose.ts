@@ -51,10 +51,27 @@ export async function resolveThreadingHeaders(
   }
 }
 
+export type ContentType = 'text/plain' | 'text/html' | 'multipart/alternative';
+
+// The message's content type. With none given it follows the bodies: text/html for an HTML
+// body alone, multipart/alternative for both, text/plain otherwise. An explicit text/plain
+// beside an HTML body is refused, since the message would carry no HTML.
+export function contentTypeFor(args: { body?: string; htmlBody?: string; mimeType?: ContentType }): ContentType {
+  const hasHtml = typeof args.htmlBody === 'string' && args.htmlBody !== '';
+  const hasText = typeof args.body === 'string' && args.body !== '';
+  if (args.mimeType === 'text/plain' && hasHtml) {
+    throw new Error('mimeType text/plain would drop htmlBody; use text/html or multipart/alternative, or leave mimeType out');
+  }
+  if (args.mimeType !== undefined) return args.mimeType;
+  if (!hasHtml) return 'text/plain';
+  return hasText ? 'multipart/alternative' : 'text/html';
+}
+
 // The RFC 822 message, base64url-encoded as Gmail's raw field takes it. Mail with
 // attachments or inline images goes through the nodemailer builder; plain and simple HTML
 // mail through the lightweight one.
-export async function encodeMessage(args: ComposeArgs): Promise<string> {
+export async function encodeMessage(request: ComposeArgs): Promise<string> {
+  const args = { ...request, mimeType: contentTypeFor(request) };
   const message = needsRawBuilder(args) ? await createEmailWithNodemailer(args) : createEmailMessage(args);
   return Buffer.from(message).toString('base64')
     .replace(/\+/g, '-')

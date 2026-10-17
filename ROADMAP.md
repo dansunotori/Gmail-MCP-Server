@@ -2,15 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
 
-## 13. HTML bodies dropped by the MCP compose tools' text/plain default
-
-`SendEmailSchema` and `UpdateDraftSchema` default `mimeType` to `text/plain`, and `createEmailMessage` (`src/utl.ts`) then writes only the plain body, so `send_email`, `draft_email` and `update_draft` called with `htmlBody` and no `mimeType` send or save no HTML at all (an HTML-only call produces an empty message). Mail with attachments goes through nodemailer, which keeps the HTML, so the result also depends on whether a file is attached. `gmail-create-draft` already infers the type from the bodies given and refuses `text/plain` beside an HTML body.
-
-Done when:
-
-- With no `mimeType`, the MCP tools pick it the way `gmail-create-draft` does (`text/html` for an HTML body alone, `multipart/alternative` for both), with and without attachments, and an explicit `text/plain` beside `htmlBody` is an error result rather than a silently dropped body.
-- The schema descriptions and README say so, and `server.test.ts` covers each tool's HTML-only and both-bodies cases.
-
 ## 14. Refuse unknown MCP tool arguments
 
 Most input schemas in `src/tools.ts` are plain `z.object`, which drops keys it does not know, so a misnamed argument (`message_id` for `messageId`, `max_results` for `maxResults`) is silently ignored and the call runs without it. `outlook-claude-mcp` makes every input schema strict and names the accepted arguments in the refusal, with the likely intended one (`src/mcp/strict-input.ts`: `strictInputSchema`, `suggestReplacement`, `unknownArgumentsMessage`).

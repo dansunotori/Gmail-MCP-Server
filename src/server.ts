@@ -13,7 +13,7 @@ import type { gmail_v1 } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import fs from 'fs';
 import path from 'path';
-import {createEmailMessage, createEmailWithNodemailer, needsRawBuilder} from "./utl.js";
+import { needsRawBuilder } from "./utl.js";
 import { createDraft, encodeMessage, messageRequest, resolveThreadingHeaders, type ComposeArgs } from "./compose.js";
 import { createLabel, updateLabel, deleteLabel, listLabels, findLabelByName, getOrCreateLabel, GmailLabel } from "./label-manager.js";
 import { createFilter, listFilters, getFilter, deleteFilter, filterTemplates, GmailFilterCriteria, GmailFilterAction } from "./filter-manager.js";
@@ -373,26 +373,12 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                     const validatedArgs = UpdateDraftSchema.parse(args);
                     const { draftId, ...messageArgs } = validatedArgs;
 
-                    // Build the new MIME message using the same helpers as draft_email/send_email
-                    let message: string;
-                    if (needsRawBuilder(messageArgs)) {
-                        message = await createEmailWithNodemailer(messageArgs);
-                    } else {
-                        message = createEmailMessage(messageArgs);
-                    }
-
-                    const encodedMessage = Buffer.from(message).toString('base64')
-                        .replace(/\+/g, '-')
-                        .replace(/\//g, '_')
-                        .replace(/=+$/, '');
-
-                    const messageRequest: any = { raw: encodedMessage };
-                    if (messageArgs.threadId) messageRequest.threadId = messageArgs.threadId;
-
-                    const response = await gmail.users.drafts.update({
+                    // Build the new MIME message with the same code as draft_email/send_email
+                    const encodedMessage = await encodeMessage(messageArgs);
+                    await gmail.users.drafts.update({
                         userId: 'me',
                         id: draftId,
-                        requestBody: { message: messageRequest },
+                        requestBody: { message: messageRequest(encodedMessage, messageArgs) },
                     });
 
                     return {

@@ -519,6 +519,8 @@ Multipart Email Example (HTML + Plain Text):
 }
 ```
 
+**Content type.** `mimeType` can be left out on `send_email`, `draft_email`, `update_draft` and `reply_all`: the message is then `text/html` for `htmlBody` alone, `multipart/alternative` for `body` and `htmlBody`, and `text/plain` for `body` alone, with or without attachments. An explicit `text/plain` beside `htmlBody` is an error result, since the message would carry no HTML.
+
 **Inline Images (embedded in HTML):**
 
 Embed images inside the HTML body so they render in place, instead of arriving as separate attachments. Reference each image from `htmlBody` by its `cid`, and supply it as a file `path` or base64 `content`. Works the same way on `draft_email`, `update_draft`, and `reply_all`.
@@ -799,7 +801,7 @@ Parameters:
 - `messageId` (required): ID of the email to reply to
 - `body` (required): Reply body (plain text, or fallback when using multipart)
 - `htmlBody` (optional): HTML version of the reply body
-- `mimeType` (optional): `text/plain` (default), `text/html`, or `multipart/alternative`
+- `mimeType` (optional): `text/plain`, `text/html`, or `multipart/alternative`; left out, it follows the bodies given (see **Content type** under `send_email`)
 - `attachments` (optional): Array of file paths to attach
 
 ### 21. Modify Thread (`modify_thread`)

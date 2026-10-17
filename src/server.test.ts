@@ -84,6 +84,61 @@ describe('draft_email and send_email', () => {
     expect(fake.messagesSend).not.toHaveBeenCalled();
   });
 
+  // The first Content-Type header of a raw message is its top-level type.
+  const topType = (raw: string) => /^Content-Type: ([^;\r\n]+)/m.exec(decode(raw))?.[1];
+  const sentRaw = (fake: ReturnType<typeof composeGmail>) => fake.messagesSend.mock.calls[0][0].requestBody.raw;
+  const draftRaw = (fake: ReturnType<typeof composeGmail>) => fake.draftsCreate.mock.calls[0][0].requestBody.message.raw;
+
+  for (const [tool, rawOf] of [['send_email', sentRaw], ['draft_email', draftRaw]] as const) {
+    it(`${tool} with no mimeType sends an HTML body alone as text/html and both bodies as multipart/alternative`, async () => {
+      const htmlOnly = composeGmail();
+      expect((await call(htmlOnly.gmail, tool, { to: ['a@example.com'], subject: 's', body: '', htmlBody: '<p>Hi <b>there</b></p>' })).isError).toBeUndefined();
+      expect(topType(rawOf(htmlOnly))).toBe('text/html');
+      expect(decode(rawOf(htmlOnly))).toContain('<p>Hi <b>there</b></p>');
+
+      const both = composeGmail();
+      await call(both.gmail, tool, { to: ['a@example.com'], subject: 's', body: 'Hi there', htmlBody: '<p>Hi there</p>' });
+      expect(topType(rawOf(both))).toBe('multipart/alternative');
+      expect(decode(rawOf(both))).toContain('Hi there\r\n');
+      expect(decode(rawOf(both))).toContain('<p>Hi there</p>');
+
+      const plain = composeGmail();
+      await call(plain.gmail, tool, { to: ['a@example.com'], subject: 's', body: 'Just text' });
+      expect(topType(rawOf(plain))).toBe('text/plain');
+    });
+
+    it(`${tool} keeps the HTML body when a file is attached and no mimeType is given`, async () => {
+      const fake = composeGmail();
+      const attachment = path.join(dir, 'notes.txt');
+      fs.writeFileSync(attachment, 'notes');
+      await call(fake.gmail, tool, { to: ['a@example.com'], subject: 's', body: '', htmlBody: '<p>See attached</p>', attachments: [attachment] });
+      expect(decode(rawOf(fake))).toContain('<p>See attached</p>');
+      expect(decode(rawOf(fake))).toContain('filename=notes.txt');
+    });
+
+    it(`${tool} refuses an explicit text/plain beside htmlBody instead of dropping the HTML`, async () => {
+      for (const attachments of [undefined, [path.join(dir, 'a.txt')]]) {
+        fs.writeFileSync(path.join(dir, 'a.txt'), 'a');
+        const fake = composeGmail();
+        const result = await call(fake.gmail, tool, { to: ['a@example.com'], subject: 's', body: 'Hi', htmlBody: '<p>Hi</p>', mimeType: 'text/plain', ...(attachments ? { attachments } : {}) });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain('mimeType text/plain would drop htmlBody');
+        expect(fake.messagesSend).not.toHaveBeenCalled();
+        expect(fake.draftsCreate).not.toHaveBeenCalled();
+      }
+    });
+  }
+
+  it('update_draft with no mimeType saves an HTML body alone as text/html, and refuses text/plain beside it', async () => {
+    const draftsUpdate = vi.fn(async (_params: { id: string; requestBody: { message: { raw: string } } }) => ({ data: { id: 'd-1' } }));
+    const gmail = { users: { drafts: { update: draftsUpdate } } };
+    expect((await call(gmail, 'update_draft', { draftId: 'd-1', to: ['a@example.com'], subject: 's', body: '', htmlBody: '<p>New</p>' })).isError).toBeUndefined();
+    expect(topType(draftsUpdate.mock.calls[0][0].requestBody.message.raw)).toBe('text/html');
+    const refused = await call(gmail, 'update_draft', { draftId: 'd-1', to: ['a@example.com'], subject: 's', body: 'x', htmlBody: '<p>New</p>', mimeType: 'text/plain' });
+    expect(refused.isError).toBe(true);
+    expect(draftsUpdate).toHaveBeenCalledTimes(1);
+  });
+
   it('send_email sends in the thread with threading headers resolved from it', async () => {
     const fake = composeGmail();
     const result = await call(fake.gmail, 'send_email', { to: ['a@example.com'], subject: 'Re: plan', body: 'Agreed', threadId: 'th-1' });
