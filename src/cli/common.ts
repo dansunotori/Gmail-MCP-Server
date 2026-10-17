@@ -207,6 +207,13 @@ export interface FlagSpec {
 
 export interface CommandSpec {
     name: string;
+    // The MCP tool the command exposes one to one (tool-cli-parity.test.ts checks it).
+    tool: string;
+    // A tool input exposed under a name the naming rules do not give, mapped to its flag or
+    // positional, e.g. { query: '<gmail query>' }.
+    fields?: Record<string, string>;
+    // Tool inputs the command deliberately leaves out, each with the reason.
+    inputOnly?: Record<string, string>;
     synopsis: string;
     description: string;
     arguments: Array<[string, string]>;

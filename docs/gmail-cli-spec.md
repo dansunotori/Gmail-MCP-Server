@@ -194,6 +194,11 @@ Never print tokens or full request headers to stderr.
   codes, `--help` (one example per flag), `--auth` and `--output` (including a symlink followed
   by `..`, a hard link, and capitalisation on case-insensitive platforms), with a fake Gmail client;
   `gmail-batch-fetch-window` against a temporary directory, including the guard refusal.
+- `src/cli/tool-cli-parity.test.ts`: every input of a command's MCP tool has a flag or positional
+  (the field in kebab case, `--<field>-file`, the singular for a list, `--no-<field>` for a
+  boolean, or one the command's spec maps in `fields`), unless the spec lists it in `inputOnly`
+  with a reason; and every example in every command's `--help` parses with the command's own
+  parser.
 - `scripts/install-cli.test.ts`: links are created, own links replaced, and a foreign link, a
   regular file or a missing build left alone and reported.
 - The full vitest suite must pass.

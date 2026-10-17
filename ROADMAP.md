@@ -2,15 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
 
-## 15. Tool-to-CLI parity test
-
-`outlook-claude-mcp`'s `src/cli/tool-cli-parity.test.ts` proves each CLI exposes its tool one to one: every schema field is a positional or a same-named kebab-case flag (`--<field>-file` for a file), every alias points at a real flag, and every help example parses. Here only "every flag has an example" is checked; nothing stops `draft_email` gaining an input that `gmail-create-draft` lacks, or a help example that no longer parses.
-
-Done when:
-
-- A test fails when a schema field of a command's MCP tool has no matching flag or positional, unless the command declares it input-only.
-- Every example line in every command's `--help` is parsed by the command's own parser without error.
-
 ## 16. Guard the roadmap against finished-work wording
 
 The rule in `CLAUDE.md` and `AGENTS.md` (no changelogs, history, reports or self-praise in the repository) is enforced by review alone. `outlook-claude-mcp`'s `scripts/check-roadmap.mjs` enforces it deterministically for its roadmap: a word list ("fixed", "shipped", "landed", "implemented", "no longer", ticked boxes, struck-through text, `**Done:**`) checked by a pre-commit step and a Claude Code PreToolUse hook on the roadmap file.

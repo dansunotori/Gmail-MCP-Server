@@ -35,7 +35,11 @@ export type { CliDeps } from './common.js';
 
 export interface CliCommand {
     name: string;
+    tool: string;
     flags: CommandSpec['flags'];
+    positionals: string[];
+    fields?: CommandSpec['fields'];
+    inputOnly?: CommandSpec['inputOnly'];
     help: () => string;
     run: Command;
 }
@@ -69,11 +73,22 @@ async function start(spec: CommandSpec, argv: string[], deps: CliDeps) {
 }
 
 function command(spec: CommandSpec, run: Command): CliCommand {
-    return { name: spec.name, flags: spec.flags, help: () => renderHelp(spec), run };
+    return {
+        name: spec.name,
+        tool: spec.tool,
+        flags: spec.flags,
+        positionals: spec.arguments.map(([name]) => name),
+        fields: spec.fields,
+        inputOnly: spec.inputOnly,
+        help: () => renderHelp(spec),
+        run,
+    };
 }
 
 const SEARCH: CommandSpec = {
     name: 'gmail-search',
+    tool: 'search_emails',
+    fields: { query: '<gmail query>' },
     synopsis: "gmail-search '<gmail query>' [--max-results N] [-o <file>]",
     description: 'Searches Gmail like the search_emails MCP tool and prints {query, count, messages: [{id, subject, from, date}]}.',
     arguments: [['<gmail query>', "Gmail search syntax, e.g. 'from:alice@example.com is:unread'. Quote it."]],
@@ -102,6 +117,7 @@ export const searchCommand: Command = async (argv, deps) => {
 
 const GET_MESSAGE: CommandSpec = {
     name: 'gmail-get-message',
+    tool: 'read_email',
     synopsis: 'gmail-get-message <message_id> [--format text|markdown] [-o <file>]',
     description: 'Reads one message like the read_email MCP tool and prints id, threadId, subject, from, to, cc, date, messageIdHeader (the Message-ID header, null when absent), labels, body, bodySource (text, html or html-over-stub) and attachments [{id, filename, mimeType, size}].',
     arguments: [['<message_id>', 'A Gmail message ID, as gmail-search prints it.']],
@@ -159,6 +175,7 @@ export const getMessageCommand: Command = async (argv, deps) => {
 
 const DOWNLOAD_ATTACHMENT: CommandSpec = {
     name: 'gmail-download-attachment',
+    tool: 'download_attachment',
     synopsis: 'gmail-download-attachment <message_id> <attachment_id> --save-path <dir> [--filename <name>] [-o <file>]',
     description: 'Saves one attachment like the download_attachment MCP tool and prints {path, size, mimeType}. A failed download exits non-zero with nothing on stdout.',
     arguments: [
@@ -209,6 +226,7 @@ export const downloadAttachmentCommand: Command = async (argv, deps) => {
 
 const BATCH_FETCH_WINDOW: CommandSpec = {
     name: 'gmail-batch-fetch-window',
+    tool: 'batch_fetch_window',
     synopsis: 'gmail-batch-fetch-window --watermark <ISO 8601 with zone> --output-dir <absolute dir> [--no-cross-check] [--max-messages N] [-o <file>]',
     description: [
         'Downloads every message received since the watermark like the batch_fetch_window MCP tool',
@@ -272,6 +290,7 @@ export const batchFetchWindowCommand: Command = async (argv, deps) => {
 
 const GET_ATTACHMENT_TEXT: CommandSpec = {
     name: 'gmail-get-attachment-text',
+    tool: 'get_attachment_text',
     synopsis: 'gmail-get-attachment-text <message_id> <attachment_id> [-o <file>]',
     description: [
         "Prints an attachment's text like the get_attachment_text MCP tool, as",
@@ -314,6 +333,7 @@ export const getAttachmentTextCommand: Command = async (argv, deps) => {
 
 const CREATE_DRAFT: CommandSpec = {
     name: 'gmail-create-draft',
+    tool: 'draft_email',
     synopsis: "gmail-create-draft --to <addresses> --subject <text> (--body <text> | --body-file <file>) [options] [-o <file>]",
     description: [
         'Saves a draft like the draft_email MCP tool, with the same options, and prints',
