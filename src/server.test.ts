@@ -96,6 +96,45 @@ describe('draft_email and send_email', () => {
   });
 });
 
+describe('get_thread and get_inbox_with_threads bodies', () => {
+  const part = (mimeType: string, text: string) => ({ mimeType, body: { data: Buffer.from(text).toString('base64url') } });
+  const message = (id: string, plain: string, html: string) => ({
+    id,
+    threadId: 'th-1',
+    labelIds: ['INBOX'],
+    payload: {
+      mimeType: 'multipart/alternative',
+      headers: [{ name: 'Subject', value: id }],
+      parts: [...(plain ? [part('text/plain', plain)] : []), ...(html ? [part('text/html', html)] : [])],
+    },
+  });
+  const threadGmail = () => ({ users: { threads: {
+    list: async () => ({ data: { threads: [{ id: 'th-1' }] } }),
+    get: async () => ({ data: { messages: [
+      message('stubbed', 'View this email in your browser', '<p>The real &amp; full body</p>'),
+      message('plain', 'Just text', '<p>Just text</p>'),
+      message('html-only', '', '<p>Only HTML</p>'),
+    ] } }),
+  } } });
+  const bodies = (messages: Array<{ messageId: string; body: string; bodySource: string }>) =>
+    messages.map(({ messageId, body, bodySource }) => ({ messageId, body, bodySource }));
+  const expected = [
+    { messageId: 'stubbed', body: 'The real & full body', bodySource: 'html-over-stub' },
+    { messageId: 'plain', body: 'Just text', bodySource: 'text' },
+    { messageId: 'html-only', body: '<p>Only HTML</p>', bodySource: 'html' },
+  ];
+
+  it('get_thread returns the converted HTML part for a stubbed message and reports bodySource per message', async () => {
+    const result = await call(threadGmail(), 'get_thread', { threadId: 'th-1' });
+    expect(bodies(JSON.parse(result.text).messages)).toEqual(expected);
+  });
+
+  it('get_inbox_with_threads chooses each expanded message body the same way', async () => {
+    const result = await call(threadGmail(), 'get_inbox_with_threads', { expandThreads: true });
+    expect(bodies(JSON.parse(result.text).threads[0].messages)).toEqual(expected);
+  });
+});
+
 // These tests fork real extraction workers, which take seconds each on a slow CI runner, so they
 // get the worker's own limit rather than vitest's five-second default.
 describe('get_attachment_text', { timeout: EXTRACTION_TIMEOUT_MS }, () => {

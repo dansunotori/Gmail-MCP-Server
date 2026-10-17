@@ -9,6 +9,7 @@ import {
   NAMED_ENTITIES,
   isPlainTextStub,
   resolveMessageBody,
+  selectBody,
 } from './message-body.js';
 
 const b64 = (value: string) => Buffer.from(value, 'utf8').toString('base64url');
@@ -146,6 +147,30 @@ describe('htmlToText', () => {
 
   it('keeps the documented behaviour: a br right before a newline is not converted', () => {
     expect(htmlToText('a<br>\nb')).toBe('a \nb');
+  });
+});
+
+describe('selectBody', () => {
+  const stub = 'Plain text version not available.';
+  const html = '<p>It&rsquo;s <b>here</b></p>';
+
+  it('takes a real plain part as it is', () => {
+    expect(selectBody('Hello', html, 'keep-html')).toEqual({ body: 'Hello', bodySource: 'text' });
+    expect(selectBody('Hello', html, 'convert-html')).toEqual({ body: 'Hello', bodySource: 'text' });
+  });
+
+  it('converts the HTML part when the plain part is only a stub, whichever HTML-only rule applies', () => {
+    expect(selectBody(stub, html, 'keep-html')).toEqual({ body: 'It’s here', bodySource: 'html-over-stub' });
+    expect(selectBody(stub, html, 'convert-html')).toEqual({ body: 'It’s here', bodySource: 'html-over-stub' });
+  });
+
+  it('keeps or converts the HTML of an HTML-only message as asked', () => {
+    expect(selectBody('', html, 'keep-html')).toEqual({ body: html, bodySource: 'html' });
+    expect(selectBody('', html, 'convert-html')).toEqual({ body: 'It’s here', bodySource: 'html' });
+  });
+
+  it('gives an empty text body when the message has neither part', () => {
+    expect(selectBody('', '', 'convert-html')).toEqual({ body: '', bodySource: 'text' });
   });
 });
 

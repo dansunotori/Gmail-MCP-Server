@@ -2,15 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
 
-## 12. One body rule for every tool that returns a body
-
-`read_email` and `batch_fetch_window` choose the body with `bodySourceOf` (stub detection, `bodySource`), but `get_thread`, `get_inbox_with_threads` and `download_email` still take `text || html`: a stubbed message comes back as its stub through them, and they report no `bodySource`.
-
-Done when:
-
-- Those three tools choose the body through `bodySourceOf` and report `bodySource` per message.
-- A thread holding a stubbed message returns the converted HTML part for it through `get_thread` and `get_inbox_with_threads`, and `download_email` writes it in the txt and json formats.
-
 ## 13. HTML bodies dropped by the MCP compose tools' text/plain default
 
 `SendEmailSchema` and `UpdateDraftSchema` default `mimeType` to `text/plain`, and `createEmailMessage` (`src/utl.ts`) then writes only the plain body, so `send_email`, `draft_email` and `update_draft` called with `htmlBody` and no `mimeType` send or save no HTML at all (an HTML-only call produces an empty message). Mail with attachments goes through nodemailer, which keeps the HTML, so the result also depends on whether a file is attached. `gmail-create-draft` already infers the type from the bodies given and refuses `text/plain` beside an HTML body.
@@ -41,7 +32,7 @@ Done when:
 
 ## 16. Guard the roadmap against finished-work wording
 
-Item 10's rule (no changelogs, history or reports in the repository) is enforced by review alone. `outlook-claude-mcp`'s `scripts/check-roadmap.mjs` enforces it deterministically for its roadmap: a word list ("fixed", "shipped", "landed", "implemented", "no longer", ticked boxes, struck-through text, `**Done:**`) checked by a pre-commit step and a Claude Code PreToolUse hook on the roadmap file.
+The rule in `CLAUDE.md` and `AGENTS.md` (no changelogs, history, reports or self-praise in the repository) is enforced by review alone. `outlook-claude-mcp`'s `scripts/check-roadmap.mjs` enforces it deterministically for its roadmap: a word list ("fixed", "shipped", "landed", "implemented", "no longer", ticked boxes, struck-through text, `**Done:**`) checked by a pre-commit step and a Claude Code PreToolUse hook on the roadmap file.
 
 Done when:
 
@@ -74,3 +65,21 @@ Done when:
 
 - `npm audit` reports nothing above low for all dependencies, dev included, with the evals either moved to a maintained runner or removed along with `src/evals/`.
 - CI's audit step fails on high advisories, not only critical ones.
+
+## 20. Carriage returns survive the HTML-to-text conversion
+
+`htmlToText` (`src/message-body.ts`) collapses runs of spaces and tabs and of three or more `\n`, but HTML parts with CRLF line endings keep their `\r`, so a converted body reads `"Re Itamin,\n\r\n\r\n \r\nWe have…"` (live, an AJ Bell secure-message notice through `gmail-get-message`): the `\r` breaks up the blank-line collapse and leaves stray carriage returns in message files and tool output.
+
+Done when:
+
+- CRLF and lone CR in the HTML part become `\n` before the whitespace rules apply, so converted text holds no `\r` and blank lines collapse as they do for `\n` input.
+- The conversion test pins a CRLF case, and `docs/gmail-batch-fetch-spec.md` lists the step.
+
+## 21. CLIs for get_thread, get_inbox_with_threads and download_email
+
+These tools return or write message bodies but have no CLI, so a script cannot use them without an MCP session, and their behaviour can be checked live only through a running MCP server, which picks up a rebuild only when a new Claude session starts it.
+
+Done when:
+
+- `gmail-get-thread`, `gmail-get-inbox-with-threads` and `gmail-download-email` expose their tools one to one, over the same handlers, with help, examples and the shared exit codes.
+- Live, each returns or writes the converted HTML part, with `bodySource` `html-over-stub`, for a thread holding a stubbed message.

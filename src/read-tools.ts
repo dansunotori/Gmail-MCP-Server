@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import type { gmail_v1 } from 'googleapis';
 import { EmailAttachment } from './email-export.js';
-import { bodySourceOf, htmlToText, optionalHeader, type BodySource } from './message-body.js';
+import { optionalHeader, selectBody, type BodySource } from './message-body.js';
 
 // Type definitions for Gmail API responses
 export interface GmailMessagePart {
@@ -186,7 +186,7 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
     const threadId = response.data.threadId || '';
     const { text, html } = extractEmailContent(response.data.payload as GmailMessagePart || {});
     const attachments = extractAttachments(response.data.payload as GmailMessagePart);
-    const bodySource = bodySourceOf(text, html);
+    const { body, bodySource } = selectBody(text, html, 'keep-html');
 
     return {
         id: response.data.id || args.messageId,
@@ -201,7 +201,7 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
         labels: response.data.labelIds || [],
         text,
         html,
-        body: bodySource === 'text' ? text : bodySource === 'html' ? html : htmlToText(html),
+        body,
         bodySource,
         attachments,
     };

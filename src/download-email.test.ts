@@ -82,6 +82,18 @@ describe("download_email formats", () => {
       expect(json.to).toEqual([]);
     });
 
+    it("records the chosen body as body.text with its bodySource, converting HTML over a stub or alone", () => {
+      const stubbed = gmailMessageToJson(mockMessage, { text: "View this email in your browser", html: "<p>Real &amp; full</p>" }, []);
+      expect(stubbed.body).toEqual({ text: "Real & full", plain: "View this email in your browser", html: "<p>Real &amp; full</p>" });
+      expect(stubbed.bodySource).toBe("html-over-stub");
+      const htmlOnly = gmailMessageToJson(mockMessage, { text: "", html: "<p>Only HTML</p>" }, []);
+      expect(htmlOnly.body.text).toBe("Only HTML");
+      expect(htmlOnly.bodySource).toBe("html");
+      const plain = gmailMessageToJson(mockMessage, mockContent, []);
+      expect(plain.body.text).toBe(mockContent.text);
+      expect(plain.bodySource).toBe("text");
+    });
+
     it("serializes to valid JSON string", () => {
       const json = gmailMessageToJson(mockMessage, mockContent, mockAttachments);
       const str = JSON.stringify(json, null, 2);
@@ -109,8 +121,17 @@ describe("download_email formats", () => {
       expect(txt).not.toContain("CC:");
     });
 
-    it("shows placeholder when no text content", () => {
-      const txt = emailToTxt(mockMessage, { text: "", html: "<p>HTML only</p>" }, []);
+    it("writes the HTML part converted to text when there is no plain part or it is only a stub", () => {
+      const htmlOnly = emailToTxt(mockMessage, { text: "", html: "<p>HTML only</p>" }, []);
+      expect(htmlOnly).toContain("\n\nHTML only");
+      expect(htmlOnly).not.toContain("<p>");
+      const stubbed = emailToTxt(mockMessage, { text: "This is an HTML message; reading this requires an HTML-capable mail reader.", html: "<p>The real body</p>" }, []);
+      expect(stubbed).toContain("\n\nThe real body");
+      expect(stubbed).not.toContain("HTML-capable");
+    });
+
+    it("shows a placeholder when the message has no body at all", () => {
+      const txt = emailToTxt(mockMessage, { text: "", html: "" }, []);
       expect(txt).toContain("[No plain text content]");
     });
 

@@ -3,6 +3,7 @@
  */
 
 import emailAddresses from "email-addresses";
+import { selectBody, type BodySource } from "./message-body.js";
 
 // Types
 export interface ParsedAddress {
@@ -28,10 +29,14 @@ export interface EmailJson {
     date: string;
     labels: string[];
     snippet: string;
+    // text is the body as a text file carries it (see bodyAsText); plain and html are the
+    // message's parts as they are.
     body: {
+        text: string;
         plain: string;
         html: string;
     };
+    bodySource: BodySource;
     attachments: EmailAttachment[];
     headers: Record<string, string>;
 }
@@ -71,6 +76,12 @@ export function parseEmailAddresses(addresses: string | undefined): ParsedAddres
         }));
 }
 
+// The body a text format carries: the plain part, or the HTML part converted to text when there
+// is no plain part or the plain part is only a stub.
+function bodyAsText(emailContent: { text: string; html: string }) {
+    return selectBody(emailContent.text, emailContent.html, "convert-html");
+}
+
 /**
  * Convert Gmail API message to structured JSON
  */
@@ -90,6 +101,7 @@ export function gmailMessageToJson(
     } catch {
         isoDate = dateStr; // Keep original if parsing fails
     }
+    const { body, bodySource } = bodyAsText(emailContent);
 
     return {
         messageId: message.id,
@@ -103,9 +115,11 @@ export function gmailMessageToJson(
         labels: message.labelIds || [],
         snippet: message.snippet || "",
         body: {
+            text: body,
             plain: emailContent.text,
             html: emailContent.html,
         },
+        bodySource,
         attachments,
         headers: {
             "Message-ID": getHeader("message-id"),
@@ -156,7 +170,7 @@ export function emailToTxt(
     lines.push(`Subject: ${subject}`);
     lines.push(`Date: ${date}`);
     lines.push("");
-    lines.push(emailContent.text || "[No plain text content]");
+    lines.push(bodyAsText(emailContent).body || "[No plain text content]");
 
     if (attachments.length > 0) {
         lines.push("");

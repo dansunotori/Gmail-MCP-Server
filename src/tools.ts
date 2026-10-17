@@ -512,7 +512,7 @@ export const toolDefinitions: ToolDefinition[] = [
   // Thread-level operations
   {
     name: "get_thread",
-    description: "Retrieves all messages in an email thread in one call. Returns messages ordered chronologically (oldest first) with full content, headers, labels, and attachment metadata.",
+    description: "Retrieves all messages in an email thread in one call. Returns messages ordered chronologically (oldest first) with full content, headers, labels, and attachment metadata. Each message's body follows read_email: the plain part, the HTML part converted to text when the plain part is only a stub, or the HTML as it is when there is no plain part; bodySource (text, html-over-stub or html) says which.",
     schema: GetThreadSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Get Thread", readOnlyHint: true },
@@ -526,7 +526,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "get_inbox_with_threads",
-    description: "Convenience tool that lists threads and optionally expands each with full message content. One call returns the full inbox with complete thread bodies.",
+    description: "Convenience tool that lists threads and optionally expands each with full message content. One call returns the full inbox with complete thread bodies. An expanded message's body and bodySource follow get_thread.",
     schema: GetInboxWithThreadsSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Get Inbox with Threads", readOnlyHint: true },
@@ -540,7 +540,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "download_email",
-    description: "Downloads an email to a file in various formats (json, eml, txt, html). Returns metadata only - useful for saving emails without consuming context.",
+    description: "Downloads an email to a file in various formats (json, eml, txt, html). Returns metadata only - useful for saving emails without consuming context. The txt file's body, and json's body.text with bodySource, are the plain part, or the HTML part converted to text when there is no plain part or the plain part is only a stub; json also keeps both parts as body.plain and body.html.",
     schema: DownloadEmailSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Download Email", readOnlyHint: true },

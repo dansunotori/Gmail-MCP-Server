@@ -27,6 +27,7 @@ import { getGmailProfile, listGmailAddedHistory, listGmailMessageIds, structured
 import { batchGetGmailIndexMetadata } from "./gmail-batch.js";
 import { handleBatchFetchWindow } from "./batch-fetch-window.js";
 import { failureDetail, scopeRefusal, toolErrorResult } from "./error-text.js";
+import { selectBody, type BodySource } from "./message-body.js";
 import { GmailMessagePart, extractEmailContent, extractHeaders, extractAttachments, searchEmails, formatSearchEmailsText, readEmail, formatReadEmailText, downloadAttachment, formatDownloadAttachmentText } from "./read-tools.js";
 
 export interface GmailServerDeps {
@@ -853,11 +854,12 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         const bcc = headers.find(h => h.name?.toLowerCase() === 'bcc')?.value || '';
                         const date = headers.find(h => h.name?.toLowerCase() === 'date')?.value || '';
 
-                        // Extract body content
+                        // The body by the rule read_email uses; a minimal-format message carries none.
                         let body = '';
+                        let bodySource: BodySource = 'text';
                         if (validatedArgs.format !== 'minimal') {
                             const { text, html } = extractEmailContent(msg.payload as GmailMessagePart || {});
-                            body = text || html || '';
+                            ({ body, bodySource } = selectBody(text, html, 'keep-html'));
                         }
 
                         // Extract attachment metadata
@@ -890,6 +892,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                             subject,
                             date,
                             body,
+                            bodySource,
                             labelIds: msg.labelIds || [],
                             attachments: attachments.map(a => ({
                                 filename: a.filename,
@@ -1037,7 +1040,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                                 const date = headers.find(h => h.name?.toLowerCase() === 'date')?.value || '';
 
                                 const { text, html } = extractEmailContent(msg.payload as GmailMessagePart || {});
-                                const body = text || html || '';
+                                const { body, bodySource } = selectBody(text, html, 'keep-html');
 
                                 // Extract attachment metadata
                                 const attachments: EmailAttachment[] = [];
@@ -1069,6 +1072,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                                     subject,
                                     date,
                                     body,
+                                    bodySource,
                                     labelIds: msg.labelIds || [],
                                     attachments: attachments.map(a => ({
                                         filename: a.filename,

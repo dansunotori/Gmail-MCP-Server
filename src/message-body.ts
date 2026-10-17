@@ -91,6 +91,20 @@ export function bodySourceOf(text: string, html: string): BodySource {
   return hasHtml && isPlainTextStub(text) ? 'html-over-stub' : 'text';
 }
 
+// How a message with no plain part is delivered: tools that return the body inline
+// (read_email, get_thread, get_inbox_with_threads) keep its HTML as it is; tools that write a
+// text format (download_email's txt and json) convert it to text.
+export type HtmlOnlyRule = 'keep-html' | 'convert-html';
+
+// The body every tool that returns one chooses, by bodySourceOf: the plain part as it is, or
+// the HTML part converted to text over a stub, or the HTML part as htmlOnly says.
+export function selectBody(text: string, html: string, htmlOnly: HtmlOnlyRule): { body: string; bodySource: BodySource } {
+  const bodySource = bodySourceOf(text, html);
+  if (bodySource === 'text') return { body: text, bodySource };
+  if (bodySource === 'html' && htmlOnly === 'keep-html') return { body: html, bodySource };
+  return { body: htmlToText(html), bodySource };
+}
+
 export function decodeBase64Url(data: string | null | undefined): string {
   if (!data) return '';
   return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
