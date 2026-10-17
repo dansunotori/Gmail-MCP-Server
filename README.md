@@ -373,7 +373,7 @@ Four read-only commands expose four MCP tools with the same semantics and nothin
 | Command | MCP tool | Prints |
 |-|-|-|
 | `gmail-search '<gmail query>' [--max-results N]` | `search_emails` | `{query, count, messages: [{id, subject, from, date}]}` |
-| `gmail-get-message <message_id> [--format text\|markdown]` | `read_email` | `{id, threadId, subject, from, to, cc, date, messageIdHeader, labels, body, attachments: [{id, filename, mimeType, size}]}` |
+| `gmail-get-message <message_id> [--format text\|markdown]` | `read_email` | `{id, threadId, subject, from, to, cc, date, messageIdHeader, labels, body, bodySource, attachments: [{id, filename, mimeType, size}]}` |
 | `gmail-download-attachment <message_id> <attachment_id> --save-path <dir> [--filename <name>]` | `download_attachment` | `{path, size, mimeType}` |
 | `gmail-batch-fetch-window --watermark <ISO 8601 with zone> --output-dir <absolute dir> [--no-cross-check] [--max-messages N]` | `batch_fetch_window` | the tool's result, unchanged (see the [result contract](#batch_fetch_window-result-contract)) |
 
@@ -458,6 +458,8 @@ The first four tools never request or return subjects, addresses, snippets, head
 | `triage` | string[] | `"<file> | <from> | <subject> | <dateHeader> | <n> att"` per written message, in file order. |
 
 **Message-ID.** Each message file and each manifest `messages[]` entry carries `messageIdHeader`: the RFC 822 `Message-ID` header exactly as the message holds it, or `null` when it has none. Two entries with different `id` and the same `messageIdHeader` are one message held twice, such as the sent and received copies of a self-addressed message. `read_email` prints the same value on its `Message-ID:` line (`(none)` when absent) and `gmail-get-message` returns it as `messageIdHeader`.
+
+**Body.** Each message file carries `body` and `bodySource`. `bodySource` is `text` when the body is the plain-text part, `html` when the message has no plain part and the body is its HTML part converted to text, and `html-over-stub` when the plain part is only a stub pointing at the HTML part ("This is an HTML message…", "Your email client doesn't support HTML…", "Plain text version not available", "view it in your browser") and the body is the HTML part converted to text instead. A stub is a plain part of at most 400 characters that matches one of the stub phrasings kept in `src/message-body.ts`. `read_email` and `gmail-get-message` choose the body by the same rule (for an HTML-only message they keep the HTML itself), report `bodySource` (`gmail-get-message` as a field, `read_email` as a note line), and convert the HTML of a stubbed message to text the same way. `gmail-get-message --format markdown` converts the HTML part whenever there is one and then reports `html`, or `html-over-stub` when the plain part is a stub.
 
 **`failures[]` entry** — `{ id, error, operation, status, attempts }`:
 

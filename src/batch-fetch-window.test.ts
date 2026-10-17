@@ -181,6 +181,32 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     ]);
   });
 
+  it('writes the converted HTML part as the body when the plain part is a stub, and records where each body came from', async () => {
+    const alternative = (plain: string, html: string) => ({
+      mimeType: 'multipart/alternative',
+      headers: [{ name: 'From', value: 'shop@example.com' }, { name: 'Subject', value: 'Order' }],
+      parts: [
+        ...(plain === '' ? [] : [{ mimeType: 'text/plain', body: { data: b64(plain) } }]),
+        { mimeType: 'text/html', body: { data: b64(html) } },
+      ],
+    });
+    const gmail = fakeGmail({
+      lists: windowOnly(['stub', 'real', 'htmlonly']),
+      messages: {
+        stub: message('stub', BOUNDARY + 1000, { payload: alternative('This is an HTML message; reading this requires an HTML-capable mail reader.', '<p>Your order has <b>shipped</b>.</p>') }),
+        real: message('real', BOUNDARY + 2000, { payload: alternative('Your order has shipped.', '<p>Your order has <b>shipped</b>.</p>') }),
+        htmlonly: message('htmlonly', BOUNDARY + 3000, { payload: alternative('', '<p>Only <i>HTML</i></p>') }),
+      },
+    });
+    await run(gmail, dir);
+    const files = messageFiles(dir).map(name => readJson(path.join(dir, 'messages', name)));
+    expect(files.map(file => [file.id, file.bodySource, file.body])).toEqual([
+      ['stub', 'html-over-stub', 'Your order has shipped .'],
+      ['real', 'text', 'Your order has shipped.'],
+      ['htmlonly', 'html', 'Only HTML'],
+    ]);
+  });
+
   it('gives both copies of a self-addressed message their own id and the same Message-ID header', async () => {
     const header = (value: string) => ({ name: 'Message-Id', value });
     const withMessageId = (id: string, internalDate: number, labelIds: string[]) => {
@@ -233,6 +259,7 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
       snippet: 'snippet a',
       attachments: [],
       body: 'body of a',
+      bodySource: 'text',
     });
 
     expect(readJson(path.join(dir, 'window-metadata.json'))).toEqual({

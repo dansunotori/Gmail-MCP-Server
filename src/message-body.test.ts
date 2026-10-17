@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { GMAIL_RETRY_MAX_ATTEMPTS, GmailRequestError } from './gmail-sync.js';
 import {
+  bodySourceOf,
   decodeBase64Url,
   extractMessageParts,
   headerValue,
   htmlToText,
+  isPlainTextStub,
   resolveMessageBody,
 } from './message-body.js';
 
@@ -116,6 +118,50 @@ describe('htmlToText', () => {
   });
 });
 
+describe('isPlainTextStub', () => {
+  it('recognises the stub wording real senders put in the plain part', () => {
+    for (const stub of [
+      // Seen in a live mailbox.
+      'This is an HTML message; reading this requires an HTML-capable mail reader.',
+      "Your email client doesn't support HTML emails, please view this email in a client that supports HTML.",
+      'Plain text version not available.',
+      // Named in the request.
+      'This message was sent to you as HTML-only.',
+      'Having trouble reading this? View it in your browser: https://example.com/v/123',
+      'The plain-text version of this email is not available.',
+      "  Your mail client can't display HTML.\r\n\r\n  ",
+    ]) {
+      expect(isPlainTextStub(stub), stub).toBe(true);
+    }
+  });
+
+  it('keeps short real bodies, and a long body that merely mentions a browser', () => {
+    for (const body of [
+      'Kind regards Alexander Golev +447887960127',
+      'Important information about the times of your upcoming easyJet flight',
+      'Closed #295 as completed. -- Reply to this email directly or view it on GitHub: https://github.com/x/y/issues/295',
+      `${'Dear Sally, here is the full letter. '.repeat(15)} If the images are missing, view it in your browser.`,
+      '',
+    ]) {
+      expect(isPlainTextStub(body), body).toBe(false);
+    }
+  });
+});
+
+describe('bodySourceOf', () => {
+  const stub = 'This is an HTML message; reading this requires an HTML-capable mail reader.';
+  it('takes the HTML part over a stub, and only when the HTML part has content', () => {
+    expect(bodySourceOf(stub, '<p>Real content</p>')).toBe('html-over-stub');
+    expect(bodySourceOf(stub, '  ')).toBe('text');
+  });
+
+  it('keeps a real plain part, and names an HTML-only message', () => {
+    expect(bodySourceOf('Plain body', '<p>HTML body</p>')).toBe('text');
+    expect(bodySourceOf('', '<p>HTML body</p>')).toBe('html');
+    expect(bodySourceOf('', '')).toBe('text');
+  });
+});
+
 describe('resolveMessageBody', () => {
   function gmailWithAttachments(handler: (id: string) => Promise<{ data: { data?: string } }>) {
     return { users: { messages: { attachments: { get: vi.fn(({ id }: { id: string }) => handler(id)) } } } };
@@ -133,6 +179,7 @@ describe('resolveMessageBody', () => {
     expect(result.text).toBe(' plain ');
     expect(result.html).toBe('<p>html</p>');
     expect(result.body).toBe('plain');
+    expect(result.bodySource).toBe('text');
     expect(result.failures).toEqual([]);
   });
 
@@ -142,6 +189,19 @@ describe('resolveMessageBody', () => {
       parts: [{ mimeType: 'text/html', body: { attachmentId: 'h' } }],
     });
     expect(result.body).toBe('only html');
+    expect(result.bodySource).toBe('html');
+  });
+
+  it('delivers the converted HTML part when the plain part is a stub', async () => {
+    const result = await resolveMessageBody(gmailWithAttachments(async () => ({ data: {} })) as never, 'm1', {
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/plain', body: { data: b64('Plain text version not available.') } },
+        { mimeType: 'text/html', body: { data: b64('<p>Your order <b>#123</b> has shipped.</p>') } },
+      ],
+    });
+    expect(result.body).toBe('Your order #123 has shipped.');
+    expect(result.bodySource).toBe('html-over-stub');
   });
 
   it('records a non-auth fetch failure with its status after exhausting retries and keeps going', async () => {

@@ -1,23 +1,6 @@
 # Roadmap
 
-Work to implement, in order. Items 3 to 6 come from the prompts in `figaro-pa-predecessor/docs/prompts/gmail-*.md`; each item keeps its prompt's contract and done-when criteria. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
-
-## 3. Body from the HTML part when the plain part is a stub
-
-Source: `gmail-html-stub-body.md`
-
-Some senders put only a stub in the text/plain part ("sent to you as HTML-only", "view it in your browser", "plain text version not available") and the real content in the text/html part. The delivered body is then the stub. Change the body selection in `batch_fetch_window` and `read_email`, and in `gmail-batch-fetch-window` and `gmail-get-message`.
-
-Contract:
-
-- When the text/plain part is a stub (short, and matching stub wording the server keeps in one list) and the text/html part is non-empty, the delivered `body` is the text conversion of the HTML part, by the same conversion rules an HTML-only message already gets.
-- The message records which part the body came from: `bodySource`: `"text"`, `"html"` (HTML-only message) or `"html-over-stub"`.
-- Whether such messages occur in a real mailbox is answered from the server's own fetch over a recent window, and reported with a count.
-
-Done when:
-
-- Live, a message whose plain part is a stub and whose HTML part holds content is delivered with the converted HTML as `body` and `bodySource: "html-over-stub"`, through both tools and both CLIs.
-- A message with a real plain part is delivered unchanged with `bodySource: "text"`.
+Work to implement, in order. Items 4 to 6 come from the prompts in `figaro-pa-predecessor/docs/prompts/gmail-*.md`; each item keeps its prompt's contract and done-when criteria. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
 
 ## 4. Calendar reply fields in the window fetch
 
@@ -96,3 +79,21 @@ Done when:
 - Add standing rules that no changelogs, history, reports, or trumpet-blowing survive in this repository files or code comments. 
 - Double-check model logic for reporting preservation and close those gaps in the repo instructions, too
 - Review every documend and code file for the violations and remove changelogs, history, reports, and trumpet-blowing.
+
+## 11. Decode numeric character references in the HTML-to-text conversion
+
+`htmlToText` (`src/message-body.ts`) decodes five named entities and leaves numeric references as they are, so a body converted from HTML can read `&#8199;&#8199;` or `&#x2019;` where the sender wrote a space or an apostrophe. Live, marketing mail delivered through `html-over-stub` and HTML-only messages shows them. The conversion is pinned as a stable output shape for message files, so this changes that shape on purpose.
+
+Done when:
+
+- Decimal (`&#8217;`) and hexadecimal (`&#x2019;`) references, and the common named entities beyond the five handled today (`&rsquo;`, `&ndash;`, `&hellip;`, `&copy;`), decode to their characters; an invalid reference is left as written.
+- The test that pins the conversion is updated with the new cases, and the README and spec say the conversion changed shape.
+
+## 12. One body rule for every tool that returns a body
+
+`read_email` and `batch_fetch_window` choose the body with `bodySourceOf` (stub detection, `bodySource`), but `get_thread`, `get_inbox_with_threads` and `download_email` still take `text || html`: a stubbed message comes back as its stub through them, and they report no `bodySource`.
+
+Done when:
+
+- Those three tools choose the body through `bodySourceOf` and report `bodySource` per message.
+- A thread holding a stubbed message returns the converted HTML part for it through `get_thread` and `get_inbox_with_threads`, and `download_email` writes it in the txt and json formats.

@@ -7,6 +7,7 @@
 import path from 'node:path';
 import TurndownService from 'turndown';
 import { batchFetchWindow } from '../batch-fetch-window.js';
+import type { BodySource } from '../message-body.js';
 import { downloadAttachment, readEmail, searchEmails, type ReadEmailResult } from '../read-tools.js';
 import { BatchFetchWindowSchema } from '../tools.js';
 import {
@@ -97,27 +98,32 @@ export const searchCommand: Command = async (argv, deps) => {
 const GET_MESSAGE: CommandSpec = {
     name: 'gmail-get-message',
     synopsis: 'gmail-get-message <message_id> [--format text|markdown] [-o <file>]',
-    description: 'Reads one message like the read_email MCP tool and prints id, threadId, subject, from, to, cc, date, messageIdHeader (the Message-ID header, null when absent), labels, body and attachments [{id, filename, mimeType, size}].',
+    description: 'Reads one message like the read_email MCP tool and prints id, threadId, subject, from, to, cc, date, messageIdHeader (the Message-ID header, null when absent), labels, body, bodySource (text, html or html-over-stub) and attachments [{id, filename, mimeType, size}].',
     arguments: [['<message_id>', 'A Gmail message ID, as gmail-search prints it.']],
     example: 'gmail-get-message 18f2a9c4e1b7d3a0',
     flags: {
         format: {
             type: 'string',
             placeholder: 'text|markdown',
-            description: "Body format. text (default) is read_email's body: the plain-text part, or the HTML when there is none. markdown converts the HTML part to Markdown, falling back to the plain text when there is no HTML.",
+            description: "Body format. text (default) is read_email's body: the plain-text part, the HTML when there is none, or the HTML converted to text when the plain part is only a stub. markdown converts the HTML part to Markdown, falling back to the plain text when there is no HTML. Either way bodySource names the part the body came from.",
             example: 'gmail-get-message 18f2a9c4e1b7d3a0 --format markdown',
         },
         ...commonFlags('gmail-get-message', 'gmail-get-message 18f2a9c4e1b7d3a0 --output message.json'),
     },
 };
 
-function markdownBody(email: ReadEmailResult): string {
+// The Markdown body and the part it came from: the HTML part whenever there is one (still
+// html-over-stub when that part was chosen over a stub), otherwise read_email's own body.
+function markdownBody(email: ReadEmailResult): { body: string; bodySource: BodySource } {
     if (!email.html) {
-        return email.body;
+        return { body: email.body, bodySource: email.bodySource };
     }
     const turndown = new TurndownService();
     turndown.remove(['head', 'style', 'script']);
-    return turndown.turndown(email.html);
+    return {
+        body: turndown.turndown(email.html),
+        bodySource: email.bodySource === 'html-over-stub' ? 'html-over-stub' : 'html',
+    };
 }
 
 export const getMessageCommand: Command = async (argv, deps) => {
@@ -129,6 +135,7 @@ export const getMessageCommand: Command = async (argv, deps) => {
         throw new UsageError(`--format must be text or markdown, got "${format}"`);
     }
     const email = await readEmail(deps.gmail('read_email'), { messageId: args.positionals[0] });
+    const { body, bodySource } = format === 'markdown' ? markdownBody(email) : email;
     await emitJson({
         id: email.id,
         threadId: email.threadId,
@@ -139,7 +146,8 @@ export const getMessageCommand: Command = async (argv, deps) => {
         date: email.date,
         messageIdHeader: email.messageIdHeader,
         labels: email.labels,
-        body: format === 'markdown' ? markdownBody(email) : email.body,
+        body,
+        bodySource,
         attachments: email.attachments,
     }, args.output, deps);
 };

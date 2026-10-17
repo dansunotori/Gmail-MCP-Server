@@ -147,6 +147,7 @@ describe('readEmail', () => {
       text: 'Plain body',
       html: '<p>HTML body</p>',
       body: 'Plain body',
+      bodySource: 'text',
       attachments: [{ id: 'att-1', filename: 'invoice.pdf', mimeType: 'application/pdf', size: 2048 }],
     });
   });
@@ -156,7 +157,25 @@ describe('readEmail', () => {
     const { gmail } = fakeGmail({ messages: { h: htmlOnly } });
     const result = await readEmail(gmail, { messageId: 'h' });
     expect(result.body).toBe('<b>x</b>');
+    expect(result.bodySource).toBe('html');
     expect(result.labels).toEqual([]);
+  });
+
+  it('delivers the HTML part converted to text when the plain part is a stub', async () => {
+    const stubbed = { id: 's', threadId: 't', payload: {
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/plain', body: { data: b64("Your email client doesn't support HTML emails, please view this email in a client that supports HTML.") } },
+        { mimeType: 'text/html', body: { data: b64('<p>Your appointment is <b>confirmed</b>.</p>') } },
+      ],
+    } };
+    const { gmail } = fakeGmail({ messages: { s: stubbed } });
+    const result = await readEmail(gmail, { messageId: 's' });
+    expect(result.body).toBe('Your appointment is confirmed .');
+    expect(result.bodySource).toBe('html-over-stub');
+    expect(formatReadEmailText(result)).toContain(
+      '[Note: The plain-text part of this email is only a stub; this is its HTML part converted to text.]\n\nYour appointment is confirmed .',
+    );
   });
 
   it('gives messageIdHeader null when the message has no Message-ID header', async () => {
@@ -184,13 +203,13 @@ describe('readEmail', () => {
   it('prints CC and BCC only when present, notes an HTML-only body, and says when there is no Message-ID', () => {
     const base = {
       id: 'x', threadId: 't', messageIdHeader: null, subject: 's', from: 'f', to: 'to', cc: '', bcc: '', date: 'd',
-      labels: [], text: '', html: '<p>h</p>', body: '<p>h</p>', attachments: [],
+      labels: [], text: '', html: '<p>h</p>', body: '<p>h</p>', bodySource: 'html' as const, attachments: [],
     };
     expect(formatReadEmailText(base)).toBe(
       'Thread ID: t\nMessage-ID: (none)\nSubject: s\nFrom: f\nTo: to\nDate: d\n\n'
       + '[Note: This email is HTML-formatted. Plain text version not available.]\n\n<p>h</p>',
     );
-    expect(formatReadEmailText({ ...base, bcc: 'b@x', html: '', body: '' })).toBe(
+    expect(formatReadEmailText({ ...base, bcc: 'b@x', html: '', body: '', bodySource: 'text' })).toBe(
       'Thread ID: t\nMessage-ID: (none)\nSubject: s\nFrom: f\nTo: to\nBCC: b@x\nDate: d\n\n',
     );
   });

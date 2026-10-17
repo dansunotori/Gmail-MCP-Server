@@ -425,8 +425,20 @@ describe('gmail-get-message', () => {
       messageIdHeader: null,
       labels: ['INBOX'],
       body: 'Plain body',
+      bodySource: 'text',
       attachments: [{ id: 'att-1', filename: 'invoice.pdf', mimeType: 'application/pdf', size: 14 }],
     });
+  });
+
+  it('prints the converted HTML part and bodySource html-over-stub when the plain part is a stub', async () => {
+    const stubbed = { ...message, payload: { ...message.payload, parts: [
+      { mimeType: 'text/plain', body: { data: b64('Plain text version not available.') } },
+      { mimeType: 'text/html', body: { data: b64('<p>Real <b>content</b></p>') } },
+    ] } };
+    const gmail = { users: { messages: { get: async () => ({ data: stubbed }) } } } as unknown as gmail_v1.Gmail;
+    const { deps, json } = harness(gmail);
+    await getMessageCommand(['m1'], deps);
+    expect(json()).toMatchObject({ body: 'Real content', bodySource: 'html-over-stub' });
   });
 
   it('prints the Message-ID header as messageIdHeader, null when the message has none', async () => {
@@ -441,10 +453,21 @@ describe('gmail-get-message', () => {
     expect(second.json()).toHaveProperty('messageIdHeader', null);
   });
 
-  it('converts the HTML part to Markdown with --format markdown', async () => {
+  it('converts the HTML part to Markdown with --format markdown and says the body came from it', async () => {
     const { deps, json } = harness();
     await getMessageCommand(['m1', '--format', 'markdown'], deps);
-    expect(json().body).toBe('See [this](https://x.test)');
+    expect(json()).toMatchObject({ body: 'See [this](https://x.test)', bodySource: 'html' });
+  });
+
+  it('keeps html-over-stub for markdown when the HTML part is taken over a stub', async () => {
+    const stubbed = { ...message, payload: { ...message.payload, parts: [
+      { mimeType: 'text/plain', body: { data: b64('Plain text version not available.') } },
+      { mimeType: 'text/html', body: { data: b64('<p>Real <b>content</b></p>') } },
+    ] } };
+    const gmail = { users: { messages: { get: async () => ({ data: stubbed }) } } } as unknown as gmail_v1.Gmail;
+    const { deps, json } = harness(gmail);
+    await getMessageCommand(['m1', '--format', 'markdown'], deps);
+    expect(json()).toMatchObject({ body: 'Real **content**', bodySource: 'html-over-stub' });
   });
 
   it('falls back to the text body for markdown when the message has no HTML', async () => {
@@ -452,7 +475,7 @@ describe('gmail-get-message', () => {
     const gmail = { users: { messages: { get: async () => ({ data: textOnly }) } } } as unknown as gmail_v1.Gmail;
     const { deps, json } = harness(gmail);
     await getMessageCommand(['m1', '--format', 'markdown'], deps);
-    expect(json().body).toBe('Just *text*');
+    expect(json()).toMatchObject({ body: 'Just *text*', bodySource: 'text' });
   });
 
   it('rejects an unknown format and fails with nothing on stdout when the message is missing', async () => {

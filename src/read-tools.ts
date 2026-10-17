@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import type { gmail_v1 } from 'googleapis';
 import { EmailAttachment } from './email-export.js';
-import { optionalHeader } from './message-body.js';
+import { bodySourceOf, htmlToText, optionalHeader, type BodySource } from './message-body.js';
 
 // Type definitions for Gmail API responses
 export interface GmailMessagePart {
@@ -166,8 +166,11 @@ export interface ReadEmailResult {
     labels: string[];
     text: string;
     html: string;
-    // Plain text when the message has it, otherwise the HTML: the body read_email prints.
+    // The body read_email prints: the plain text when the message has a real plain part,
+    // the HTML when it has none, and the HTML converted to text when the plain part is only
+    // a stub. bodySource says which.
     body: string;
+    bodySource: BodySource;
     attachments: EmailAttachment[];
 }
 
@@ -183,6 +186,7 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
     const threadId = response.data.threadId || '';
     const { text, html } = extractEmailContent(response.data.payload as GmailMessagePart || {});
     const attachments = extractAttachments(response.data.payload as GmailMessagePart);
+    const bodySource = bodySourceOf(text, html);
 
     return {
         id: response.data.id || args.messageId,
@@ -197,16 +201,19 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
         labels: response.data.labelIds || [],
         text,
         html,
-        // Use plain text content if available, otherwise use HTML content
-        body: text || html || '',
+        body: bodySource === 'text' ? text : bodySource === 'html' ? html : htmlToText(html),
+        bodySource,
         attachments,
     };
 }
 
 export function formatReadEmailText(email: ReadEmailResult): string {
-    const { threadId, messageIdHeader, subject, from, to, cc, bcc, date, text, html, body, attachments } = email;
-    const contentTypeNote = !text && html ?
-        '[Note: This email is HTML-formatted. Plain text version not available.]\n\n' : '';
+    const { threadId, messageIdHeader, subject, from, to, cc, bcc, date, body, bodySource, attachments } = email;
+    const contentTypeNote = bodySource === 'html'
+        ? '[Note: This email is HTML-formatted. Plain text version not available.]\n\n'
+        : bodySource === 'html-over-stub'
+            ? '[Note: The plain-text part of this email is only a stub; this is its HTML part converted to text.]\n\n'
+            : '';
 
     // Add attachment info to output if any are present
     const attachmentInfo = attachments.length > 0 ?

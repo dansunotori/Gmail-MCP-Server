@@ -53,9 +53,42 @@ export interface BodyFailure {
   attempts: number;
 }
 
+// Which part a delivered body came from: the plain part, the HTML part of a message that has
+// no plain part, or the HTML part because the plain part is only a stub.
+export type BodySource = 'text' | 'html' | 'html-over-stub';
+
 export interface ResolvedBody extends ExtractedParts {
   body: string;
+  bodySource: BodySource;
   failures: BodyFailure[];
+}
+
+// A plain part longer than this is a real body even if it uses stub wording.
+const STUB_MAX_LENGTH = 400;
+
+// The wording senders use when the plain part only points at the HTML part. The one list
+// both read_email and batch_fetch_window consult; matched case-insensitively against the
+// plain part with its whitespace collapsed.
+const STUB_PATTERNS: RegExp[] = [
+  /\bhtml[- ]only\b/,
+  /\bthis is an html (?:message|e-?mail)\b/,
+  /\brequires an html[- ]capable (?:mail|e-?mail) (?:reader|client|program)\b/,
+  /\b(?:e-?mail|mail) (?:client|program|reader|software) (?:does not|doesn['’]t|cannot|can['’]t|is unable to) (?:support|display|show|render|read) html\b/,
+  /\bplain[- ]text version (?:of this (?:e-?mail|message) )?(?:is )?not available\b/,
+  /\bview (?:it|this (?:e-?mail|message|newsletter)) (?:in|on) (?:your|a|the) (?:web )?browser\b/,
+];
+
+export function isPlainTextStub(text: string): boolean {
+  const collapsed = text.replace(/\s+/g, ' ').trim().toLowerCase();
+  return collapsed !== '' && collapsed.length <= STUB_MAX_LENGTH && STUB_PATTERNS.some(pattern => pattern.test(collapsed));
+}
+
+export function bodySourceOf(text: string, html: string): BodySource {
+  const hasHtml = html.trim() !== '';
+  if (text.trim() === '') {
+    return hasHtml ? 'html' : 'text';
+  }
+  return hasHtml && isPlainTextStub(text) ? 'html-over-stub' : 'text';
 }
 
 export function decodeBase64Url(data: string | null | undefined): string {
@@ -167,6 +200,7 @@ export async function resolveMessageBody(
     }
   }
 
-  const body = parts.text.trim() || htmlToText(parts.html);
-  return { ...parts, body, failures };
+  const bodySource = bodySourceOf(parts.text, parts.html);
+  const body = bodySource === 'text' ? parts.text.trim() : htmlToText(parts.html);
+  return { ...parts, body, bodySource, failures };
 }

@@ -324,6 +324,7 @@ export async function batchFetchWindow(
         snippet: data.snippet ?? '',
         attachments: resolved.attachments,
         body: resolved.body,
+        bodySource: resolved.bodySource,
       },
       manifest: {
         file,
