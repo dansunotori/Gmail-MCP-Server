@@ -1169,14 +1169,6 @@ This repo has a single branch, **`main`**. Changes land on `main` directly; open
 
 CI runs a clean install, lockfile lint, dependency audit, typecheck, build and the test suite on every push and pull request.
 
-## Running evals
-
-The evals package loads an mcp client that then runs the index.ts file, so there is no need to rebuild between tests. You can load environment variables by prefixing the npx command. Full documentation can be found [here](https://www.mcpevals.io/docs).
-
-```bash
-OPENAI_API_KEY=your-key  npx mcp-eval src/evals/evals.ts src/index.ts
-```
-
 ## Credits
 
 Authors: gongrzhe and Arty McLabin. Contributors: @MaxGhenis, @nicholas-anthony-ai, @tansanDOTeth, @JF10R, @panghy, @ShivamB25, @thisisambros, @bryankthompson, @icanhasjonas, @BrentBaccala, @soapergem and @caioribeiroclw-pixel.

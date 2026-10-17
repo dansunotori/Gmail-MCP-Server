@@ -11,15 +11,6 @@ Done when:
 - A git pre-commit hook runs `npm run roadmap:check` on the staged `ROADMAP.md` and refuses the commit on a finding, without weakening any review that already runs at commit time.
 - A commit with finished-work wording in a staged `ROADMAP.md` is refused locally, whatever made the change.
 
-## 19. Drop or replace mcp-evals, whose dependencies carry unfixed advisories
-
-`mcp-evals` (a dev dependency, used only by `src/evals/evals.ts`) pulls in `ai`, `@ai-sdk/*` and `jsondiffpatch`, for which `npm audit` reports a high advisory (`jsondiffpatch`: XSS and prototype pollution) and a moderate one (`@ai-sdk/provider-utils`), both with no fix available. Production dependencies are clean; CI passes only because its audit step fails on critical advisories alone.
-
-Done when:
-
-- `npm audit` reports nothing above low for all dependencies, dev included, with the evals either moved to a maintained runner or removed along with `src/evals/`.
-- CI's audit step fails on high advisories, not only critical ones.
-
 ## 20. Carriage returns survive the HTML-to-text conversion
 
 `htmlToText` (`src/message-body.ts`) collapses runs of spaces and tabs and of three or more `\n`, but HTML parts with CRLF line endings keep their `\r`, so a converted body reads `"Re Itamin,\n\r\n\r\n \r\nWe have…"` (live, an AJ Bell secure-message notice through `gmail-get-message`): the `\r` breaks up the blank-line collapse and leaves stray carriage returns in message files and tool output.

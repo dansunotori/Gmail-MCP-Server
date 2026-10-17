@@ -33,7 +33,7 @@ jobs:
         run: npm run roadmap:check
 
       - name: Audit dependencies
-        run: npm audit --audit-level=critical
+        run: npm audit --audit-level=high
 
       - name: Typecheck
         run: npm run typecheck
