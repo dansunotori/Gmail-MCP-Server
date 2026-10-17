@@ -9,7 +9,8 @@ import fs from 'fs';
 import path from 'path';
 import type { gmail_v1 } from 'googleapis';
 import { EmailAttachment } from './email-export.js';
-import { optionalHeader, selectBody, type BodySource } from './message-body.js';
+import { attachmentParts, findAttachmentPart } from './attachment-part.js';
+import { optionalHeader, selectBody, type BodySource, type MessagePart } from './message-body.js';
 
 // Type definitions for Gmail API responses
 export interface GmailMessagePart {
@@ -266,24 +267,18 @@ export async function downloadAttachment(
             format: 'full',
         });
 
-        // Find the attachment part to get original filename
-        const findAttachment = (part: any): any => {
-            if (part.body && part.body.attachmentId === args.attachmentId) {
-                return part;
-            }
-            if (part.parts) {
-                for (const subpart of part.parts) {
-                    const found = findAttachment(subpart);
-                    if (found) return found;
-                }
-            }
-            return null;
-        };
-
-        const part = findAttachment(messageResponse.data.payload);
-        mimeType = part?.mimeType || 'application/octet-stream';
+        // The part by get_attachment_text's rule (src/attachment-part.ts). A message with no
+        // attachment part leaves the name and type unknown; one whose part cannot be told apart
+        // from another's is refused unless the caller names the file, since the name would be
+        // a guess.
+        const parts = attachmentParts(messageResponse.data.payload as MessagePart);
+        const found = findAttachmentPart(parts, args.attachmentId, buffer.length, args.messageId);
+        if (found.part === undefined && parts.length > 0 && !filename) {
+            throw new Error(`${found.reason}; give a filename to save it under`);
+        }
+        mimeType = found.part?.mimeType || 'application/octet-stream';
         if (!filename) {
-            filename = part?.filename || `attachment-${args.attachmentId}`;
+            filename = found.part?.filename || `attachment-${args.attachmentId}`;
         }
     }
 

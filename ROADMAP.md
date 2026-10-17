@@ -11,15 +11,6 @@ Done when:
 - A git pre-commit hook runs `npm run roadmap:check` on the staged `ROADMAP.md` and refuses the commit on a finding, without weakening any review that already runs at commit time.
 - A commit with finished-work wording in a staged `ROADMAP.md` is refused locally, whatever made the change.
 
-## 17. download_attachment loses the attachment's name and type
-
-Gmail issues a new attachment id each time a message is read, so the id a caller holds almost never appears in the fresh `messages.get` that `downloadAttachment` (`src/read-tools.ts`) searches for the attachment's part. The part is then not found: without `filename` the file is saved as `attachment-<id>`, and the reported `mimeType` (always looked up by `gmail-download-attachment`) is `application/octet-stream`, whatever the attachment is. `get_attachment_text` already finds the part by exact id, else by the bytes' size, else as the only attachment (`findPart` in `src/attachment-text/attachment-text.ts`).
-
-Done when:
-
-- `download_attachment` and `gmail-download-attachment` find the part the way `get_attachment_text` does, through one shared function, and save the file under its real name with its real type.
-- Live, downloading an attachment by an id from an earlier read of the message saves it under its own name and reports its own MIME type.
-
 ## 18. Wrap a command's own exit codes in the CLI help
 
 `renderHelp` (`src/cli/common.ts`) appends a command's `exitCodes` to the shared exit-code line without rewrapping it, so `gmail-get-attachment-text --help` prints one line of about 150 characters ("… 6 attachment protected, encrypted, corrupt or unsupported. On failure nothing is written to stdout, and stderr"), where every other help line keeps under 100.

@@ -594,6 +594,8 @@ Parameters:
 - `savePath`: Directory to save the file (optional, defaults to current directory)
 - `filename`: Custom filename (optional, uses original filename if not provided)
 
+Gmail issues a new attachment ID each time a message is read, so an ID from an earlier read rarely matches the message's parts. The attachment's part, which gives its name and type, is then found as `get_attachment_text` finds it: by ID, else as the one attachment of the same size, else as the message's only attachment. When two attachments of that size cannot be told apart and no `filename` is given, the download is refused with their names rather than saved under a guessed one.
+
 ### Get attachment text (`get_attachment_text`)
 Returns an attachment's text, so a caller does not convert files itself.
 

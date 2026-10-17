@@ -5,7 +5,8 @@
  */
 
 import type { gmail_v1 } from 'googleapis';
-import { headerValue, type MessagePart } from '../message-body.js';
+import { attachmentParts, findAttachmentPart } from '../attachment-part.js';
+import type { MessagePart } from '../message-body.js';
 import { extractInWorker } from './extract.js';
 import {
   AttachmentFileError,
@@ -27,45 +28,6 @@ export interface AttachmentText {
   sheets: SheetSummary[] | null;
 }
 
-interface AttachmentPart {
-  filename: string;
-  mimeType: string;
-  attachmentId: string;
-  size: number;
-}
-
-// Every part stored as an attachment, named by its filename or, failing that, the filename in
-// its own Content-Disposition header.
-function attachmentParts(part: MessagePart | null | undefined, found: AttachmentPart[] = []): AttachmentPart[] {
-  if (!part) return found;
-  const attachmentId = part.body?.attachmentId;
-  if (attachmentId) {
-    const disposed = headerValue(part.headers, 'Content-Disposition').match(/filename="?([^";]+)/)?.[1] ?? '';
-    found.push({ filename: part.filename || disposed, mimeType: part.mimeType ?? '', attachmentId, size: part.body?.size ?? -1 });
-  }
-  for (const child of part.parts ?? []) attachmentParts(child, found);
-  return found;
-}
-
-const label = (part: AttachmentPart) => part.filename || part.mimeType || 'unnamed part';
-
-// The message part the bytes came from. Gmail issues a new attachment id each time a message
-// is fetched, so the id the caller holds rarely appears in a fresh fetch: the part is the one
-// with that id, else the one attachment of exactly the bytes' size, else the message's only
-// attachment. When none of those settles it, the tool says so rather than guess.
-function findPart(parts: AttachmentPart[], attachmentId: string, size: number, messageId: string): AttachmentPart {
-  const exact = parts.find(part => part.attachmentId === attachmentId);
-  if (exact) return exact;
-  const sized = parts.filter(part => part.size === size);
-  const distinct = [...new Map(sized.map(part => [`${part.filename}\u0000${part.mimeType}`, part])).values()];
-  if (distinct.length === 1) return distinct[0];
-  if (distinct.length === 0 && parts.length === 1) return parts[0];
-  const which = distinct.length > 1
-    ? `${distinct.map(label).join(', ')} have its size`
-    : `none of ${parts.map(label).join(', ') || 'its parts'} has its size`;
-  throw new Error(`cannot tell which attachment of message ${messageId} this is: ${which}`);
-}
-
 export async function getAttachmentText(
   gmail: gmail_v1.Gmail,
   args: { messageId: string; attachmentId: string },
@@ -77,7 +39,9 @@ export async function getAttachmentText(
   });
   const bytes = Buffer.from(attachment.data.data ?? '', 'base64url');
   const message = await gmail.users.messages.get({ userId: 'me', id: args.messageId, format: 'full' });
-  const part = findPart(attachmentParts(message.data.payload as MessagePart), args.attachmentId, bytes.length, args.messageId);
+  const found = findAttachmentPart(attachmentParts(message.data.payload as MessagePart), args.attachmentId, bytes.length, args.messageId);
+  if (found.part === undefined) throw new Error(found.reason);
+  const { part } = found;
   const name = part.filename || 'attachment';
   const format = detectFormat(name, part.mimeType);
   if (format === undefined) {

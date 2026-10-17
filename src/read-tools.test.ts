@@ -260,6 +260,40 @@ describe('downloadAttachment', () => {
     expect(result.path).toBe(path.join(dir, 'passwd'));
   });
 
+  it('finds the part by size when Gmail has issued a new attachment id since the caller read the message', async () => {
+    const refetched = { ...fullMessage, payload: { ...fullMessage.payload, parts: [
+      ...fullMessage.payload.parts.slice(0, 2),
+      { mimeType: 'application/pdf', filename: 'invoice.pdf', body: { attachmentId: 'att-1-refetched', size: 14 } },
+      { mimeType: 'image/png', filename: 'logo.png', body: { attachmentId: 'logo-refetched', size: 999 } },
+    ] } };
+    const { gmail } = fakeGmail({ messages: { m1: refetched }, attachments: { 'att-1': data } });
+    const result = await downloadAttachment(gmail, { messageId: 'm1', attachmentId: 'att-1', savePath: dir });
+    expect(result).toMatchObject({ filename: 'invoice.pdf', mimeType: 'application/pdf' });
+  });
+
+  it('names a part from its own Content-Disposition when Gmail gives it no filename', async () => {
+    const message = { payload: { parts: [
+      { mimeType: 'text/csv', filename: '', headers: [{ name: 'Content-Disposition', value: 'attachment; filename="figures.csv"' }], body: { attachmentId: 'other', size: 14 } },
+    ] } };
+    const { gmail } = fakeGmail({ messages: { m1: message }, attachments: { 'c-1': data } });
+    expect(await downloadAttachment(gmail, { messageId: 'm1', attachmentId: 'c-1', savePath: dir })).toMatchObject({ filename: 'figures.csv', mimeType: 'text/csv' });
+  });
+
+  it('refuses to guess a name between attachments it cannot tell apart, unless a filename is given', async () => {
+    const twins = { payload: { parts: [
+      { mimeType: 'application/pdf', filename: 'a.pdf', body: { attachmentId: 'x1', size: 14 } },
+      { mimeType: 'application/pdf', filename: 'b.pdf', body: { attachmentId: 'x2', size: 14 } },
+    ] } };
+    const unnamed = fakeGmail({ messages: { m1: twins }, attachments: { old: data } });
+    await expect(downloadAttachment(unnamed.gmail, { messageId: 'm1', attachmentId: 'old', savePath: dir }))
+      .rejects.toThrow('cannot tell which attachment of message m1 this is: a.pdf, b.pdf have its size; give a filename to save it under');
+    expect(fs.readdirSync(dir)).toEqual([]);
+
+    const named = fakeGmail({ messages: { m1: twins }, attachments: { old: data } });
+    const result = await downloadAttachment(named.gmail, { messageId: 'm1', attachmentId: 'old', savePath: dir, filename: 'mine.pdf' }, { lookupMimeType: true });
+    expect(result).toMatchObject({ filename: 'mine.pdf', mimeType: 'application/octet-stream' });
+  });
+
   it('falls back to attachment-<id> and octet-stream when the part is not in the message', async () => {
     const { gmail } = fakeGmail({ messages: { m1: { payload: { parts: [] } } }, attachments: { zz: data } });
     const result = await downloadAttachment(gmail, { messageId: 'm1', attachmentId: 'zz', savePath: dir });
