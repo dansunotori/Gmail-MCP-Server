@@ -1,15 +1,15 @@
 # Roadmap
 
-Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
+Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 16. Guard the roadmap against finished-work wording
+## 16. Run the roadmap check before every commit
 
-The rule in `CLAUDE.md` and `AGENTS.md` (no changelogs, history, reports or self-praise in the repository) is enforced by review alone. `outlook-claude-mcp`'s `scripts/check-roadmap.mjs` enforces it deterministically for its roadmap: a word list ("fixed", "shipped", "landed", "implemented", "no longer", ticked boxes, struck-through text, `**Done:**`) checked by a pre-commit step and a Claude Code PreToolUse hook on the roadmap file.
+`scripts/check-roadmap.mjs` runs in CI and as the project's PreToolUse hook on Write and Edit, so a roadmap change made another way (a shell command, a merge, an editor) is checked only after it is pushed. Nothing in this repository runs it at commit time, and agents on this machine may not change `.git/hooks` or `.git/config`, where a git pre-commit hook would be installed, so that step is the maintainer's.
 
 Done when:
 
-- A script local to this repository refuses `ROADMAP.md` content that reports finished work, run as a pre-commit check and as a project-level PreToolUse hook on edits to that file, with fenced and inline code exempt.
-- Its tests cover each pattern and the exemptions.
+- A git pre-commit hook runs `npm run roadmap:check` on the staged `ROADMAP.md` and refuses the commit on a finding, without weakening any review that already runs at commit time.
+- A commit with finished-work wording in a staged `ROADMAP.md` is refused locally, whatever made the change.
 
 ## 17. download_attachment loses the attachment's name and type
 

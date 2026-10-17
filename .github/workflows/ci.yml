@@ -29,6 +29,9 @@ jobs:
       - name: Lint lockfile
         run: npm run lockfile:lint
 
+      - name: Check the roadmap lists open work only
+        run: npm run roadmap:check
+
       - name: Audit dependencies
         run: npm audit --audit-level=critical
 

@@ -10,6 +10,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { fromMarkdown } from 'mdast-util-from-markdown';
 
 const PROMPT_FILE = /^gmail-.+\.md$/;
 
@@ -21,20 +22,36 @@ function nextNumber(roadmap) {
   return numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
 }
 
-// The prompt as a roadmap item: its "# " title becomes the numbered heading, and its body is
-// kept as written, except that its headings move one level down to sit under that heading.
-// Lines inside fenced code are never headings and are left alone.
+// The raw source of a heading's text, without its # markers or setext underline.
+function headingText(text, heading) {
+  const children = heading.children ?? [];
+  if (children.length === 0) return '';
+  return text.slice(children[0].position.start.offset, children[children.length - 1].position.end.offset);
+}
+
+// The prompt as a roadmap item: its first top-level "# " heading becomes the numbered heading,
+// and its body is kept as written, except that its top-level headings move one level down to
+// sit under that heading. The prompt is parsed as CommonMark (mdast-util-from-markdown), so a
+// "#" line in code, a block quote or a list item is left alone.
 function sectionFor(number, name, content) {
-  const lines = content.replace(/\r\n/g, '\n').split('\n');
-  const titleIndex = lines.findIndex(line => line.startsWith('# '));
-  if (titleIndex < 0) throw new Error(`${name} has no "# " title line`);
-  let fenced = false;
-  const body = lines.slice(titleIndex + 1).map(line => {
-    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
-    return !fenced && /^#{1,5} /.test(line) ? `#${line}` : line;
-  });
-  const text = body.join('\n').replace(/^\n+/, '').replace(/\s+$/, '');
-  return `## ${number}. ${lines[titleIndex].slice(2).trim()}\n\n${sourceLine(name)}\n\n${text}\n`;
+  const text = content.replace(/\r\n?/g, '\n');
+  const tree = fromMarkdown(text);
+  const titleIndex = tree.children.findIndex(node => node.type === 'heading' && node.depth === 1);
+  const title = tree.children[titleIndex];
+  if (title === undefined || headingText(text, title).trim() === '') throw new Error(`${name} has no "# " title line`);
+  let body = text;
+  const headings = tree.children.slice(titleIndex + 1).filter(node => node.type === 'heading' && node.depth <= 5);
+  // Edited from the end so earlier offsets stay valid.
+  for (const heading of headings.reverse()) {
+    const { offset: start } = heading.position.start;
+    const { offset: end } = heading.position.end;
+    const atx = /^ {0,3}#/.test(text.slice(start, end));
+    body = atx
+      ? body.slice(0, start) + body.slice(start, end).replace('#', '##') + body.slice(end)
+      : body.slice(0, start) + `${'#'.repeat(heading.depth + 1)} ${headingText(text, heading).replace(/\n/g, ' ')}` + body.slice(end);
+  }
+  const section = body.slice(title.position.end.offset).replace(/^\n+/, '').replace(/\s+$/, '');
+  return `## ${number}. ${headingText(text, title).trim()}\n\n${sourceLine(name)}\n\n${section}\n`;
 }
 
 // Returns the roadmap with every prompt not yet imported appended, and the names it added.
@@ -54,9 +71,14 @@ export function importPrompts({ promptsDir, roadmap, imported }) {
   return { roadmap: result, added };
 }
 
+// Variables that point git at a repository other than its working directory's; git sets some
+// of them when it runs a hook. The repository here is always repoRoot, so they are dropped.
+const GIT_LOCATION = /^GIT_(?:DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM)$/;
+
 // Whether any commit added or removed the line in ROADMAP.md.
 export function everInRoadmapHistory(repoRoot, line) {
-  const out = execFileSync('git', ['log', '-F', `-S${line}`, '--format=%h', '--', 'ROADMAP.md'], { cwd: repoRoot, encoding: 'utf-8' });
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !GIT_LOCATION.test(key)));
+  const out = execFileSync('git', ['log', '-F', `-S${line}`, '--format=%h', '--', 'ROADMAP.md'], { cwd: repoRoot, env, encoding: 'utf-8' });
   return out.trim() !== '';
 }
 

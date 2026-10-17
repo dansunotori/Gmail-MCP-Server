@@ -23,7 +23,8 @@
     "test": "vitest run --exclude '.worktrees/**'",
     "test:watch": "vitest",
     "lockfile:lint": "lockfile-lint --path package-lock.json --type npm --validate-https --validate-integrity --allowed-hosts npm cdn.sheetjs.com",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "roadmap:check": "node scripts/check-roadmap.mjs"
   },
   "keywords": [
     "gmail",
@@ -80,6 +81,7 @@
     "@types/turndown": "^5.0.6",
     "lockfile-lint": "^5.0.0",
     "mcp-evals": "^1.0.18",
+    "mdast-util-from-markdown": "^2.1.0",
     "tsx": "^4.23.15",
     "typescript": "^5.3.3",
     "vitest": "^4.0.18"

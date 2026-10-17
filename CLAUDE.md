@@ -7,7 +7,7 @@ Single branch: work lands on `main` directly, and CI must pass after every push.
 Mandatory security audit on every PR before presenting. See `.claude/skills/pr-review-sop/SKILL.md`.
 
 ## Roadmap
-`ROADMAP.md` lists work still to do; an item leaves it once implemented. Prompts written for this server elsewhere (`gmail-*.md`) are added with `node scripts/import-prompts.mjs <prompts-dir>`, which skips any prompt imported before.
+`ROADMAP.md` lists work still to do; an item leaves it when its work is done. `scripts/check-roadmap.mjs` refuses wording that reports finished work there, in CI (`npm run roadmap:check`) and as this project's PreToolUse hook on edits to the file (`.claude/settings.json`). Prompts written for this server elsewhere (`gmail-*.md`) are added with `node scripts/import-prompts.mjs <prompts-dir>`, which skips any prompt imported before.
 
 ## No Changelogs, History, Reports or Self-Praise in the Repository
 Every file and code comment describes the code as it is now. Git history records how it got there; chat and PR comments carry reports.

@@ -62,6 +62,26 @@ describe('importPrompts', () => {
     expect(roadmap).toBe('# Roadmap\n\n## 1. First\n\nSource: `gmail-a.md`\n\nA.\n\n## 2. Second\n\nSource: `gmail-b.md`\n\nB.\n');
   });
 
+  it('leaves headings inside fenced code as written, a longer fence quoting a shorter one included', () => {
+    write('gmail-fenced.md', '# Fenced\n\n````markdown\n```\n## Inside\n```\n## Still inside\n````\n\n## Outside\n');
+    const { roadmap } = importPrompts({ promptsDir: dir, roadmap: '# Roadmap\n', imported: never });
+    expect(roadmap).toContain('```\n## Inside\n```\n## Still inside\n````\n\n### Outside\n');
+  });
+
+  it('treats a backtick line whose info string holds a backtick as text, so the headings after it still move down', () => {
+    write('gmail-inline.md', '# Inline\n\n```npm test```\n\n## Contract\n');
+    const { roadmap } = importPrompts({ promptsDir: dir, roadmap: '# Roadmap\n', imported: never });
+    expect(roadmap).toContain('```npm test```\n\n### Contract\n');
+  });
+
+  it('moves only top-level headings down, leaving those quoted in a block quote or inside a list item', () => {
+    write('gmail-nested.md', '# Nested\r\n\r\n> ## Quoted\r\n\r\n- item\r\n\r\n  ~~~\r\n  ## In code\r\n  ~~~\r\n\r\n## Top\r\n');
+    const { roadmap } = importPrompts({ promptsDir: dir, roadmap: '# Roadmap\n', imported: never });
+    expect(roadmap).toContain('> ## Quoted\n');
+    expect(roadmap).toContain('  ## In code\n');
+    expect(roadmap).toContain('\n### Top\n');
+  });
+
   it('refuses a prompt with no title line rather than invent one', () => {
     write('gmail-untitled.md', 'No heading here.\n');
     expect(() => importPrompts({ promptsDir: dir, roadmap: ROADMAP, imported: never }))
@@ -71,7 +91,10 @@ describe('importPrompts', () => {
 
 describe('everInRoadmapHistory', () => {
   let repo: string;
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+  // The fixture repository is set up without any repository location the test run inherits
+  // (git sets GIT_DIR and others when it runs a hook).
+  const isolated = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, env: isolated, stdio: 'pipe' });
 
   beforeEach(() => {
     repo = fs.mkdtempSync(path.join(os.tmpdir(), 'import-prompts-repo-'));
@@ -93,5 +116,19 @@ describe('everInRoadmapHistory', () => {
     git('commit', '-q', '-am', 'remove');
     expect(everInRoadmapHistory(repo, 'Source: `gmail-old.md`')).toBe(true);
     expect(everInRoadmapHistory(repo, 'Source: `gmail-never.md`')).toBe(false);
+  });
+
+  it('reads the history of the repository it is given even when GIT_DIR names another', () => {
+    fs.writeFileSync(path.join(repo, 'ROADMAP.md'), '## 1. Item\n\nSource: `gmail-old.md`\n');
+    git('add', 'ROADMAP.md');
+    git('commit', '-q', '-m', 'add');
+    const saved = process.env.GIT_DIR;
+    process.env.GIT_DIR = path.join(os.tmpdir(), 'no-such-repository.git');
+    try {
+      expect(everInRoadmapHistory(repo, 'Source: `gmail-old.md`')).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = saved;
+    }
   });
 });
