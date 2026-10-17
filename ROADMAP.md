@@ -114,3 +114,14 @@ Done when:
 
 - Running it twice against the same prompts directory adds nothing the second time.
 - A new `gmail-*.md` prompt is appended verbatim under the next number, and prompts for other servers are ignored.
+
+## 8. Retire the experimental branch
+
+This is not a public repository, so the two-branch model (`main` stable, `experimental` staging for contributor PRs) adds a promotion step with no audience. Work lands on `main` directly.
+
+Done when:
+
+- `experimental` is merged into `main` and deleted locally and on `origin`.
+- `CLAUDE.md` and `.claude/skills/pr-review-sop/SKILL.md` describe a single-branch workflow: no `experimental`, no promotion or soak step, no "end on experimental" session rule; CI is checked after every push to `main`.
+- `.github/workflows/ci.yml` triggers only on `main` (pushes and PRs) and on manual runs.
+- No file in the repository still names `experimental` as a branch.
