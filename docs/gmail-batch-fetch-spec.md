@@ -89,8 +89,13 @@ not modify its environment".
    (`htmlToText` in `src/message-body.ts`) applies, in this order: remove style and script
    blocks; a `<br>` that is not immediately followed by a newline becomes a newline; closing
    `p`, `div`, `tr`, `li` and `h1`–`h6` tags become newlines; `<a href="…">text</a>`, with double
-   or single quotes, becomes `text [href]`; every other tag becomes a space; `&nbsp;` `&amp;`
-   `&lt;` `&gt;` `&#39;` `&apos;` `&quot;` are decoded; runs of spaces and tabs collapse to one
+   or single quotes, becomes `text [href]`; every other tag becomes a space; character
+   references are decoded in one pass, so `&amp;lt;` becomes `&lt;`: decimal (`&#8217;`) and
+   hexadecimal (`&#x2019;`) references, the five XML names (`&amp;` `&lt;` `&gt;` `&quot;`
+   `&apos;`), HTML's Latin-1 names (`&eacute;`, `&copy;`, …) and common punctuation names
+   (`&rsquo;`, `&ndash;`, `&hellip;`, `&euro;`, …), with a no-break space in any spelling becoming
+   a plain space, and a reference naming no character (unknown name, no closing `;`, code point
+   0, a surrogate or one beyond U+10FFFF) left as written; runs of spaces and tabs collapse to one
    space; three or more newlines collapse to two; the result is trimmed. A body-part fetch failure is recorded in `failures` with the prefix
    `body-part-fetch:` and the message is still written with whatever was recovered.
 8. Cross-check (when enabled): list `after:${epoch - 1} in:spam`, `after:${epoch - 1} in:trash`

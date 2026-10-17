@@ -6,6 +6,7 @@ import {
   extractMessageParts,
   headerValue,
   htmlToText,
+  NAMED_ENTITIES,
   isPlainTextStub,
   resolveMessageBody,
 } from './message-body.js';
@@ -107,6 +108,36 @@ describe('htmlToText', () => {
 
   it('drops remaining tags and decodes entities', () => {
     expect(htmlToText('<b>x</b>&nbsp;&amp;&lt;&gt;&#39;&apos;&quot;')).toBe('x &<>\'\'"');
+  });
+
+  it('decodes decimal and hexadecimal character references', () => {
+    expect(htmlToText('It&#8217;s &#x2019;quoted&#X2019; and &#x1F600;')).toBe('It’s ’quoted’ and 😀');
+    expect(htmlToText('a&#8199;&#8199;b')).toBe('a  b');
+  });
+
+  it('decodes common named entities beyond the basic five', () => {
+    expect(htmlToText('It&rsquo;s 9&ndash;5&hellip; &copy; 2026 &eacute;t&eacute; &euro;10 &mdash; &laquo;x&raquo;'))
+      .toBe('It’s 9–5… © 2026 été €10 — «x»');
+  });
+
+  it('maps the Latin-1 entity names to their own code points, from iexcl to yuml', () => {
+    expect([...NAMED_ENTITIES].filter(([, codePoint]) => codePoint >= 160 && codePoint <= 255)).toHaveLength(96);
+    expect(['iexcl', 'copy', 'shy', 'deg', 'iquest', 'Agrave', 'times', 'szlig', 'eacute', 'divide', 'yuml'].map(name => NAMED_ENTITIES.get(name)))
+      .toEqual([161, 169, 173, 176, 191, 192, 215, 223, 233, 247, 255]);
+  });
+
+  it('turns a no-break space in any spelling into a plain space', () => {
+    expect(htmlToText('a&nbsp;b&#160;c&#xA0;d')).toBe('a b c d');
+  });
+
+  it('leaves an invalid or unknown reference as written', () => {
+    for (const reference of ['&bogus;', '&#xZZ;', '&#1114112;', '&#xD800;', '&#0;', '&rsquo', '& amp;']) {
+      expect(htmlToText(`a ${reference} b`), reference).toBe(`a ${reference} b`);
+    }
+  });
+
+  it('decodes each reference once, so an escaped reference stays a reference', () => {
+    expect(htmlToText('&amp;lt;b&amp;gt; &amp;#8217; &amp;amp;')).toBe('&lt;b&gt; &#8217; &amp;');
   });
 
   it('collapses runs of spaces and blank lines and trims', () => {

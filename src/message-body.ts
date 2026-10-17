@@ -143,24 +143,60 @@ export function extractMessageParts(payload: MessagePart | null | undefined): Ex
   return out;
 }
 
-// Apply these regexes in exactly this order. Do not "fix" them: the plain-text output shape
-// is part of this server's stable contract for downloaded message files, and the
-// <br>-before-newline behaviour (no `s` flag) is pinned by a test rather than changed here.
+// HTML's Latin-1 entity names, for code points 160 to 255 in order.
+const LATIN1_ENTITY_NAMES = (
+  'nbsp iexcl cent pound curren yen brvbar sect uml copy ordf laquo not shy reg macr deg plusmn '
+  + 'sup2 sup3 acute micro para middot cedil sup1 ordm raquo frac14 frac12 frac34 iquest Agrave '
+  + 'Aacute Acirc Atilde Auml Aring AElig Ccedil Egrave Eacute Ecirc Euml Igrave Iacute Icirc Iuml '
+  + 'ETH Ntilde Ograve Oacute Ocirc Otilde Ouml times Oslash Ugrave Uacute Ucirc Uuml Yacute THORN '
+  + 'szlig agrave aacute acirc atilde auml aring aelig ccedil egrave eacute ecirc euml igrave iacute '
+  + 'icirc iuml eth ntilde ograve oacute ocirc otilde ouml divide oslash ugrave uacute ucirc uuml '
+  + 'yacute thorn yuml'
+).split(' ');
+
+export const NAMED_ENTITIES: ReadonlyMap<string, number> = new Map([
+  ['quot', 34], ['amp', 38], ['apos', 39], ['lt', 60], ['gt', 62],
+  ...LATIN1_ENTITY_NAMES.map((name, index): [string, number] => [name, 160 + index]),
+  ['OElig', 338], ['oelig', 339], ['Scaron', 352], ['scaron', 353], ['Yuml', 376], ['fnof', 402],
+  ['circ', 710], ['tilde', 732], ['ensp', 8194], ['emsp', 8195], ['thinsp', 8201], ['zwnj', 8204],
+  ['zwj', 8205], ['lrm', 8206], ['rlm', 8207], ['ndash', 8211], ['mdash', 8212], ['lsquo', 8216],
+  ['rsquo', 8217], ['sbquo', 8218], ['ldquo', 8220], ['rdquo', 8221], ['bdquo', 8222],
+  ['dagger', 8224], ['Dagger', 8225], ['bull', 8226], ['hellip', 8230], ['permil', 8240],
+  ['prime', 8242], ['Prime', 8243], ['lsaquo', 8249], ['rsaquo', 8250], ['euro', 8364],
+  ['trade', 8482], ['larr', 8592], ['uarr', 8593], ['rarr', 8594], ['darr', 8595], ['hearts', 9829],
+]);
+
+const NO_BREAK_SPACE = 160;
+
+// One pass over every reference, so text that escapes a reference (`&amp;lt;`) keeps it as
+// written (`&lt;`) instead of being decoded twice. A reference that names no character (an
+// unknown name, a missing semicolon, code point 0, a surrogate or one beyond U+10FFFF) stays
+// as written. A no-break space becomes a plain space, so the space collapsing below applies.
+function decodeCharacterReferences(text: string): string {
+  return text.replace(/&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([A-Za-z][A-Za-z0-9]*));/g, (reference, decimal, hex, name) => {
+    const codePoint = decimal !== undefined ? Number.parseInt(decimal, 10)
+      : hex !== undefined ? Number.parseInt(hex, 16)
+      : NAMED_ENTITIES.get(name);
+    if (codePoint === undefined || codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
+      return reference;
+    }
+    return codePoint === NO_BREAK_SPACE ? ' ' : String.fromCodePoint(codePoint);
+  });
+}
+
+// Apply these steps in exactly this order: the plain-text output shape is part of this
+// server's contract for downloaded message files, and the <br>-before-newline behaviour (no
+// `s` flag) is pinned by a test.
 export function htmlToText(html: string): string {
-  return html
+  const withoutTags = html
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<br\s*\/?>(?=.)/gi, '\n')
     .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
     .replace(/<a\s[^>]*href\s*=\s*"([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '$2 [$1]')
     .replace(/<a\s[^>]*href\s*=\s*'([^']*)'[^>]*>([\s\S]*?)<\/a>/gi, '$2 [$1]')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&quot;/g, '"')
+    .replace(/<[^>]+>/g, ' ');
+  return decodeCharacterReferences(withoutTags)
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
