@@ -12,7 +12,10 @@
     "gmail-download-attachment": "./dist/cli/gmail-download-attachment.js",
     "gmail-batch-fetch-window": "./dist/cli/gmail-batch-fetch-window.js",
     "gmail-create-draft": "./dist/cli/gmail-create-draft.js",
-    "gmail-get-attachment-text": "./dist/cli/gmail-get-attachment-text.js"
+    "gmail-get-attachment-text": "./dist/cli/gmail-get-attachment-text.js",
+    "gmail-get-thread": "./dist/cli/gmail-get-thread.js",
+    "gmail-get-inbox-with-threads": "./dist/cli/gmail-get-inbox-with-threads.js",
+    "gmail-download-email": "./dist/cli/gmail-download-email.js"
   },
   "scripts": {
     "build": "tsc",

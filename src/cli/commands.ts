@@ -1,7 +1,7 @@
 /**
  * The command-line tools. Each exposes one MCP tool with the same Gmail calls, defaults and
- * guards, by calling the same core function the server calls. Four only read; one,
- * gmail-create-draft, saves a draft. Nothing here sends, replies, forwards, labels, trashes
+ * guards, by calling the same core function the server calls. All but one only read Gmail;
+ * gmail-create-draft saves a draft. Nothing here sends, replies, forwards, labels, trashes
  * or modifies a message.
  */
 
@@ -13,8 +13,8 @@ import { batchFetchWindow } from '../batch-fetch-window.js';
 import { contentTypeFor, createDraft, readDraft, type ComposeArgs } from '../compose.js';
 import { validateEmail } from '../utl.js';
 import type { BodySource } from '../message-body.js';
-import { downloadAttachment, readEmail, searchEmails, type ReadEmailResult } from '../read-tools.js';
-import { BatchFetchWindowSchema, SendEmailSchema } from '../tools.js';
+import { downloadAttachment, downloadEmail, getInboxWithThreads, getThread, readEmail, searchEmails, type ReadEmailResult } from '../read-tools.js';
+import { BatchFetchWindowSchema, DownloadEmailSchema, GetInboxWithThreadsSchema, GetThreadSchema, SendEmailSchema } from '../tools.js';
 import {
     assertOutputAvoids,
     commonFlags,
@@ -569,6 +569,138 @@ export const createDraftCommand: Command = async (argv, deps) => {
     await emitJson(await readDraft(gmail, draftId), args.output, deps);
 };
 
+const GET_THREAD: CommandSpec = {
+    name: 'gmail-get-thread',
+    tool: 'get_thread',
+    synopsis: 'gmail-get-thread <thread_id> [--format full|metadata|minimal] [-o <file>]',
+    description: [
+        "Prints every message of a thread, oldest first, like the get_thread MCP tool, as",
+        '{threadId, messageCount, messages: [{messageId, threadId, from, to, cc, bcc, subject, date,',
+        'body, bodySource, labelIds, attachments: [{filename, mimeType, size}]}]}. Each body follows',
+        "gmail-get-message: the plain part, the HTML part converted to text when the plain part is",
+        'only a stub, or the HTML as it is when there is no plain part.',
+    ].join('\n'),
+    arguments: [['<thread_id>', 'The Gmail thread ID, as gmail-get-message prints it.']],
+    example: 'gmail-get-thread 19ff1b5e84ead3c1',
+    flags: {
+        format: {
+            type: 'string',
+            placeholder: 'full|metadata|minimal',
+            description: 'The Gmail format each message is fetched in (default full); minimal carries no body.',
+            example: 'gmail-get-thread 19ff1b5e84ead3c1 --format metadata',
+        },
+        ...commonFlags('gmail-get-thread', 'gmail-get-thread 19ff1b5e84ead3c1 --output thread.json'),
+    },
+};
+
+export const getThreadCommand: Command = async (argv, deps) => {
+    const args = await start(GET_THREAD, argv, deps);
+    if (!args) return;
+    expectPositionals(args.positionals, ['<thread_id>']);
+    // The tool's own schema supplies the default and rejects an unknown format.
+    const input = GetThreadSchema.parse({
+        threadId: args.positionals[0],
+        ...(args.values.format !== undefined ? { format: args.values.format } : {}),
+    });
+    await emitJson(await getThread(deps.gmail('get_thread'), input), args.output, deps);
+};
+
+const GET_INBOX_WITH_THREADS: CommandSpec = {
+    name: 'gmail-get-inbox-with-threads',
+    tool: 'get_inbox_with_threads',
+    synopsis: "gmail-get-inbox-with-threads [--query '<gmail query>'] [--max-results N] [--no-expand-threads] [-o <file>]",
+    description: [
+        'Prints the threads matching a query like the get_inbox_with_threads MCP tool, as',
+        '{resultCount, threads}: each thread with its messages as gmail-get-thread prints them, or,',
+        'with --no-expand-threads, each as {threadId, snippet, historyId, messageCount, latestMessage:',
+        '{from, subject, date}}.',
+    ].join('\n'),
+    arguments: [],
+    example: 'gmail-get-inbox-with-threads',
+    flags: {
+        query: {
+            type: 'string',
+            placeholder: "'<gmail query>'",
+            description: "Gmail search syntax (default 'in:inbox'). Quote it.",
+            example: "gmail-get-inbox-with-threads --query 'is:unread from:alice@example.com'",
+        },
+        'max-results': {
+            type: 'string',
+            placeholder: 'N',
+            description: 'Return at most N threads (default 50).',
+            example: 'gmail-get-inbox-with-threads --max-results 10',
+        },
+        'no-expand-threads': {
+            type: 'boolean',
+            description: 'Summarise each thread by its latest message instead of returning every message (expandThreads false).',
+            example: 'gmail-get-inbox-with-threads --no-expand-threads',
+        },
+        ...commonFlags('gmail-get-inbox-with-threads', 'gmail-get-inbox-with-threads --output inbox.json'),
+    },
+};
+
+export const getInboxWithThreadsCommand: Command = async (argv, deps) => {
+    const args = await start(GET_INBOX_WITH_THREADS, argv, deps);
+    if (!args) return;
+    expectPositionals(args.positionals, []);
+    const maxResults = positiveInteger('max-results', args.values['max-results'] as string | undefined);
+    const input = GetInboxWithThreadsSchema.parse({
+        ...(args.values.query !== undefined ? { query: args.values.query } : {}),
+        ...(maxResults !== undefined ? { maxResults } : {}),
+        ...(args.values['no-expand-threads'] ? { expandThreads: false } : {}),
+    });
+    await emitJson(await getInboxWithThreads(deps.gmail('get_inbox_with_threads'), input), args.output, deps);
+};
+
+const DOWNLOAD_EMAIL: CommandSpec = {
+    name: 'gmail-download-email',
+    tool: 'download_email',
+    synopsis: 'gmail-download-email <message_id> --save-path <dir> [--format json|eml|txt|html] [-o <file>]',
+    description: [
+        'Saves one message as <dir>/<message_id>.<format> like the download_email MCP tool and prints',
+        '{status, path, size, messageId, subject, from, date, attachments}. txt and json carry the',
+        'plain part, or the HTML part converted to text when there is no plain part or it is only a',
+        'stub (json also keeps both parts and bodySource); eml is the raw RFC 822 message; html is',
+        'the HTML part, and a message without one is an error.',
+    ].join('\n'),
+    arguments: [['<message_id>', 'The Gmail message ID.']],
+    example: 'gmail-download-email 18f2a9c4e1b7d3a0 --save-path /tmp/mail',
+    flags: {
+        'save-path': {
+            type: 'string',
+            placeholder: '<dir>',
+            description: 'Directory to save into (required); created if missing.',
+            example: 'gmail-download-email 18f2a9c4e1b7d3a0 --save-path ~/mail',
+        },
+        format: {
+            type: 'string',
+            placeholder: 'json|eml|txt|html',
+            description: 'File format (default json).',
+            example: 'gmail-download-email 18f2a9c4e1b7d3a0 --save-path /tmp/mail --format eml',
+        },
+        ...commonFlags('gmail-download-email', 'gmail-download-email 18f2a9c4e1b7d3a0 --save-path /tmp/mail --output saved.json'),
+    },
+};
+
+export const downloadEmailCommand: Command = async (argv, deps) => {
+    const args = await start(DOWNLOAD_EMAIL, argv, deps);
+    if (!args) return;
+    expectPositionals(args.positionals, ['<message_id>']);
+    const savePath = args.values['save-path'] as string | undefined;
+    if (!savePath) {
+        throw new UsageError('--save-path <dir> is required');
+    }
+    const input = DownloadEmailSchema.parse({
+        messageId: args.positionals[0],
+        savePath,
+        ...(args.values.format !== undefined ? { format: args.values.format } : {}),
+    });
+    // The saved file's path is known before any Gmail call, so --output is checked against it now.
+    const saved: ReservedPath[] = [{ path: path.resolve(input.savePath, `${input.messageId}.${input.format}`), what: 'the downloaded email' }];
+    assertOutputAvoids(args.output, saved);
+    await emitJson(await downloadEmail(deps.gmail('download_email'), input), args.output, deps);
+};
+
 export const COMMANDS: CliCommand[] = [
     command(SEARCH, searchCommand),
     command(GET_MESSAGE, getMessageCommand),
@@ -576,4 +708,7 @@ export const COMMANDS: CliCommand[] = [
     command(GET_ATTACHMENT_TEXT, getAttachmentTextCommand),
     command(BATCH_FETCH_WINDOW, batchFetchWindowCommand),
     command(CREATE_DRAFT, createDraftCommand),
+    command(GET_THREAD, getThreadCommand),
+    command(GET_INBOX_WITH_THREADS, getInboxWithThreadsCommand),
+    command(DOWNLOAD_EMAIL, downloadEmailCommand),
 ];

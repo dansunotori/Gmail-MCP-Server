@@ -12,8 +12,11 @@ import {
   batchFetchWindowCommand,
   createDraftCommand,
   downloadAttachmentCommand,
+  downloadEmailCommand,
   getAttachmentTextCommand,
+  getInboxWithThreadsCommand,
   getMessageCommand,
+  getThreadCommand,
   searchCommand,
   type CliDeps,
 } from './commands.js';
@@ -888,5 +891,85 @@ describe('gmail-batch-fetch-window', () => {
     await expect(batchFetchWindowCommand(['--watermark', WATERMARK, '--output-dir', dir], deps)).rejects.toThrow(/refusing to delete/);
     expect(out).toEqual([]);
     expect(fs.readFileSync(path.join(dir, 'messages', 'keep.txt'), 'utf8')).toBe('mine');
+  });
+});
+
+// A thread of a stubbed message (the plain part only points at the HTML part) and a plain one.
+function threadGmail() {
+  const stubbed = { id: 's1', threadId: 'th1', labelIds: ['INBOX'], payload: { mimeType: 'multipart/alternative', headers: [{ name: 'Subject', value: 'Notice' }], parts: [
+    { mimeType: 'text/plain', body: { data: b64('This is an HTML message; reading this requires an HTML-capable mail reader.') } },
+    { mimeType: 'text/html', body: { data: b64('<p>The real notice</p>') } },
+  ] } };
+  const get = vi.fn(async (params: { id: string; format?: string }) => ({ data: { id: params.id, messages: [stubbed, message] } }));
+  const list = vi.fn(async (_params: { q?: string; maxResults?: number }) => ({ data: { threads: [{ id: 'th1', snippet: 's', historyId: 'h' }] } }));
+  return { gmail: { users: { threads: { get, list } } } as unknown as gmail_v1.Gmail, get, list };
+}
+
+describe('gmail-get-thread', () => {
+  it('prints get_thread\'s result, the stubbed message with its HTML part as text and bodySource', async () => {
+    const fake = threadGmail();
+    const { deps, json } = harness(fake.gmail);
+    await getThreadCommand(['th1'], deps);
+    expect(deps.gmail).toHaveBeenCalledWith('get_thread');
+    expect(fake.get).toHaveBeenCalledWith({ userId: 'me', id: 'th1', format: 'full' });
+    const result = json();
+    expect(result).toMatchObject({ threadId: 'th1', messageCount: 2 });
+    expect(result.messages[0]).toMatchObject({ messageId: 's1', body: 'The real notice', bodySource: 'html-over-stub' });
+    expect(result.messages[1]).toMatchObject({ messageId: 'm1', body: 'Plain body', bodySource: 'text' });
+  });
+
+  it('passes --format through and refuses a missing thread id or an unknown format', async () => {
+    const fake = threadGmail();
+    await getThreadCommand(['th1', '--format', 'minimal'], harness(fake.gmail).deps);
+    expect(fake.get).toHaveBeenCalledWith({ userId: 'me', id: 'th1', format: 'minimal' });
+    for (const argv of [[], ['th1', '--format', 'raw'], ['th1', 'extra']]) {
+      const failed = await getThreadCommand(argv, harness(threadGmail().gmail).deps).catch(error => error);
+      expect(mapErrorToExitCode(failed), argv.join(' ')).toBe(2);
+    }
+  });
+});
+
+describe('gmail-get-inbox-with-threads', () => {
+  it('prints the expanded threads by default, with the tool\'s query and limit defaults', async () => {
+    const fake = threadGmail();
+    const { deps, json } = harness(fake.gmail);
+    await getInboxWithThreadsCommand([], deps);
+    expect(deps.gmail).toHaveBeenCalledWith('get_inbox_with_threads');
+    expect(fake.list).toHaveBeenCalledWith({ userId: 'me', q: 'in:inbox', maxResults: 50 });
+    const result = json();
+    expect(result.resultCount).toBe(1);
+    expect(result.threads[0].messages[0]).toMatchObject({ body: 'The real notice', bodySource: 'html-over-stub' });
+  });
+
+  it('passes --query and --max-results, and gives summaries with --no-expand-threads', async () => {
+    const fake = threadGmail();
+    const { deps, json } = harness(fake.gmail);
+    await getInboxWithThreadsCommand(['--query', 'is:unread', '--max-results', '5', '--no-expand-threads'], deps);
+    expect(fake.list).toHaveBeenCalledWith({ userId: 'me', q: 'is:unread', maxResults: 5 });
+    expect(json().threads[0]).toMatchObject({ threadId: 'th1', messageCount: 2 });
+    expect(json().threads[0]).not.toHaveProperty('messages');
+    const failed = await getInboxWithThreadsCommand(['--max-results', '0'], harness(threadGmail().gmail).deps).catch(error => error);
+    expect(mapErrorToExitCode(failed)).toBe(2);
+  });
+});
+
+describe('gmail-download-email', () => {
+  it('saves the message as <id>.<format> and prints the tool\'s result', async () => {
+    const { deps, json } = harness();
+    await downloadEmailCommand(['m1', '--save-path', dir, '--format', 'txt'], deps);
+    expect(deps.gmail).toHaveBeenCalledWith('download_email');
+    const saved = path.join(dir, 'm1.txt');
+    expect(json()).toMatchObject({ status: 'saved', path: saved, messageId: 'm1', subject: 'Invoice' });
+    expect(fs.readFileSync(saved, 'utf8')).toContain('Plain body');
+  });
+
+  it('defaults to json, and refuses a missing --save-path, an unknown format or an --output over the saved file', async () => {
+    const { deps } = harness();
+    await downloadEmailCommand(['m1', '--save-path', dir], deps);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'm1.json'), 'utf8')).body.plain).toBe('Plain body');
+    for (const argv of [['m1'], ['m1', '--save-path', dir, '--format', 'pdf'], ['m1', '--save-path', dir, '--output', path.join(dir, 'm1.json')]]) {
+      const failed = await downloadEmailCommand(argv, harness().deps).catch(error => error);
+      expect(mapErrorToExitCode(failed), argv.join(' ')).toBe(2);
+    }
   });
 });

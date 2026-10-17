@@ -1,5 +1,6 @@
 /**
- * The read_email, search_emails and download_attachment tools, shared by the MCP server and
+ * The read_email, search_emails, download_attachment, get_thread, get_inbox_with_threads and
+ * download_email tools, shared by the MCP server and
  * the command-line tools. Each tool is a function returning structured data plus a formatter
  * that renders the exact text the MCP server returns, so both surfaces make the same Gmail
  * calls and cannot drift apart.
@@ -8,7 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { gmail_v1 } from 'googleapis';
-import { EmailAttachment } from './email-export.js';
+import { EmailAttachment, emailToHtml, emailToTxt, gmailMessageToJson } from './email-export.js';
 import { attachmentParts, findAttachmentPart } from './attachment-part.js';
 import { resolveCalendarPart } from './calendar-part.js';
 import { optionalHeader, selectBody, type BodySource, type MessagePart } from './message-body.js';
@@ -320,4 +321,129 @@ export async function downloadAttachment(
 
 export function formatDownloadAttachmentText(result: DownloadAttachmentResult): string {
     return `Attachment downloaded successfully:\nFile: ${result.filename}\nSize: ${result.size} bytes\nSaved to: ${result.path}`;
+}
+
+// One message of a thread as get_thread and get_inbox_with_threads return it. A
+// minimal-format message carries no body.
+function threadMessage(message: gmail_v1.Schema$Message, withBody: boolean) {
+    const headers = message.payload?.headers || [];
+    const header = (name: string) => headers.find(h => h.name?.toLowerCase() === name)?.value || '';
+    let body = '';
+    let bodySource: BodySource = 'text';
+    if (withBody) {
+        const { text, html } = extractEmailContent(message.payload as GmailMessagePart || {});
+        ({ body, bodySource } = selectBody(text, html, 'keep-html'));
+    }
+    const attachments: EmailAttachment[] = [];
+    const processAttachmentParts = (part: GmailMessagePart) => {
+        if (part.body && part.body.attachmentId) {
+            attachments.push({
+                id: part.body.attachmentId,
+                filename: part.filename || `attachment-${part.body.attachmentId}`,
+                mimeType: part.mimeType || 'application/octet-stream',
+                size: part.body.size || 0,
+            });
+        }
+        part.parts?.forEach(processAttachmentParts);
+    };
+    if (message.payload) {
+        processAttachmentParts(message.payload as GmailMessagePart);
+    }
+    return {
+        messageId: message.id || '',
+        threadId: message.threadId || '',
+        from: header('from'),
+        to: header('to'),
+        cc: header('cc'),
+        bcc: header('bcc'),
+        subject: header('subject'),
+        date: header('date'),
+        body,
+        bodySource,
+        labelIds: message.labelIds || [],
+        attachments: attachments.map(a => ({ filename: a.filename, mimeType: a.mimeType, size: a.size })),
+    };
+}
+
+// get_thread: every message of a thread, oldest first, as the Gmail API returns them.
+export async function getThread(gmail: gmail_v1.Gmail, args: { threadId: string; format?: 'full' | 'metadata' | 'minimal' }) {
+    const response = await gmail.users.threads.get({ userId: 'me', id: args.threadId, format: args.format || 'full' });
+    const messages = (response.data.messages || []).map(message => threadMessage(message, args.format !== 'minimal'));
+    return { threadId: args.threadId, messageCount: messages.length, messages };
+}
+
+// get_inbox_with_threads: the threads matching the query, each expanded to its messages, or,
+// with expandThreads false, each summarised by its latest message's headers.
+export async function getInboxWithThreads(gmail: gmail_v1.Gmail, args: { query?: string; maxResults?: number; expandThreads?: boolean }) {
+    const listed = await gmail.users.threads.list({ userId: 'me', q: args.query || 'in:inbox', maxResults: args.maxResults || 50 });
+    const threads = listed.data.threads || [];
+    if (args.expandThreads === false) {
+        const summaries = await Promise.all(threads.map(async thread => {
+            const detail = await gmail.users.threads.get({ userId: 'me', id: thread.id!, format: 'metadata', metadataHeaders: ['Subject', 'From', 'Date'] });
+            const messages = detail.data.messages || [];
+            const latestHeaders = messages[messages.length - 1]?.payload?.headers || [];
+            return {
+                threadId: thread.id || '',
+                snippet: thread.snippet || '',
+                historyId: thread.historyId || '',
+                messageCount: messages.length,
+                latestMessage: {
+                    from: latestHeaders.find(h => h.name === 'From')?.value || '',
+                    subject: latestHeaders.find(h => h.name === 'Subject')?.value || '',
+                    date: latestHeaders.find(h => h.name === 'Date')?.value || '',
+                },
+            };
+        }));
+        return { resultCount: summaries.length, threads: summaries };
+    }
+    const expanded = await Promise.all(threads.map(async thread => {
+        const detail = await gmail.users.threads.get({ userId: 'me', id: thread.id!, format: 'full' });
+        const messages = (detail.data.messages || []).map(message => threadMessage(message, true));
+        return { threadId: thread.id || '', messageCount: messages.length, messages };
+    }));
+    return { resultCount: expanded.length, threads: expanded };
+}
+
+export interface DownloadEmailResult {
+    status: 'saved';
+    path: string;
+    size: number;
+    messageId: string;
+    subject: string;
+    from: string;
+    date: string;
+    attachments: EmailAttachment[];
+}
+
+// download_email: the message saved as <savePath>/<messageId>.<format>. beforeWrite sees the
+// final path before the file is written and may throw to stop the write.
+export async function downloadEmail(
+    gmail: gmail_v1.Gmail,
+    args: { messageId: string; savePath: string; format: 'json' | 'eml' | 'txt' | 'html' },
+    options: { beforeWrite?: (fullPath: string) => void } = {},
+): Promise<DownloadEmailResult> {
+    const { messageId, savePath, format } = args;
+    // Always fetch the full message for its metadata and attachment list.
+    const fullResponse = await gmail.users.messages.get({ userId: 'me', id: messageId, format: 'full' });
+    const { subject, from, date } = extractHeaders(fullResponse.data.payload);
+    const attachments = extractAttachments(fullResponse.data.payload as GmailMessagePart);
+    let content: string;
+    if (format === 'eml') {
+        const rawResponse = await gmail.users.messages.get({ userId: 'me', id: messageId, format: 'raw' });
+        content = Buffer.from(rawResponse.data.raw || '', 'base64url').toString('utf-8');
+    } else {
+        const emailContent = extractEmailContent(fullResponse.data.payload as GmailMessagePart || {});
+        content = format === 'json'
+            ? JSON.stringify(gmailMessageToJson(fullResponse.data, emailContent, attachments), null, 2)
+            : format === 'txt'
+                ? emailToTxt(fullResponse.data, emailContent, attachments)
+                : emailToHtml(emailContent);
+    }
+    if (!fs.existsSync(savePath)) {
+        fs.mkdirSync(savePath, { recursive: true });
+    }
+    const fullPath = path.join(savePath, `${messageId}.${format}`);
+    options.beforeWrite?.(fullPath);
+    fs.writeFileSync(fullPath, content, 'utf-8');
+    return { status: 'saved', path: fullPath, size: fs.statSync(fullPath).size, messageId, subject, from, date, attachments };
 }

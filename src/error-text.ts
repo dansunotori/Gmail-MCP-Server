@@ -57,6 +57,9 @@ const CLI_TOOLS: Record<string, string> = {
   'gmail-batch-fetch-window': 'batch_fetch_window',
   'gmail-create-draft': 'draft_email',
   'gmail-get-attachment-text': 'get_attachment_text',
+  'gmail-get-thread': 'get_thread',
+  'gmail-get-inbox-with-threads': 'get_inbox_with_threads',
+  'gmail-download-email': 'download_email',
 };
 
 // Why a tool the saved credentials do not cover is refused, by the server and the CLIs alike.

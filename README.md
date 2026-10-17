@@ -335,7 +335,7 @@ The `auth` subcommand runs before the server starts and is unaffected - invoke i
 
 ## Command-line tools
 
-Six commands expose six MCP tools with the same semantics and nothing more, for scripts that need Gmail without an MCP session. Each calls the same code the server calls. Five only read; `gmail-create-draft` saves a draft and never sends it.
+Nine commands expose nine MCP tools with the same semantics and nothing more, for scripts that need Gmail without an MCP session. Each calls the same code the server calls. All but one only read Gmail; `gmail-create-draft` saves a draft and never sends it.
 
 | Command | MCP tool | Prints |
 |-|-|-|
@@ -345,13 +345,16 @@ Six commands expose six MCP tools with the same semantics and nothing more, for 
 | `gmail-get-attachment-text <message_id> <attachment_id>` | `get_attachment_text` | `{name, format, text, truncated, sheets}` (see [Get attachment text](#get-attachment-text-get_attachment_text)); exits 6 when the file is protected, encrypted, corrupt or unsupported |
 | `gmail-batch-fetch-window --watermark <ISO 8601 with zone> --output-dir <absolute dir> [--no-cross-check] [--max-messages N]` | `batch_fetch_window` | the tool's result, unchanged (see the [result contract](#batch_fetch_window-result-contract)) |
 | `gmail-create-draft --to <addresses> --subject <text> (--body <text> \| --body-file <file>) [options]` | `draft_email` | `{draft_id, message_id, thread_id, to, cc, bcc, subject, attachments: [{name, size}]}`, read back from the saved draft |
+| `gmail-get-thread <thread_id> [--format full\|metadata\|minimal]` | `get_thread` | `{threadId, messageCount, messages}`, each message with its `body` and `bodySource` |
+| `gmail-get-inbox-with-threads [--query '<gmail query>'] [--max-results N] [--no-expand-threads]` | `get_inbox_with_threads` | `{resultCount, threads}`, each thread expanded to its messages or, with `--no-expand-threads`, summarised by its latest one |
+| `gmail-download-email <message_id> --save-path <dir> [--format json\|eml\|txt\|html]` | `download_email` | `{status, path, size, messageId, subject, from, date, attachments}`, the message saved as `<dir>/<message_id>.<format>` |
 
 `gmail-create-draft` takes one option per `draft_email` input: `--to`, `--cc` and `--bcc` (comma-separated addresses), `--subject`, `--body` or `--body-file`, `--html-body` or `--html-body-file`, `--mime-type text/plain|text/html|multipart/alternative` (without it the type follows the bodies given: an HTML body alone is `text/html`, both bodies `multipart/alternative`), `--attachment <file>` (repeatable), `--inline-image cid=<cid>,path=<file>` (repeatable, needs an HTML body), `--from <send-as address>`, `--thread-id` and `--in-reply-to`. `--input <file>` reads the tool's JSON request, and options override its fields. Body files are read as UTF-8, so no body has to pass through a shell argument. An unknown option, a missing recipient, subject or body, an invalid recipient or `--from` address, `--mime-type text/plain` beside an HTML body, or an attachment, image or body file that cannot be read exits 2 before anything reaches Gmail, and `--output` never replaces one of those input files.
 
 Every command:
 
 - prints JSON on stdout and diagnostics on stderr; on failure it exits non-zero with nothing on stdout (exit codes: 1 failure, 2 usage error, 3 not signed in or missing scope, 4 Gmail rate limit, 5 not found)
-- writes the JSON to a file instead with `--output`/`-o <file>`, refusing a file the command itself writes or relies on (credentials, the downloaded attachment, the batch outputs, a draft's input files), however the path is spelt: symlinks and `..` are resolved in the order the operating system resolves them, on macOS and Windows capitalisation is ignored, and a hard link to one of those files is refused too
+- writes the JSON to a file instead with `--output`/`-o <file>`, refusing a file the command itself writes or relies on (credentials, the downloaded attachment or email, the batch outputs, a draft's input files), however the path is spelt: symlinks and `..` are resolved in the order the operating system resolves them, on macOS and Windows capitalisation is ignored, and a hard link to one of those files is refused too
 - signs in with `--auth` (it re-requests the scopes already saved, or the default scopes on first sign-in) and shows help, with one example per flag, with `--help`/`-h`
 - uses the server's credentials (`~/.gmail-mcp/`, or `GMAIL_OAUTH_PATH`/`GMAIL_CREDENTIALS_PATH`) and refuses a tool the saved scopes do not grant, as the server does
 

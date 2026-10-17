@@ -1,8 +1,9 @@
 # Gmail CLI — Specification
 
-Six command-line tools, each exposing an existing MCP tool with the same semantics and nothing
-more, installed as bins of the package. Scripts (and Claude sessions) can then search, read,
-download, read attachment text, fetch a window of Gmail and save a draft without an MCP session.
+Nine command-line tools, each exposing an existing MCP tool with the same semantics and nothing
+more, installed as bins of the package. Scripts (and Claude sessions) can then search, read
+messages and threads, download attachments and messages, read attachment text, fetch a window of
+Gmail and save a draft without an MCP session.
 This document is self-contained and the output contracts below are the requirement.
 
 ## Non-negotiables
@@ -11,7 +12,7 @@ This document is self-contained and the output contracts below are the requireme
   the process exits non-zero. Scripts rely on `JSON.parse(stdout)`.
 - `--output`/`-o <file>` writes the JSON to the file instead of stdout. A file the command writes
   or relies on (the saved credentials, the OAuth keys, including `gcp-oauth.keys.json` in the
-  current directory, the downloaded attachment, or the batch
+  current directory, the downloaded attachment or email, or the batch
   output directory, manifest, window metadata and `messages/`) is refused as a usage error before
   anything is fetched or written, however the path is spelt, including through a symlink whose
   target does not exist yet. The path is resolved as the operating system resolves it, left to
@@ -42,6 +43,9 @@ This document is self-contained and the output contracts below are the requireme
 | `gmail-get-attachment-text` | `get_attachment_text` |
 | `gmail-batch-fetch-window` | `batch_fetch_window` |
 | `gmail-create-draft` | `draft_email` |
+| `gmail-get-thread` | `get_thread` |
+| `gmail-get-inbox-with-threads` | `get_inbox_with_threads` |
+| `gmail-download-email` | `download_email` |
 
 Names are prefixed `gmail-` so that they cannot clash with generic mail CLIs a user may already
 have installed globally.
@@ -146,6 +150,36 @@ gmail-create-draft --to <addresses> --subject <text> (--body <text> | --body-fil
 Exposes `draft_email` through the same compose code, with one option per tool input, and prints
 the draft read back from Gmail. It never sends. `gmail-create-draft --help` lists every option.
 
+### gmail-get-thread
+
+```
+gmail-get-thread <thread_id> [--format full|metadata|minimal] [-o <file>]
+```
+
+Exposes `get_thread` (`threads.get`, format `full` by default) and prints its result:
+`{threadId, messageCount, messages}`, each message with `body` and `bodySource` chosen as
+`gmail-get-message` chooses them, and no body for `minimal`.
+
+### gmail-get-inbox-with-threads
+
+```
+gmail-get-inbox-with-threads [--query '<gmail query>'] [--max-results N] [--no-expand-threads] [-o <file>]
+```
+
+Exposes `get_inbox_with_threads` with its defaults (`in:inbox`, 50 threads, expanded) and prints
+`{resultCount, threads}`; `--no-expand-threads` gives each thread as a summary of its latest
+message instead of its messages.
+
+### gmail-download-email
+
+```
+gmail-download-email <message_id> --save-path <dir> [--format json|eml|txt|html] [-o <file>]
+```
+
+Exposes `download_email`: saves `<dir>/<message_id>.<format>` (json by default) and prints the
+tool's result, `{status, path, size, messageId, subject, from, date, attachments}`. An `--output`
+naming the file it saves is refused before any Gmail call.
+
 ### gmail-batch-fetch-window
 
 ```
@@ -167,12 +201,13 @@ CLIs share:
 
 - `src/auth.ts`: `loadCredentials()` and the interactive `authenticate()` flow, with progress lines
   through an injected logger (stdout for the server, stderr for the CLIs).
-- `src/read-tools.ts`: `searchEmails`, `readEmail` and `downloadAttachment`, each returning
+- `src/read-tools.ts`: `searchEmails`, `readEmail`, `downloadAttachment`, `getThread`,
+  `getInboxWithThreads` and `downloadEmail`, each returning
   structured data, plus the formatters that render the exact text the server returns.
 - `src/batch-fetch-window.ts`: `batchFetchWindow`.
 - `src/attachment-text/`: `getAttachmentText` and the extraction worker.
 - `src/compose.ts`: the draft and send logic `draft_email` uses.
-- `src/cli/common.ts` (parsing, help, output, exit codes) and `src/cli/commands.ts` (the six
+- `src/cli/common.ts` (parsing, help, output, exit codes) and `src/cli/commands.ts` (the nine
   commands); `src/cli/gmail-*.ts` are the bin entry points.
 
 ## Errors and exit codes

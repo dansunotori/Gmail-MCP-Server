@@ -11,8 +11,6 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { gmail_v1 } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
-import fs from 'fs';
-import path from 'path';
 import { needsRawBuilder } from "./utl.js";
 import { createDraft, encodeMessage, messageRequest, resolveThreadingHeaders, type ComposeArgs } from "./compose.js";
 import { createLabel, updateLabel, deleteLabel, listLabels, findLabelByName, getOrCreateLabel, GmailLabel } from "./label-manager.js";
@@ -22,13 +20,11 @@ import { hasScope } from "./scopes.js";
 import { toolDefinitions, toMcpTools, getToolByName, SendEmailSchema, ReadEmailSchema, SearchEmailsSchema, ModifyEmailSchema, DeleteEmailSchema, BatchModifyEmailsSchema, ReportPhishingSchema, BatchReportPhishingSchema, BatchDeleteEmailsSchema, CreateLabelSchema, UpdateLabelSchema, DeleteLabelSchema, GetOrCreateLabelSchema, CreateFilterSchema, GetFilterSchema, DeleteFilterSchema, CreateFilterFromTemplateSchema, DownloadAttachmentSchema, ReplyAllSchema, GetThreadSchema, ListInboxThreadsSchema, GetInboxWithThreadsSchema, DownloadEmailSchema, ModifyThreadSchema, SendDraftSchema, DeleteDraftSchema, UpdateDraftSchema } from "./tools.js";
 import { BatchGetGmailIndexMetadataSchema, GetAttachmentTextSchema, GetGmailProfileSchema, ListGmailAddedHistorySchema, ListGmailMessageIdsSchema } from "./tools.js";
 import { getAttachmentText } from "./attachment-text/attachment-text.js";
-import { gmailMessageToJson, emailToTxt, emailToHtml, EmailAttachment } from "./email-export.js";
 import { getGmailProfile, listGmailAddedHistory, listGmailMessageIds, structuredResult } from "./gmail-sync.js";
 import { batchGetGmailIndexMetadata } from "./gmail-batch.js";
 import { handleBatchFetchWindow } from "./batch-fetch-window.js";
 import { failureDetail, scopeRefusal, toolErrorResult } from "./error-text.js";
-import { selectBody, type BodySource } from "./message-body.js";
-import { GmailMessagePart, extractEmailContent, extractHeaders, extractAttachments, searchEmails, formatSearchEmailsText, readEmail, formatReadEmailText, downloadAttachment, formatDownloadAttachmentText } from "./read-tools.js";
+import { searchEmails, formatSearchEmailsText, readEmail, formatReadEmailText, downloadAttachment, formatDownloadAttachmentText, downloadEmail, getInboxWithThreads, getThread } from "./read-tools.js";
 
 export interface GmailServerDeps {
     gmail: gmail_v1.Gmail;
@@ -223,71 +219,11 @@ export function createGmailServer(deps: GmailServerDeps): Server {
 
                 case "download_email": {
                     const validatedArgs = DownloadEmailSchema.parse(args);
-                    const { messageId, savePath, format } = validatedArgs;
-
-                    // Ensure save directory exists
-                    if (!fs.existsSync(savePath)) {
-                        fs.mkdirSync(savePath, { recursive: true });
-                    }
-
-                    // Always fetch full message for metadata (needed for attachments list)
-                    const fullResponse = await gmail.users.messages.get({
-                        userId: "me",
-                        id: messageId,
-                        format: "full",
-                    });
-
-                    const { subject, from, date } = extractHeaders(fullResponse.data.payload);
-                    const attachments = extractAttachments(fullResponse.data.payload as GmailMessagePart);
-
-                    let content: string;
-
-                    if (format === "eml") {
-                        // For EML format, fetch raw RFC822 message
-                        const rawResponse = await gmail.users.messages.get({
-                            userId: "me",
-                            id: messageId,
-                            format: "raw",
-                        });
-                        content = Buffer.from(rawResponse.data.raw || "", "base64url").toString("utf-8");
-                    } else {
-                        // Extract email content for json/txt/html
-                        const emailContent = extractEmailContent(fullResponse.data.payload as GmailMessagePart || {});
-
-                        if (format === "json") {
-                            const jsonData = gmailMessageToJson(fullResponse.data, emailContent, attachments);
-                            content = JSON.stringify(jsonData, null, 2);
-                        } else if (format === "txt") {
-                            content = emailToTxt(fullResponse.data, emailContent, attachments);
-                        } else {
-                            // html - just return the raw HTML content
-                            content = emailToHtml(emailContent);
-                        }
-                    }
-
-                    // Write file
-                    const filename = `${messageId}.${format}`;
-                    const fullPath = path.join(savePath, filename);
-                    fs.writeFileSync(fullPath, content, "utf-8");
-                    const stats = fs.statSync(fullPath);
-
-                    // Return metadata with attachments
-                    const result = {
-                        status: "saved",
-                        path: fullPath,
-                        size: stats.size,
-                        messageId,
-                        subject,
-                        from,
-                        date,
-                        attachments,
-                    };
-
                     return {
                         content: [
                             {
                                 type: "text",
-                                text: JSON.stringify(result, null, 2),
+                                text: JSON.stringify(await downloadEmail(gmail, validatedArgs), null, 2),
                             },
                         ],
                     };
@@ -829,84 +765,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
 
                 case "get_thread": {
                     const validatedArgs = GetThreadSchema.parse(args);
-                    const threadResponse = await gmail.users.threads.get({
-                        userId: 'me',
-                        id: validatedArgs.threadId,
-                        format: validatedArgs.format || 'full',
-                    });
-
-                    const threadMessages = threadResponse.data.messages || [];
-
-                    // Process each message in the thread (already chronological from API)
-                    const messagesOutput = threadMessages.map((msg) => {
-                        const headers = msg.payload?.headers || [];
-                        const subject = headers.find(h => h.name?.toLowerCase() === 'subject')?.value || '';
-                        const from = headers.find(h => h.name?.toLowerCase() === 'from')?.value || '';
-                        const to = headers.find(h => h.name?.toLowerCase() === 'to')?.value || '';
-                        const cc = headers.find(h => h.name?.toLowerCase() === 'cc')?.value || '';
-                        const bcc = headers.find(h => h.name?.toLowerCase() === 'bcc')?.value || '';
-                        const date = headers.find(h => h.name?.toLowerCase() === 'date')?.value || '';
-
-                        // The body by the rule read_email uses; a minimal-format message carries none.
-                        let body = '';
-                        let bodySource: BodySource = 'text';
-                        if (validatedArgs.format !== 'minimal') {
-                            const { text, html } = extractEmailContent(msg.payload as GmailMessagePart || {});
-                            ({ body, bodySource } = selectBody(text, html, 'keep-html'));
-                        }
-
-                        // Extract attachment metadata
-                        const attachments: EmailAttachment[] = [];
-                        const processAttachmentParts = (part: GmailMessagePart) => {
-                            if (part.body && part.body.attachmentId) {
-                                const filename = part.filename || `attachment-${part.body.attachmentId}`;
-                                attachments.push({
-                                    id: part.body.attachmentId,
-                                    filename: filename,
-                                    mimeType: part.mimeType || 'application/octet-stream',
-                                    size: part.body.size || 0,
-                                });
-                            }
-                            if (part.parts) {
-                                part.parts.forEach((subpart: GmailMessagePart) => processAttachmentParts(subpart));
-                            }
-                        };
-                        if (msg.payload) {
-                            processAttachmentParts(msg.payload as GmailMessagePart);
-                        }
-
-                        return {
-                            messageId: msg.id || '',
-                            threadId: msg.threadId || '',
-                            from,
-                            to,
-                            cc,
-                            bcc,
-                            subject,
-                            date,
-                            body,
-                            bodySource,
-                            labelIds: msg.labelIds || [],
-                            attachments: attachments.map(a => ({
-                                filename: a.filename,
-                                mimeType: a.mimeType,
-                                size: a.size,
-                            })),
-                        };
-                    });
-
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: JSON.stringify({
-                                    threadId: validatedArgs.threadId,
-                                    messageCount: messagesOutput.length,
-                                    messages: messagesOutput,
-                                }, null, 2),
-                            },
-                        ],
-                    };
+                    return { content: [{ type: "text", text: JSON.stringify(await getThread(gmail, validatedArgs), null, 2) }] };
                 }
 
                 case "list_inbox_threads": {
@@ -962,138 +821,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
 
                 case "get_inbox_with_threads": {
                     const validatedArgs = GetInboxWithThreadsSchema.parse(args);
-                    const threadsResponse = await gmail.users.threads.list({
-                        userId: 'me',
-                        q: validatedArgs.query || 'in:inbox',
-                        maxResults: validatedArgs.maxResults || 50,
-                    });
-
-                    const threads = threadsResponse.data.threads || [];
-
-                    if (!validatedArgs.expandThreads) {
-                        // Return basic thread list without expansion (same as list_inbox_threads)
-                        const threadSummaries = await Promise.all(
-                            threads.map(async (thread) => {
-                                const detail = await gmail.users.threads.get({
-                                    userId: 'me',
-                                    id: thread.id!,
-                                    format: 'metadata',
-                                    metadataHeaders: ['Subject', 'From', 'Date'],
-                                });
-
-                                const messages = detail.data.messages || [];
-                                const latestMessage = messages[messages.length - 1];
-                                const latestHeaders = latestMessage?.payload?.headers || [];
-
-                                return {
-                                    threadId: thread.id || '',
-                                    snippet: thread.snippet || '',
-                                    historyId: thread.historyId || '',
-                                    messageCount: messages.length,
-                                    latestMessage: {
-                                        from: latestHeaders.find(h => h.name === 'From')?.value || '',
-                                        subject: latestHeaders.find(h => h.name === 'Subject')?.value || '',
-                                        date: latestHeaders.find(h => h.name === 'Date')?.value || '',
-                                    },
-                                };
-                            })
-                        );
-
-                        return {
-                            content: [
-                                {
-                                    type: "text",
-                                    text: JSON.stringify({
-                                        resultCount: threadSummaries.length,
-                                        threads: threadSummaries,
-                                    }, null, 2),
-                                },
-                            ],
-                        };
-                    }
-
-                    // Expand each thread with full message content (parallel fetch)
-                    const expandedThreads = await Promise.all(
-                        threads.map(async (thread) => {
-                            const threadDetail = await gmail.users.threads.get({
-                                userId: 'me',
-                                id: thread.id!,
-                                format: 'full',
-                            });
-
-                            const threadMessages = threadDetail.data.messages || [];
-
-                            const messages = threadMessages.map((msg) => {
-                                const headers = msg.payload?.headers || [];
-                                const subject = headers.find(h => h.name?.toLowerCase() === 'subject')?.value || '';
-                                const from = headers.find(h => h.name?.toLowerCase() === 'from')?.value || '';
-                                const to = headers.find(h => h.name?.toLowerCase() === 'to')?.value || '';
-                                const cc = headers.find(h => h.name?.toLowerCase() === 'cc')?.value || '';
-                                const bcc = headers.find(h => h.name?.toLowerCase() === 'bcc')?.value || '';
-                                const date = headers.find(h => h.name?.toLowerCase() === 'date')?.value || '';
-
-                                const { text, html } = extractEmailContent(msg.payload as GmailMessagePart || {});
-                                const { body, bodySource } = selectBody(text, html, 'keep-html');
-
-                                // Extract attachment metadata
-                                const attachments: EmailAttachment[] = [];
-                                const processAttachmentParts = (part: GmailMessagePart) => {
-                                    if (part.body && part.body.attachmentId) {
-                                        const filename = part.filename || `attachment-${part.body.attachmentId}`;
-                                        attachments.push({
-                                            id: part.body.attachmentId,
-                                            filename: filename,
-                                            mimeType: part.mimeType || 'application/octet-stream',
-                                            size: part.body.size || 0,
-                                        });
-                                    }
-                                    if (part.parts) {
-                                        part.parts.forEach((subpart: GmailMessagePart) => processAttachmentParts(subpart));
-                                    }
-                                };
-                                if (msg.payload) {
-                                    processAttachmentParts(msg.payload as GmailMessagePart);
-                                }
-
-                                return {
-                                    messageId: msg.id || '',
-                                    threadId: msg.threadId || '',
-                                    from,
-                                    to,
-                                    cc,
-                                    bcc,
-                                    subject,
-                                    date,
-                                    body,
-                                    bodySource,
-                                    labelIds: msg.labelIds || [],
-                                    attachments: attachments.map(a => ({
-                                        filename: a.filename,
-                                        mimeType: a.mimeType,
-                                        size: a.size,
-                                    })),
-                                };
-                            });
-
-                            return {
-                                threadId: thread.id || '',
-                                messageCount: messages.length,
-                                messages,
-                            };
-                        })
-                    );
-
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: JSON.stringify({
-                                    resultCount: expandedThreads.length,
-                                    threads: expandedThreads,
-                                }, null, 2),
-                            },
-                        ],
-                    };
+                    return { content: [{ type: "text", text: JSON.stringify(await getInboxWithThreads(gmail, validatedArgs), null, 2) }] };
                 }
 
                 case "reply_all": {
