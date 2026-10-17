@@ -198,11 +198,15 @@ function decodeCharacterReferences(text: string): string {
   });
 }
 
+// CRLF and lone CR, as an HTML part or a decoded &#13; may carry them, read as LF.
+const toLf = (text: string) => text.replace(/\r\n?/g, '\n');
+
 // Apply these steps in exactly this order: the plain-text output shape is part of this
 // server's contract for downloaded message files, and the <br>-before-newline behaviour (no
-// `s` flag) is pinned by a test.
+// `s` flag) is pinned by a test. Line endings are LF before the <br> rule, so a CRLF part
+// converts as its LF form does.
 export function htmlToText(html: string): string {
-  const withoutTags = html
+  const withoutTags = toLf(html)
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<br\s*\/?>(?=.)/gi, '\n')
@@ -210,7 +214,7 @@ export function htmlToText(html: string): string {
     .replace(/<a\s[^>]*href\s*=\s*"([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '$2 [$1]')
     .replace(/<a\s[^>]*href\s*=\s*'([^']*)'[^>]*>([\s\S]*?)<\/a>/gi, '$2 [$1]')
     .replace(/<[^>]+>/g, ' ');
-  return decodeCharacterReferences(withoutTags)
+  return toLf(decodeCharacterReferences(withoutTags))
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

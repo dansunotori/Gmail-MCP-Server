@@ -86,7 +86,8 @@ not modify its environment".
    are listed with `filename`, `mimeType`, `size` and `attachmentId` (or `inlineBase64` when the
    data is inline). `body` is the plain-text part trimmed, or the HTML converted to text when
    there is no plain part or the plain part is a stub (see `bodySource`). The conversion
-   (`htmlToText` in `src/message-body.ts`) applies, in this order: remove style and script
+   (`htmlToText` in `src/message-body.ts`) applies, in this order: CRLF and lone CR line
+   endings become LF (again after references are decoded, so `&#13;` adds none); remove style and script
    blocks; a `<br>` that is not immediately followed by a newline becomes a newline; closing
    `p`, `div`, `tr`, `li` and `h1`–`h6` tags become newlines; `<a href="…">text</a>`, with double
    or single quotes, becomes `text [href]`; every other tag becomes a space; character

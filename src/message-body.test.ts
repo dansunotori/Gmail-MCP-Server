@@ -145,6 +145,14 @@ describe('htmlToText', () => {
     expect(htmlToText('  a  \t b\n\n\n\nc  ')).toBe('a b\n\nc');
   });
 
+  it('reads CRLF and lone CR line endings as LF, so no carriage return survives and blank lines collapse', () => {
+    expect(htmlToText('Re Itamin,\r\n\r\n \r\nWe have\rsent it')).toBe(htmlToText('Re Itamin,\n\n \nWe have\nsent it'));
+    expect(htmlToText('a\r\n\r\n\r\n\r\nb')).toBe('a\n\nb');
+    expect(htmlToText('a<br>\r\nb')).toBe(htmlToText('a<br>\nb'));
+    expect(htmlToText('<p>x</p>\r\n\r\n\r\n<p>y</p>')).not.toContain('\r');
+    expect(htmlToText('a&#13;&#10;b&#xD;c')).toBe('a\nb\nc');
+  });
+
   it('keeps the documented behaviour: a br right before a newline is not converted', () => {
     expect(htmlToText('a<br>\nb')).toBe('a \nb');
   });
