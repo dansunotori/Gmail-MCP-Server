@@ -8,6 +8,7 @@ import type { OAuth2Client } from 'google-auth-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EXTRACTION_TIMEOUT_MS } from './attachment-text/extract.js';
 import { createGmailServer } from './server.js';
+import { toolDefinitions } from './tools.js';
 
 // The error gaxios throws for a Gmail JSON error response, as observed live.
 function gmailError(status: number, message: string, reason: string, extra: Record<string, unknown> = {}) {
@@ -148,6 +149,41 @@ describe('draft_email and send_email', () => {
     expect(decode(request.raw)).toContain('In-Reply-To: <two@example.com>');
     expect(decode(request.raw)).toContain('References: <one@example.com> <two@example.com>');
     expect(fake.draftsCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('unknown arguments', () => {
+  it('refuses a misnamed argument with an error result naming it, the intended one and the accepted ones', async () => {
+    const get = vi.fn();
+    const result = await call({ users: { messages: { get } } }, 'read_email', { message_id: 'm1' });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('Unknown argument: message_id (use messageId instead). Accepted arguments: messageId');
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unknown argument on every tool, those that read no arguments included, before any Gmail call', async () => {
+    const calls: string[] = [];
+    // Any Gmail method reached records its path, so a handler that runs is caught.
+    const recorder = (route: string[]): unknown => new Proxy(() => undefined, {
+      get: (_target, key) => recorder([...route, String(key)]),
+      apply: () => { calls.push(route.join('.')); return Promise.resolve({ data: {} }); },
+    });
+    const client = await connect(recorder(['gmail']), { scopes: ['gmail.full', 'gmail.modify', 'gmail.settings.basic'] });
+    for (const tool of toolDefinitions) {
+      const result = await client.callTool({ name: tool.name, arguments: { unexpected_argument: true } });
+      expect(result.isError, tool.name).toBe(true);
+      expect((result.content as Array<{ text: string }>)[0].text, tool.name).toContain('Unknown argument: unexpected_argument');
+    }
+    await client.close();
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses an unknown key inside a nested argument too', async () => {
+    const create = vi.fn();
+    const result = await call({ users: { settings: { filters: { create } } } }, 'create_filter', { criteria: { has_attachment: true }, action: {} });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('criteria: Unknown argument: has_attachment (use hasAttachment instead)');
+    expect(create).not.toHaveBeenCalled();
   });
 });
 

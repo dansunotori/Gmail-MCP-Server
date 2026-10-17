@@ -2,16 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
 
-## 14. Refuse unknown MCP tool arguments
-
-Most input schemas in `src/tools.ts` are plain `z.object`, which drops keys it does not know, so a misnamed argument (`message_id` for `messageId`, `max_results` for `maxResults`) is silently ignored and the call runs without it. `outlook-claude-mcp` makes every input schema strict and names the accepted arguments in the refusal, with the likely intended one (`src/mcp/strict-input.ts`: `strictInputSchema`, `suggestReplacement`, `unknownArgumentsMessage`).
-
-Done when:
-
-- Every MCP tool refuses an unknown argument with an error result naming it, the accepted arguments, and the intended one where a spelling or prefix match makes it evident (`message_id (use messageId instead)`).
-- The CLIs' `--input` refuses an unknown field the same way, with the same wording.
-- A test walks `toolDefinitions` and fails for any input schema that is not strict.
-
 ## 15. Tool-to-CLI parity test
 
 `outlook-claude-mcp`'s `src/cli/tool-cli-parity.test.ts` proves each CLI exposes its tool one to one: every schema field is a positional or a same-named kebab-case flag (`--<field>-file` for a file), every alias points at a real flag, and every help example parses. Here only "every flag has an example" is checked; nothing stops `draft_email` gaining an input that `gmail-create-draft` lacks, or a help example that no longer parses.

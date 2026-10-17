@@ -738,6 +738,15 @@ describe('gmail-create-draft', () => {
     }
   });
 
+  it('refuses an unknown --input field with the MCP tool\'s own wording, before calling Gmail', async () => {
+    const input = write('typo.json', JSON.stringify({ to: ['a@example.com'], subject: 's', body: 'b', html_body: '<p>x</p>' }));
+    const { deps } = harness(draftGmail().gmail);
+    const failed = await createDraftCommand(['--input', input], deps).catch(error => error);
+    expect(mapErrorToExitCode(failed)).toBe(2);
+    expect(failed.issues.map((issue: { message: string }) => issue.message).join('; ')).toContain('Unknown argument: html_body (use htmlBody instead). Accepted arguments: to, subject, body');
+    expect(deps.gmail).not.toHaveBeenCalled();
+  });
+
   it('refuses an --output that would overwrite one of its own input files', async () => {
     const body = write('body.txt', 'keep me');
     const { deps } = harness(draftGmail().gmail);

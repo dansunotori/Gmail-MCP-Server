@@ -388,6 +388,8 @@ The full specification is in [docs/gmail-cli-spec.md](docs/gmail-cli-spec.md).
 
 The server provides the following tools that can be used through Claude Desktop:
 
+Every tool refuses an argument it does not know, at the top level or inside an object argument, instead of ignoring it. The error result names the argument, the one it most likely meant and the accepted ones, for example `Unknown argument: message_id (use messageId instead). Accepted arguments: messageId`. `gmail-create-draft --input` refuses an unknown field in the same words.
+
 ### Structured metadata tools
 
 These tools return structured metadata only, so a client can build and maintain its own local index without receiving message content:

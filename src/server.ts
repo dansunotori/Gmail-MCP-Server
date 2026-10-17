@@ -86,6 +86,13 @@ export function createGmailServer(deps: GmailServerDeps): Server {
             return toolErrorResult(name, new Error(scopeRefusal(name)));
         }
 
+        // Every call's arguments are checked against the tool's own strict schema before its
+        // handler runs, so an unknown argument is refused even by a tool that reads none.
+        const checked = toolDef.schema.safeParse(args ?? {});
+        if (!checked.success) {
+            return toolErrorResult(name, checked.error);
+        }
+
         async function handleEmailAction(action: "send" | "draft", validatedArgs: ComposeArgs) {
             try {
                 if (action === "draft") {

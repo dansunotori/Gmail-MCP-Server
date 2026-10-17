@@ -1,12 +1,13 @@
 import path from "node:path";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { strictInput } from "./strict-input.js";
 
 // Schema definitions
 
 // Inline image embedded in an HTML body and referenced via a cid: URL.
 // Exactly one of `path` / `content` must be set; `contentType` is required with `content`.
-export const InlineImageSchema = z.object({
+export const InlineImageSchema = strictInput({
   cid: z.string().min(1).regex(/^[^\s<>]+$/, "cid must not contain whitespace or angle brackets")
     .describe("Content-ID for the image, referenced from htmlBody as <img src=\"cid:CID\">"),
   path: z.string().optional().describe("Absolute file path to the image (use this OR content)"),
@@ -25,7 +26,7 @@ export const InlineImageSchema = z.object({
 const MimeTypeSchema = z.enum(['text/plain', 'text/html', 'multipart/alternative']).optional()
   .describe("Email content type. Leave it out to follow the bodies given: text/html for htmlBody alone, multipart/alternative for body and htmlBody, text/plain for body alone. text/plain beside htmlBody is refused, since it would drop the HTML.");
 
-export const SendEmailSchema = z.object({
+export const SendEmailSchema = strictInput({
   to: z.array(z.string()).describe("List of recipient email addresses"),
   subject: z.string().describe("Email subject"),
   body: z.string().describe("Email body content (used for text/plain or when htmlBody not provided)"),
@@ -40,36 +41,36 @@ export const SendEmailSchema = z.object({
   inlineImages: z.array(InlineImageSchema).optional().describe("Images embedded inline in the HTML body, each referenced from htmlBody as <img src=\"cid:CID\">. Requires htmlBody to be set."),
 });
 
-export const ReadEmailSchema = z.object({
+export const ReadEmailSchema = strictInput({
   messageId: z.string().describe("ID of the email message to retrieve"),
 });
 
-export const SearchEmailsSchema = z.object({
+export const SearchEmailsSchema = strictInput({
   query: z.string().describe("Gmail search query (e.g., 'from:example@gmail.com')"),
   maxResults: z.number().optional().describe("Maximum number of results to return"),
 });
 
-export const ModifyEmailSchema = z.object({
+export const ModifyEmailSchema = strictInput({
   messageId: z.string().describe("ID of the email message to modify"),
   labelIds: z.array(z.string()).optional().describe("List of label IDs to apply"),
   addLabelIds: z.array(z.string()).optional().describe("List of label IDs to add to the message"),
   removeLabelIds: z.array(z.string()).optional().describe("List of label IDs to remove from the message"),
 });
 
-export const DeleteEmailSchema = z.object({
+export const DeleteEmailSchema = strictInput({
   messageId: z.string().describe("ID of the email message to delete"),
 });
 
 // Draft lifecycle schemas
-export const SendDraftSchema = z.object({
+export const SendDraftSchema = strictInput({
   draftId: z.string().describe("ID of the draft to send (returned by draft_email)"),
 });
 
-export const DeleteDraftSchema = z.object({
+export const DeleteDraftSchema = strictInput({
   draftId: z.string().describe("ID of the draft to delete"),
 });
 
-export const UpdateDraftSchema = z.object({
+export const UpdateDraftSchema = strictInput({
   draftId: z.string().describe("ID of the draft to update"),
   to: z.array(z.string()).describe("List of recipient email addresses"),
   subject: z.string().describe("Email subject"),
@@ -85,54 +86,54 @@ export const UpdateDraftSchema = z.object({
   inlineImages: z.array(InlineImageSchema).optional().describe("Images embedded inline in the HTML body, each referenced from htmlBody as <img src=\"cid:CID\">. Requires htmlBody to be set."),
 });
 
-export const ListEmailLabelsSchema = z.object({}).describe("Retrieves all available Gmail labels");
+export const ListEmailLabelsSchema = strictInput({}).describe("Retrieves all available Gmail labels");
 
-export const CreateLabelSchema = z.object({
+export const CreateLabelSchema = strictInput({
   name: z.string().describe("Name for the new label"),
   messageListVisibility: z.enum(['show', 'hide']).optional().describe("Whether to show or hide the label in the message list"),
   labelListVisibility: z.enum(['labelShow', 'labelShowIfUnread', 'labelHide']).optional().describe("Visibility of the label in the label list"),
 }).describe("Creates a new Gmail label");
 
-export const UpdateLabelSchema = z.object({
+export const UpdateLabelSchema = strictInput({
   id: z.string().describe("ID of the label to update"),
   name: z.string().optional().describe("New name for the label"),
   messageListVisibility: z.enum(['show', 'hide']).optional().describe("Whether to show or hide the label in the message list"),
   labelListVisibility: z.enum(['labelShow', 'labelShowIfUnread', 'labelHide']).optional().describe("Visibility of the label in the label list"),
 }).describe("Updates an existing Gmail label");
 
-export const DeleteLabelSchema = z.object({
+export const DeleteLabelSchema = strictInput({
   id: z.string().describe("ID of the label to delete"),
 }).describe("Deletes a Gmail label");
 
-export const GetOrCreateLabelSchema = z.object({
+export const GetOrCreateLabelSchema = strictInput({
   name: z.string().describe("Name of the label to get or create"),
   messageListVisibility: z.enum(['show', 'hide']).optional().describe("Whether to show or hide the label in the message list"),
   labelListVisibility: z.enum(['labelShow', 'labelShowIfUnread', 'labelHide']).optional().describe("Visibility of the label in the label list"),
 }).describe("Gets an existing label by name or creates it if it doesn't exist");
 
-export const BatchModifyEmailsSchema = z.object({
+export const BatchModifyEmailsSchema = strictInput({
   messageIds: z.array(z.string()).describe("List of message IDs to modify"),
   addLabelIds: z.array(z.string()).optional().describe("List of label IDs to add to all messages"),
   removeLabelIds: z.array(z.string()).optional().describe("List of label IDs to remove from all messages"),
   batchSize: z.number().optional().default(50).describe("Number of messages to process in each batch (default: 50)"),
 });
 
-export const ReportPhishingSchema = z.object({
+export const ReportPhishingSchema = strictInput({
   messageId: z.string().describe("ID of the email message to report as phishing"),
 }).describe("Reports a message as phishing using the closest public Gmail API behavior by applying the SPAM label");
 
-export const BatchReportPhishingSchema = z.object({
+export const BatchReportPhishingSchema = strictInput({
   messageIds: z.array(z.string()).describe("List of message IDs to report as phishing"),
   batchSize: z.number().optional().default(50).describe("Number of messages to process in each batch (default: 50)"),
 }).describe("Reports multiple messages as phishing using the closest public Gmail API behavior by applying the SPAM label");
 
-export const BatchDeleteEmailsSchema = z.object({
+export const BatchDeleteEmailsSchema = strictInput({
   messageIds: z.array(z.string()).describe("List of message IDs to delete"),
   batchSize: z.number().optional().default(50).describe("Number of messages to process in each batch (default: 50)"),
 });
 
-export const CreateFilterSchema = z.object({
-  criteria: z.object({
+export const CreateFilterSchema = strictInput({
+  criteria: strictInput({
     from: z.string().optional().describe("Sender email address to match"),
     to: z.string().optional().describe("Recipient email address to match"),
     subject: z.string().optional().describe("Subject text to match"),
@@ -143,26 +144,26 @@ export const CreateFilterSchema = z.object({
     size: z.number().optional().describe("Email size in bytes"),
     sizeComparison: z.enum(['unspecified', 'smaller', 'larger']).optional().describe("Size comparison operator")
   }).describe("Criteria for matching emails"),
-  action: z.object({
+  action: strictInput({
     addLabelIds: z.array(z.string()).optional().describe("Label IDs to add to matching emails"),
     removeLabelIds: z.array(z.string()).optional().describe("Label IDs to remove from matching emails"),
     forward: z.string().optional().describe("Email address to forward matching emails to")
   }).describe("Actions to perform on matching emails")
 }).describe("Creates a new Gmail filter");
 
-export const ListFiltersSchema = z.object({}).describe("Retrieves all Gmail filters");
+export const ListFiltersSchema = strictInput({}).describe("Retrieves all Gmail filters");
 
-export const GetFilterSchema = z.object({
+export const GetFilterSchema = strictInput({
   filterId: z.string().describe("ID of the filter to retrieve")
 }).describe("Gets details of a specific Gmail filter");
 
-export const DeleteFilterSchema = z.object({
+export const DeleteFilterSchema = strictInput({
   filterId: z.string().describe("ID of the filter to delete")
 }).describe("Deletes a Gmail filter");
 
-export const CreateFilterFromTemplateSchema = z.object({
+export const CreateFilterFromTemplateSchema = strictInput({
   template: z.enum(['fromSender', 'withSubject', 'withAttachments', 'largeEmails', 'containingText', 'mailingList']).describe("Pre-defined filter template to use"),
-  parameters: z.object({
+  parameters: strictInput({
     senderEmail: z.string().optional().describe("Sender email (for fromSender template)"),
     subjectText: z.string().optional().describe("Subject text (for withSubject template)"),
     searchText: z.string().optional().describe("Text to search for (for containingText template)"),
@@ -175,17 +176,17 @@ export const CreateFilterFromTemplateSchema = z.object({
   }).describe("Template-specific parameters")
 }).describe("Creates a filter using a pre-defined template");
 
-export const DownloadAttachmentSchema = z.object({
+export const DownloadAttachmentSchema = strictInput({
   messageId: z.string().describe("ID of the email message containing the attachment"),
   attachmentId: z.string().describe("ID of the attachment to download"),
   filename: z.string().optional().describe("Filename to save the attachment as (if not provided, uses original filename)"),
   savePath: z.string().optional().describe("Directory path to save the attachment (defaults to current directory)"),
 });
 
-export const GetAttachmentTextSchema = z.object({
+export const GetAttachmentTextSchema = strictInput({
   messageId: z.string().min(1).describe("ID of the email message containing the attachment"),
   attachmentId: z.string().min(1).describe("ID of the attachment, as read_email lists it"),
-}).strict();
+});
 
 export const AttachmentTextOutputSchema = z.object({
   name: z.string(),
@@ -195,38 +196,38 @@ export const AttachmentTextOutputSchema = z.object({
   sheets: z.array(z.object({ name: z.string(), rows: z.number().int().min(0), columns: z.number().int().min(0) }).strict()).nullable(),
 }).strict();
 
-export const DownloadEmailSchema = z.object({
+export const DownloadEmailSchema = strictInput({
   messageId: z.string().describe("ID of the email message to download"),
   savePath: z.string().describe("Directory path to save the email file"),
   format: z.enum(['json', 'eml', 'txt', 'html']).optional().default('json')
     .describe("Output format: json (structured data), eml (raw RFC822), txt (plain text), html (formatted HTML)"),
 });
 
-export const ModifyThreadSchema = z.object({
+export const ModifyThreadSchema = strictInput({
   threadId: z.string().describe("ID of the Gmail thread to modify"),
   addLabelIds: z.array(z.string()).optional().describe("List of label IDs to add to all messages in the thread"),
   removeLabelIds: z.array(z.string()).optional().describe("List of label IDs to remove from all messages in the thread"),
 });
 
 // Thread-level schemas
-export const GetThreadSchema = z.object({
+export const GetThreadSchema = strictInput({
   threadId: z.string().describe("ID of the email thread to retrieve"),
   format: z.enum(['full', 'metadata', 'minimal']).optional().default('full').describe("Format of the email messages returned (default: full)"),
 });
 
-export const ListInboxThreadsSchema = z.object({
+export const ListInboxThreadsSchema = strictInput({
   query: z.string().optional().default('in:inbox').describe("Gmail search query (default: 'in:inbox')"),
   maxResults: z.number().optional().default(50).describe("Maximum number of threads to return (default: 50)"),
 });
 
-export const GetInboxWithThreadsSchema = z.object({
+export const GetInboxWithThreadsSchema = strictInput({
   query: z.string().optional().default('in:inbox').describe("Gmail search query (default: 'in:inbox')"),
   maxResults: z.number().optional().default(50).describe("Maximum number of threads to return (default: 50)"),
   expandThreads: z.boolean().optional().default(true).describe("Whether to fetch full thread content for each thread (default: true)"),
 });
 
 // Reply All schema - fetches original email and builds recipient list automatically
-export const ReplyAllSchema = z.object({
+export const ReplyAllSchema = strictInput({
   messageId: z.string().describe("ID of the email message to reply to"),
   body: z.string().describe("Reply body content (used for text/plain or when htmlBody not provided)"),
   htmlBody: z.string().optional().describe("HTML version of the reply body"),
@@ -237,22 +238,22 @@ export const ReplyAllSchema = z.object({
 
 const NonEmptyString = z.string().min(1);
 
-export const GetGmailProfileSchema = z.object({}).strict();
+export const GetGmailProfileSchema = strictInput({});
 
-export const ListGmailMessageIdsSchema = z.object({
+export const ListGmailMessageIdsSchema = strictInput({
   pageToken: NonEmptyString.optional(),
   maxResults: z.number().int().min(1).max(500).default(500),
-}).strict();
+});
 
-export const ListGmailAddedHistorySchema = z.object({
+export const ListGmailAddedHistorySchema = strictInput({
   startHistoryId: NonEmptyString,
   pageToken: NonEmptyString.optional(),
   maxResults: z.number().int().min(1).max(500).default(500),
-}).strict();
+});
 
-export const BatchGetGmailIndexMetadataSchema = z.object({
+export const BatchGetGmailIndexMetadataSchema = strictInput({
   messageIds: z.array(NonEmptyString).min(1).max(50),
-}).strict();
+});
 
 export const GmailProfileOutputSchema = z.object({
   historyId: NonEmptyString,
@@ -298,7 +299,7 @@ export const GmailIndexMetadataOutputSchema = z.object({
 
 const WATERMARK_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 
-export const BatchFetchWindowSchema = z.object({
+export const BatchFetchWindowSchema = strictInput({
   watermark: z.string().superRefine((value, context) => {
     const match = WATERMARK_PATTERN.exec(value);
     if (!match) {
@@ -336,7 +337,7 @@ export const BatchFetchWindowSchema = z.object({
     .describe("Hard cap on listed IDs; above it nothing is downloaded and the result is truncated"),
   cross_check: z.boolean().default(true)
     .describe("Also list spam, trash and in:anywhere since the watermark to detect silently dropped messages. The result's crossCheck.status is then consistent, inconsistent (crossCheck.unexplainedIds names IDs seen in in:anywhere but in none of window, spam or trash) or failed (a listing did not complete after retries; crossCheck.errors names each query); false gives status skipped. crossCheck.consistent is true only for status consistent"),
-}).strict();
+});
 
 // One entry per Gmail call that was given up on after its retries, and per calendar part
 // that could not be read. `error` is the failure string (HTTP status, network code or error
