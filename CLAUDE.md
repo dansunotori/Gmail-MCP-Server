@@ -6,6 +6,9 @@ Single branch: work lands on `main` directly, and CI must pass after every push.
 ## PR & Issue Review
 Mandatory security audit on every PR before presenting. See `.claude/skills/pr-review-sop/SKILL.md`.
 
+## Roadmap
+`ROADMAP.md` lists work still to do; an item leaves it once implemented. Prompts written for this server elsewhere (`gmail-*.md`) are added with `node scripts/import-prompts.mjs <prompts-dir>`, which skips any prompt imported before.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
