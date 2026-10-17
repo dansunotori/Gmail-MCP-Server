@@ -1,6 +1,6 @@
 /**
  * Label Manager for Gmail MCP Server
- * Provides comprehensive label management functionality
+ * Creates, updates, deletes, lists and finds Gmail labels.
  *
  * A Gmail failure is rethrown as it is, or with a message that adds context through
  * withContext, so the caller's error text keeps Gmail's reason, status and rejected
@@ -51,7 +51,7 @@ export async function createLabel(gmail: any, labelName: string, options: {
 
         return response.data;
     } catch (error: any) {
-        // Handle duplicate labels more gracefully
+        // A duplicate name gets a message that names the label
         if (error.message && error.message.includes('already exists')) {
             throw withContext(`Label "${labelName}" already exists. Please use a different name.`, error);
         }

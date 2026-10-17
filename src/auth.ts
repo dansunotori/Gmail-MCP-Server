@@ -118,14 +118,10 @@ export function loadCredentials(options: {
     if (fs.existsSync(CREDENTIALS_PATH)) {
         const credentials = readJsonObject(CREDENTIALS_PATH, 'invalid-credentials', 'Saved credentials file');
 
-        // Credentials file structure (v1.2.0+):
+        // The credentials file is either
         //   { "tokens": { access_token, refresh_token, ... }, "scopes": ["gmail.readonly", ...] }
-        //
-        // Legacy structure (pre-v1.2.0):
-        //   { access_token, refresh_token, ... }
-        //
-        // We support both formats for backwards compatibility. Users with legacy
-        // credentials will get DEFAULT_SCOPES (full access) until they re-authenticate.
+        // or a bare token object { access_token, refresh_token, ... }. A bare token object
+        // records no scopes, so it gets DEFAULT_SCOPES (full access) until the user signs in again.
         const tokens = credentials.tokens || credentials;
         oauth2Client.setCredentials(tokens);
 
@@ -163,8 +159,8 @@ export async function authenticate(oauth2Client: OAuth2Client, callbackUrl: URL,
     const server = http.createServer();
     // Port derivation:
     // - explicit port in the callback URL -> use it
-    // - portless http -> protocol default 80 (NOT 3000 — that fallback caused
-    //   the silent-hang bug this derivation exists to fix)
+    // - portless http -> protocol default 80, the port the browser connects to (listening
+    //   on 3000 would leave the browser's redirect waiting on a port nothing serves)
     // - https -> reverse-proxy setup; the proxy forwards to the local listener
     //   on 3000 (documented default in README "Cloud Server Authentication")
     const port = callbackUrl.port

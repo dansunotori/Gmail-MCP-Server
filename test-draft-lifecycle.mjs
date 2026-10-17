@@ -15,7 +15,7 @@
  *  4. Create another draft → verify exists
  *  5. Delete draft → verify removed
  *
- * Cleanup: the sent message from step 3 is removed at the end so the inbox stays clean.
+ * Cleanup: the sent message from step 3, and any inbox copy of it, is moved to the trash at the end.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -95,7 +95,7 @@ async function main() {
     record('2. drafts.update changes subject', subjHdr === subj2, `subject=${subjHdr}`);
     record('2b. drafts.update preserves draft ID', fetched.data.id === draftId);
 
-    // --- Scenario 3: send draft (the ghost-fix) ---
+    // --- Scenario 3: send draft ---
     const sent = await gmail.users.drafts.send({ userId: 'me', requestBody: { id: draftId } });
     const sentMessageId = sent.data.id;
     record('3. drafts.send returns message ID', !!sentMessageId, `msgId=${sentMessageId}`);
@@ -103,8 +103,8 @@ async function main() {
     // Verify draft is gone from Drafts
     const listed3 = await gmail.users.drafts.list({ userId: 'me', q: MARKER, maxResults: 5 });
     const draftsLeft = (listed3.data.drafts || []).map(d => d.id);
-    const ghostGone = !draftsLeft.includes(draftId);
-    record('3b. draft removed from Drafts after send', ghostGone, `remaining=${JSON.stringify(draftsLeft)}`);
+    const draftGone = !draftsLeft.includes(draftId);
+    record('3b. draft removed from Drafts after send', draftGone, `remaining=${JSON.stringify(draftsLeft)}`);
 
     // Verify message exists in Sent
     const sentList = await gmail.users.messages.list({ userId: 'me', q: `${MARKER} in:sent`, maxResults: 5 });

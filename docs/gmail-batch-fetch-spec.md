@@ -1,30 +1,19 @@
-# Task: add a `batch_fetch_window` MCP tool to this Gmail MCP server
+# `batch_fetch_window` MCP tool: specification
 
 ## Why
 
 A client of this server may want a routine "mailbox pass": download every message received since
 a stored watermark to disk, so the files can be read one by one, without the client calling the
-Gmail API itself. Your job is to make this server provide that capability as a tool.
+Gmail API itself. This server provides that capability as a tool.
 
-This document, together with the design document it produced
-(`docs/superpowers/specs/2026-09-11-batch-fetch-window-design.md`), is the complete statement of
-the required behaviour and output files. Nothing outside this repository is a requirement, and
-the tool must serve any client equally.
+This document is the complete statement of the required behaviour and output files. Nothing
+outside this repository is a requirement, and the tool must serve any client equally.
 
 ## Scope
 
-One new read-only tool, `batch_fetch_window`, registered in `src/tools.ts` alongside the existing
-tools, with its schema, handler, tests and README entry. Nothing else. Do not add CLIs, do not
-touch unrelated tools, do not change auth or scopes beyond what the tool needs
-(`gmail.readonly` suffices; list it as `["gmail.readonly", "gmail.modify"]` to match the pattern
-used by `download_email`).
-
-Before writing code, read `AGENTS.md` and `CLAUDE.md` in this repository and follow their rules.
-Reuse existing modules where they fit: `getGmailProfile` and `listGmailMessageIds` in
-`src/gmail-sync.ts`, the body and attachment extraction in `src/email-export.ts`
-(`gmailMessageToJson`), and the batching helpers in `src/gmail-batch.ts`. If an existing helper
-almost fits, extend it rather than duplicating it. If reuse would change an existing tool's
-behaviour, do not do it; add a new function instead.
+`batch_fetch_window` is defined in `src/tools.ts`. Its core, `batchFetchWindow` in
+`src/batch-fetch-window.ts`, is called by both the MCP handler and the `gmail-batch-fetch-window`
+CLI. Scopes: `["gmail.readonly", "gmail.modify"]`; `gmail.readonly` suffices.
 
 ## Tool contract
 
@@ -33,8 +22,7 @@ Name: `batch_fetch_window`
 Annotations: `{ title: "Batch Fetch Window", readOnlyHint: false, destructiveHint: true, idempotentHint: false }`.
 The tool never modifies the mailbox, but it deletes and recreates `messages/` and overwrites
 two files under the caller-supplied directory, and the MCP SDK defines `readOnlyHint` as "does
-not modify its environment". (Amended 2026-09-11 during design review; the original text asked
-for `readOnlyHint: true`.)
+not modify its environment".
 
 ### Input schema (zod)
 
@@ -45,7 +33,7 @@ for `readOnlyHint: true`.)
   it if missing. Inside it the tool owns exactly three things: `messages/` (a directory),
   `manifest.json` and `window-metadata.json`. It must delete and recreate `messages/` on every
   run (numbered files are replaced each fetch) and must not touch anything else in `output_dir`.
-  Guard (added 2026-09-15, marker added 2026-09-16): before deleting anything, the tool checks
+  Guard: before deleting anything, the tool checks
   that `messages/` is absent, empty, or holds the `.batch-fetch-window` marker file the tool
   writes into `messages/` immediately after creating it on every run and nothing but regular
   files named `NNN.json` or `.publish-*`. If `messages/` has no marker, holds anything else (a
@@ -80,7 +68,7 @@ for `readOnlyHint: true`.)
    Record per-message fetch failures as `{ id, error, operation, status, attempts }` (see
    Tool result); a failure must not abort the run.
 
-   Retry policy (revised 2026-09-16), applied through one helper to every Gmail call the tool
+   Retry policy, applied through one helper to every Gmail call the tool
    makes (the profile lookup, every listing page, `messages.get` and `attachments.get`): retry
    on 429, on any 5xx, on a 403 whose reason is a Gmail rate limit, and on network errors
    (connection reset, refused or aborted, timeout, DNS failure, host or network unreachable);
@@ -96,10 +84,14 @@ for `readOnlyHint: true`.)
    `attachmentId` with no filename (Gmail does this for large bodies), fetch it with
    `users.messages.attachments.get` and append it; parts with a filename are attachments and
    are listed with `filename`, `mimeType`, `size` and `attachmentId` (or `inlineBase64` when the
-   data is inline). `body` is `text.trim()` if non-empty, otherwise the HTML converted to plain
-   text with the `htmlToText` rules the design document specifies (strip style and script,
-   `<br>` and block closers become newlines, anchors become `text [href]`, entities decoded,
-   whitespace collapsed). A body-part fetch failure is recorded in `failures` with the prefix
+   data is inline). `body` is the plain-text part trimmed, or the HTML converted to text when
+   there is no plain part or the plain part is a stub (see `bodySource`). The conversion
+   (`htmlToText` in `src/message-body.ts`) applies, in this order: remove style and script
+   blocks; a `<br>` that is not immediately followed by a newline becomes a newline; closing
+   `p`, `div`, `tr`, `li` and `h1`–`h6` tags become newlines; `<a href="…">text</a>`, with double
+   or single quotes, becomes `text [href]`; every other tag becomes a space; `&nbsp;` `&amp;`
+   `&lt;` `&gt;` `&#39;` `&apos;` `&quot;` are decoded; runs of spaces and tabs collapse to one
+   space; three or more newlines collapse to two; the result is trimmed. A body-part fetch failure is recorded in `failures` with the prefix
    `body-part-fetch:` and the message is still written with whatever was recovered.
 8. Cross-check (when enabled): list `after:${epoch - 1} in:spam`, `after:${epoch - 1} in:trash`
    and `after:${epoch - 1} in:anywhere` with the same pagination and retries. `unexplainedIds`
@@ -205,8 +197,8 @@ manifest or window metadata, and a rerun replaces that state.
 
 ## Testing
 
-Add `src/batch-fetch-window.test.ts` under vitest, mocking the Gmail client the way the existing
-`gmail-batch.test.ts` and `download-email.test.ts` do. Cover at least:
+`src/batch-fetch-window.test.ts` (vitest, Gmail client mocked as in `gmail-batch.test.ts`) must
+cover at least:
 
 - multi-page listing (three pages, duplicate ID across pages deduplicated);
 - empty window (zero listed, files written with empty arrays, status `ok`);
@@ -234,29 +226,3 @@ Add `src/batch-fetch-window.test.ts` under vitest, mocking the Gmail client the 
   `messages/` directory intact;
 - input validation rejects a watermark without zone suffix;
 - rerun replaces `messages/` completely (a stale `009.json` from a previous run disappears).
-
-Run the full existing suite too and make sure nothing regresses. Report the exact test command
-and its output.
-
-## Documentation
-
-- Add the tool to the README tool list with a short description and the input fields.
-- Add a line to `docs/gmail-cli-spec.md` noting that a routine mailbox pass can use
-  `batch_fetch_window` and the CLIs there remain optional for targeted reads.
-
-## Definition of done
-
-- `batch_fetch_window` is registered, typed, tested and documented.
-- `npm run build` succeeds and `dist/` is rebuilt so any MCP client registered against this
-  checkout picks it up.
-- A manual smoke run against a live mailbox with `output_dir` set to a scratch directory and a
-  recent watermark produces the three outputs and a `status` of `ok` or `incomplete` with the
-  reason visible. Paste the returned summary (redact addresses if you like) in your report.
-- Report every behaviour guarantee the design document lists and name the test that pins it, so
-  a client can rely on the documented behaviour rather than on reading the code.
-
-Commit policy (amended 2026-09-11 so that the brainstorming, writing-plans and
-subagent-driven-development skills are followed in full): each implementation task ends
-in its own commit on its feature branch, which is integrated into the development line at finish,
-and review happens through git history rather than an uncommitted working tree. The original
-text here said "Do not commit. Leave the working tree for review."

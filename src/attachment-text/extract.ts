@@ -1,7 +1,7 @@
 /**
  * Runs the extraction worker (worker.ts) as a child process with a hard timeout, a memory
  * cap and an environment reduced to what a parser needs, so no credential path or token
- * reaches it. Ported from outlook-claude-mcp's src/workers/fork-extractor.ts.
+ * reaches it.
  */
 
 import { fork } from 'node:child_process';

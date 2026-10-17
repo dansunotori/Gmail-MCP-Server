@@ -285,7 +285,6 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                     };
                 }
 
-                // Updated implementation for the modify_email handler
                 case "modify_email": {
                     const validatedArgs = ModifyEmailSchema.parse(args);
                     
@@ -594,7 +593,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                     };
                 }
 
-                // New label management handlers
+                // Label management handlers
                 case "create_label": {
                     const validatedArgs = CreateLabelSchema.parse(args);
                     const result = await createLabel(gmail, validatedArgs.name, {

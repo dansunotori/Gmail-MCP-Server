@@ -29,7 +29,7 @@ export const SCOPE_REVERSE_MAP: Record<string, string> = Object.fromEntries(
   Object.entries(SCOPE_MAP).map(([short, full]) => [full, short])
 );
 
-// Default scopes (original behavior)
+// Scopes requested when --scopes is not given
 export const DEFAULT_SCOPES = ["gmail.modify", "gmail.settings.basic"];
 
 // Convert shorthand scope name to full Google API URL

@@ -9,6 +9,15 @@ Mandatory security audit on every PR before presenting. See `.claude/skills/pr-r
 ## Roadmap
 `ROADMAP.md` lists work still to do; an item leaves it once implemented. Prompts written for this server elsewhere (`gmail-*.md`) are added with `node scripts/import-prompts.mjs <prompts-dir>`, which skips any prompt imported before.
 
+## No Changelogs, History, Reports or Self-Praise in the Repository
+Every file and code comment describes the code as it is now. Git history records how it got there; chat and PR comments carry reports.
+- No changelogs: no "added", "fixed", "new", "now", "updated" or version notes, and no CHANGELOG file.
+- No history: no "previously", "used to", "no longer", "originally", "ported from", "kept for compatibility", dates of changes, or issue, PR or commit references describing past work. A comment never names a past bug; it states the constraint the code keeps.
+- No reports: no live-check results, test counts, audit findings or "verified" or "done" notes. A finished roadmap item is deleted, never marked done. Results go to the user in chat, or to a PR comment.
+- No self-praise: no "powerful", "robust", "comprehensive", "seamless", "enhanced" or similar.
+- When behaviour changes, rewrite the passage that describes it so it states the new behaviour; never append a note about the change. A roadmap item or prompt that asks for a "changed" note is satisfied by describing the current behaviour.
+- Commit messages are the place for what changed and why.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 

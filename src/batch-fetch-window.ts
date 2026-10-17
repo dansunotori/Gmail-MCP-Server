@@ -237,7 +237,7 @@ export async function batchFetchWindow(
     pages: windowList.pages,
     listed: windowList.ids.length,
     maxMessages: input.max_messages,
-    // Always true in a returned result: an incomplete listing fails the call above. Kept so
+    // Always true in a returned result: an incomplete listing fails the call above. Present so
     // the result shape is stable.
     listingComplete: true,
   };

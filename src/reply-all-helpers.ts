@@ -1,6 +1,5 @@
 /**
  * Helper functions for reply_all email functionality.
- * Extracted for testability.
  */
 
 /**

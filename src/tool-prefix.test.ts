@@ -4,7 +4,7 @@ import { resolveToolPrefix } from './tool-prefix.js';
 const NO_ENV: NodeJS.ProcessEnv = {};
 
 describe('resolveToolPrefix', () => {
-    describe('default (backward compatibility)', () => {
+    describe('default (no prefix)', () => {
         it('returns empty string when no args and no env var', () => {
             expect(resolveToolPrefix([], NO_ENV)).toBe('');
         });

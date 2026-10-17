@@ -594,8 +594,7 @@ describe('batchFetchWindow: owned paths and atomic publication', () => {
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
   });
 
-  // Regression guard: the tool only ever deletes the three paths it owns, and this pins that
-  // property so a future change to the deletion logic cannot widen it.
+  // The tool deletes only the three paths it owns; this pins that property.
   it('leaves no publish temporaries and never touches unrelated caller files', async () => {
     fs.writeFileSync(path.join(dir, 'notes.txt'), 'keep me');
     fs.writeFileSync(path.join(dir, 'manifest.json.tmp-123'), 'also keep me');
@@ -642,8 +641,7 @@ describe('batchFetchWindow: boundary and label filtering', () => {
     expect(messageFiles(dir)).toEqual(['001.json']);
   });
 
-  // Regression guard: passes already, because the kept-message filter already excludes
-  // TRASH alongside SPAM; it protects that exclusion against future changes to the filter.
+  // The kept-message filter excludes TRASH alongside SPAM; this pins that exclusion.
   it('skips a listed message labelled TRASH', async () => {
     const gmail = fakeGmail({
       lists: windowOnly(['t', 'a']),
@@ -848,7 +846,7 @@ describe('batchFetchWindow: per-message failures', () => {
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(false);
   });
 
-  // Regression guard: listAllGmailMessageIds rethrows auth errors on any page, so the run aborts.
+  // listAllGmailMessageIds rethrows auth errors on any page, so the run aborts.
   it('rejects on a 401 on window page two and writes nothing', async () => {
     const unauthorised = httpError(401);
     const gmail = fakeGmail({ lists: { [WINDOW_QUERY]: [{ ids: ['a'] }, unauthorised] } });
@@ -921,7 +919,7 @@ describe('batchFetchWindow: body-part failures', () => {
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true);
   });
 
-  // Regression guard: resolveMessageBody rethrows auth errors instead of recording them as failures.
+  // resolveMessageBody rethrows auth errors instead of recording them as failures.
   it('rejects on a 401 from a deferred body fetch', async () => {
     const unauthorised = httpError(401);
     const gmail = fakeGmail({
@@ -1014,8 +1012,7 @@ describe('batchFetchWindow: cross-check', () => {
     expect(readJson(path.join(dir, 'manifest.json')).crossCheck).toEqual(expected);
   });
 
-  // Regression guard: with cross_check disabled the spam, trash and anywhere listings must not
-  // run at all; this fails if they are ever issued unconditionally.
+  // With cross_check disabled the spam, trash and anywhere listings must not run at all.
   it('reports the cross-check as skipped and not consistent when disabled, without listing spam, trash or anywhere', async () => {
     const gmail = fakeGmail({ lists: { [WINDOW_QUERY]: [{ ids: [] }] } });
     const result = await run(gmail, dir, { cross_check: false });
@@ -1391,7 +1388,7 @@ describe('BatchFetchWindowOutputSchema', () => {
 });
 
 describe('batch_fetch_window tool definition', () => {
-  it('is registered with honest annotations and read scopes', () => {
+  it('is registered with its annotations and read scopes', () => {
     const tool = getToolByName('batch_fetch_window');
     expect(tool).toBeDefined();
     expect(tool!.scopes).toEqual(['gmail.readonly', 'gmail.modify']);

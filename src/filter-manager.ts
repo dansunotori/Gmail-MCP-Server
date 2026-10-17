@@ -1,6 +1,6 @@
 /**
  * Filter Manager for Gmail MCP Server
- * Provides comprehensive filter management functionality
+ * Creates, lists, gets and deletes Gmail filters, and builds filters from templates.
  *
  * A Gmail failure is rethrown as it is, or with a message that adds context through
  * withContext, so the caller's error text keeps Gmail's reason, status and rejected

@@ -1,8 +1,7 @@
 /**
  * The extraction worker, run as a separate process by extract.ts so that a hostile or huge
  * attachment can neither hang nor crash the server. It receives { type: 'init', format,
- * filename } over IPC and the file's bytes on stdin, and answers over IPC. Ported from
- * outlook-claude-mcp's src/workers/extract-text-worker.ts.
+ * filename } over IPC and the file's bytes on stdin, and answers over IPC.
  */
 
 import mammoth from 'mammoth';

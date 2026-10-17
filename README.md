@@ -1,68 +1,34 @@
 # Gmail MCP Server
 
-A standalone Model Context Protocol (MCP) server for Gmail. It is installed from source. The code descends from [ArtyMcLabin/Gmail-MCP-Server](https://github.com/ArtyMcLabin/Gmail-MCP-Server), and contributor credits below are preserved from that history.
+A standalone Model Context Protocol (MCP) server for Gmail, installed from source, with command-line tools over the same code. Forked from [ArtyMcLabin/Gmail-MCP-Server](https://github.com/ArtyMcLabin/Gmail-MCP-Server).
 
 [![CI](https://github.com/dansunotori/Gmail-MCP-Server/actions/workflows/ci.yml/badge.svg)](https://github.com/dansunotori/Gmail-MCP-Server/actions/workflows/ci.yml)
 
-## Structured metadata and bulk download
-
-- Four read-only structured tools that return message IDs, dates and labels without message content, for building a local index
-- A `batch_fetch_window` tool that downloads every message received since a timestamp to a local directory with a manifest and cross-check
-- Gmail batch metadata requests for up to 50 messages, with bounded retry handling
-- Compatibility with the plain response-header objects returned by live Gaxios requests
-
-## Mail tools
-
-The server also provides the following capabilities:
-
-- **Fixed reply threading** - auto-resolves `In-Reply-To` and `References` headers so email replies land in the correct thread instead of creating orphaned messages ([upstream PR #91](https://github.com/GongRzhe/Gmail-MCP-Server/pull/91), still pending)
-- **Send-as alias support** - optional `from` parameter for multi-identity email management (send from any configured Gmail alias)
-- **Reply-all tool** - `reply_all` automatically fetches the original email, builds To/CC recipient lists (excluding yourself), and sets proper threading headers ([PR #3](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/3) by [@MaxGhenis](https://github.com/MaxGhenis))
-- **Fixed `list_filters`** - was returning empty array due to wrong response property name ([PR #4](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/4) by [@nicholas-anthony-ai](https://github.com/nicholas-anthony-ai))
-- **Custom OAuth2 scoping** - `--scopes` flag to request only the permissions you need, with automatic tool filtering ([PR #6](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/6) by [@tansanDOTeth](https://github.com/tansanDOTeth))
-- **CI/CD hardening** - fixed shell injection vector in GitHub Actions workflow, added least-privilege permissions scope ([PR #9](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/9) by [@JF10R](https://github.com/JF10R))
-- **Security hardening** - fixed path traversal in attachment download, restricted OAuth credential file permissions ([PR #10](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/10) by [@JF10R](https://github.com/JF10R))
-- **Dependency security** - upgraded MCP SDK to v1.27.1 (3 CVE fixes), upgraded nodemailer (DoS + routing fix), moved dev-only packages out of production deps ([PR #11](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/11) by [@JF10R](https://github.com/JF10R))
-- **Thread-level tools** - `get_thread`, `list_inbox_threads`, `get_inbox_with_threads`, `modify_thread` for efficient thread-based email operations in a single call
-- **CC/BCC visibility** - `read_email` now shows CC and BCC headers when present ([PR #21](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/21) by [@panghy](https://github.com/panghy))
-- **Phishing report tools** - `report_phishing` and `batch_report_phishing` for marking messages as spam via the Gmail API ([PR #24](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/24) by [@ShivamB25](https://github.com/ShivamB25))
-- **Draft lifecycle tools** - `send_draft`, `delete_draft`, `update_draft` close the orphan-draft gap: `send_draft` atomically sends an existing draft and removes it from Drafts (no ghost copy); `update_draft` mutates a draft in place preserving its ID (no draft pile-up across iteration loops); `delete_draft` discards an abandoned draft ([PR #30](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/30) by [@thisisambros](https://github.com/thisisambros))
-- **Tool annotations** - MCP spec annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`) on all tools for safer LLM tool execution ([PR #14](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/14) by [@bryankthompson](https://github.com/bryankthompson))
-- **Download email tool** - `download_email` saves emails to disk in json/eml/txt/html formats without consuming LLM context ([PR #13](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/13) by [@icanhasjonas](https://github.com/icanhasjonas))
-- **Durable OAuth sessions** - `refresh_token` is persisted across restarts, ending the hourly re-auth loop ([PR #35](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/35) by [@BrentBaccala](https://github.com/BrentBaccala))
-- **Custom OAuth callback port** - the auth listener derives port and path from your callback URL instead of hardcoding 3000 ([PR #41](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/41) by [@soapergem](https://github.com/soapergem))
-- **Safe permanent-delete gating** - `delete_email`/`batch_delete_emails` require the opt-in `gmail.full` scope (which also satisfies all other mail scopes), so default auth stays least-privilege ([PR #39](https://github.com/ArtyMcLabin/Gmail-MCP-Server/pull/39) by [@caioribeiroclw-pixel](https://github.com/caioribeiroclw-pixel))
-
----
-
-A Model Context Protocol (MCP) server for Gmail integration in Claude Desktop with auto authentication support. This server enables AI assistants to manage Gmail through natural language interactions.
-
 ![](https://badge.mcpx.dev?type=server 'MCP Server')
-
 
 ## Features
 
-- Send emails with subject, content, **attachments**, and recipients
-- **Full attachment support** - send and receive file attachments
-- **Download email attachments** to local filesystem
-- **Download full emails** to files in json/eml/txt/html formats
-- **Thread-level operations** - get full threads, list inbox threads, batch-expand threads
-- Support for HTML emails and multipart messages with both HTML and plain text versions
-- Full support for international characters in subject lines and email content
-- Read email messages by ID with advanced MIME structure handling
-- **Enhanced attachment display** showing filenames, types, sizes, and download IDs
-- Search emails with various criteria (subject, sender, date range)
-- **Comprehensive label management with ability to create, update, delete and list labels**
-- List all available Gmail labels (system and user-defined)
-- List emails in inbox, sent, or custom labels
-- Mark emails as read/unread
-- Move emails to different labels/folders
-- Delete emails
-- **Batch operations for efficiently processing multiple emails at once**
-- Full integration with Gmail API
-- Simple OAuth2 authentication flow with auto browser launch
-- Support for both Desktop and Web application credentials
-- Global credential storage for convenience
+- Send emails with subject, content, attachments and recipients, from any configured Gmail send-as alias with the optional `from` parameter
+- Replies set `In-Reply-To` and `References`, so they land in the original thread; `reply_all` builds the To and CC lists from the original, leaving you out
+- Drafts: create, update in place (the draft keeps its ID), send (the draft leaves Drafts) and delete
+- Download email attachments to the local filesystem, and full emails as json, eml, txt or html files
+- Return an attachment's text from PDF, DOCX, XLSX, XLSM, XLS, CSV and text parts
+- Thread-level operations: get full threads, list inbox threads, batch-expand threads, modify a whole thread
+- HTML emails and multipart messages with both HTML and plain text versions
+- Non-ASCII characters in subject lines and email content
+- Read email messages by ID, including nested multipart messages, with CC and BCC headers when present
+- Attachment listing with filename, type, size and download ID
+- Search emails with Gmail's search operators
+- Create, update, delete and list labels, system and user-defined
+- Mark emails as read or unread, move them between labels, delete them
+- Batch operations on multiple emails at once
+- Report phishing, singly or in batches
+- Structured metadata tools that return message IDs, dates and labels without message content, for building a local index, using Gmail batch requests of up to 50 messages with bounded retries
+- `batch_fetch_window` downloads every message received since a timestamp to a local directory, with a manifest and a cross-check
+- Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`)
+- `--scopes` requests only the permissions you need and hides the tools those scopes do not allow; permanent deletion needs the opt-in `gmail.full` scope
+- OAuth2 sign-in with automatic browser launch, for Desktop and Web application credentials; the refresh token is kept across restarts, and the callback port and path come from your callback URL
+- Credentials stored once in `~/.gmail-mcp/`
 
 ## Installation & Authentication
 
@@ -75,7 +41,7 @@ npm install
 npm run build
 ```
 
-> **Note**: This repository is not published to npm. Any `npx ... auth` commands you find in older documentation refer to other packages; use `node dist/index.js auth` from this checkout instead.
+> **Note**: This repository is not published to npm. Run `node dist/index.js auth` from this checkout; `npx ... auth` commands refer to other packages.
 
 ### Setting up Google Cloud credentials
 
@@ -348,7 +314,7 @@ This enables every tool except the two permanent-delete tools, which require the
 
 Some MCP clients dedupe tool entries by their base name across servers, which makes it impossible to run two instances of this server side-by-side (e.g. one for a personal account and one for a shared inbox) - only one instance's tools surface, even though both servers report as connected.
 
-The server accepts an optional `--tool-prefix=<value>` CLI flag (or `GMAIL_MCP_TOOL_PREFIX` env var) that is prepended to every tool name at registration. Default is empty (fully backward-compatible).
+The server accepts an optional `--tool-prefix=<value>` CLI flag (or `GMAIL_MCP_TOOL_PREFIX` env var) that is prepended to every tool name at registration. Default is empty, so tool names have no prefix.
 
 Example: register two instances with distinct prefixes in Claude Code:
 
@@ -487,7 +453,7 @@ The first four tools never request or return subjects, addresses, snippets, head
 - `complete`: `true` only when every listing ran to its last page (`false` for `failed` and `skipped`).
 - `unexplainedIds`: the IDs that make the result inconsistent; empty otherwise (always present).
 - `errors`: one `{ query, page?, status, attempts }` per listing that did not complete (`page` is the 1-based page that failed); empty otherwise (always present).
-- `counts`: `{ window, spam, trash, anywhere }` distinct IDs per listing; present when the cross-check ran (`consistent`, `inconsistent`, `failed`), absent when `skipped`. The same four numbers are also present as top-level `window`, `spam`, `trash` and `anywhere` for compatibility.
+- `counts`: `{ window, spam, trash, anywhere }` distinct IDs per listing; present when the cross-check ran (`consistent`, `inconsistent`, `failed`), absent when `skipped`. The same four numbers are also present as top-level `window`, `spam`, `trash` and `anywhere`.
 
 ```json
 { "status": "failed", "consistent": false, "complete": false, "unexplainedIds": [],
@@ -583,7 +549,7 @@ Creates a draft email without sending it. **Also supports attachments**.
 ```
 
 ### 3. Read Email (`read_email`)
-Retrieves the content of a specific email by its ID. **Now shows enhanced attachment information**.
+Retrieves the content of a specific email by its ID, with its attachments listed.
 
 ```json
 {
@@ -591,7 +557,7 @@ Retrieves the content of a specific email by its ID. **Now shows enhanced attach
 }
 ```
 
-**Enhanced Response includes CC/BCC headers (when present) and attachment details:**
+**The response includes CC/BCC headers (when present) and attachment details:**
 ```
 Subject: Project Files
 From: sender@example.com
@@ -607,7 +573,7 @@ Attachments (2):
 ```
 
 ### 4. **Download Attachment (`download_attachment`)**
-**NEW**: Downloads email attachments to your local filesystem.
+Downloads email attachments to your local filesystem.
 
 ```json
 {
@@ -620,7 +586,7 @@ Attachments (2):
 
 Parameters:
 - `messageId`: The ID of the email containing the attachment
-- `attachmentId`: The attachment ID (shown in enhanced email display)
+- `attachmentId`: The attachment ID (shown in `read_email` output)
 - `savePath`: Directory to save the file (optional, defaults to current directory)
 - `filename`: Custom filename (optional, uses original filename if not provided)
 
@@ -724,7 +690,7 @@ Gets an existing label by name or creates it if it doesn't exist.
 ```
 
 ### 13. Batch Modify Emails (`batch_modify_emails`)
-Modifies labels for multiple emails in efficient batches.
+Modifies labels for multiple emails in batches.
 
 ```json
 {
@@ -736,7 +702,7 @@ Modifies labels for multiple emails in efficient batches.
 ```
 
 ### 14. Batch Delete Emails (`batch_delete_emails`)
-Permanently deletes multiple emails in efficient batches. This tool requires `gmail.full` (`https://mail.google.com/`); the default `gmail.modify` scope is not enough for Gmail's permanent-delete endpoint.
+Permanently deletes multiple emails in batches. This tool requires `gmail.full` (`https://mail.google.com/`); the default `gmail.modify` scope is not enough for Gmail's permanent-delete endpoint.
 
 ```json
 {
@@ -859,7 +825,7 @@ Reports a message as phishing using the closest public Gmail API behavior by app
 > **Note**: The Gmail API does not expose the full native "Report phishing" workflow. This tool applies the SPAM label as the closest available approximation.
 
 ### 23. Batch Report Phishing (`batch_report_phishing`)
-Reports multiple messages as phishing in efficient batches.
+Reports multiple messages as phishing in batches.
 
 ```json
 {
@@ -869,7 +835,7 @@ Reports multiple messages as phishing in efficient batches.
 ```
 
 ### 24. Send Draft (`send_draft`)
-Atomically sends an existing draft via `users.drafts.send` and removes it from the Drafts folder in the same operation - no orphan/ghost draft left behind. Use after a `draft_email` (or `update_draft`) once the content is confirmed.
+Atomically sends an existing draft via `users.drafts.send` and removes it from the Drafts folder in the same operation. Use after a `draft_email` (or `update_draft`) once the content is confirmed.
 
 ```json
 {
@@ -1082,7 +1048,7 @@ Here are some practical filter examples:
 
 ## Advanced Search Syntax
 
-The `search_emails` tool supports Gmail's powerful search operators:
+The `search_emails` tool supports Gmail's search operators:
 
 | Operator | Example | Description |
 |----------|---------|-------------|
@@ -1097,41 +1063,40 @@ The `search_emails` tool supports Gmail's powerful search operators:
 
 You can combine multiple operators: `from:john@example.com after:2024/01/01 has:attachment`
 
-## Advanced Features
+## More on the features
 
-### **Email Attachment Support**
+### Email Attachments
 
-The server provides comprehensive attachment functionality:
+The server handles attachments as follows:
 
 - **Sending Attachments**: Include file paths in the `attachments` array when sending or drafting emails
-- **Attachment Detection**: Automatically detects MIME types and file sizes
-- **Download Capability**: Download any email attachment to your local filesystem
-- **Enhanced Display**: View detailed attachment information including filenames, types, sizes, and download IDs
-- **Multiple Formats**: Support for all common file types (documents, images, archives, etc.)
-- **RFC822 Compliance**: Uses Nodemailer for proper MIME message formatting
-
-**Supported File Types**: All standard file types including PDF, DOCX, XLSX, PPTX, images (PNG, JPG, GIF), archives (ZIP, RAR), and more.
+- **Attachment Detection**: MIME types and file sizes are detected from the files
+- **Download**: Download any email attachment to your local filesystem
+- **Display**: `read_email` lists each attachment's filename, type, size and download ID
+- **File types**: Any file type can be attached (documents, images, archives and so on)
+- **MIME formatting**: Messages with attachments are built with Nodemailer
 
 ### Email Content Extraction
 
-The server intelligently extracts email content from complex MIME structures:
+The server extracts email content from MIME structures:
 
-- Prioritizes plain text content when available
-- Falls back to HTML content if plain text is not available
+- Uses the plain text part when it holds the message
+- Uses the HTML part when there is no plain part: `read_email` and `gmail-get-message` return that HTML as it is, while `batch_fetch_window` converts it to text
+- Uses the HTML part converted to text when the plain part is only a stub ("view this email in your browser"), in every tool that reports `bodySource`, which names the part the body came from
 - Handles multi-part MIME messages with nested parts
-- **Processes attachments information (filename, type, size, download ID)**
-- Preserves original email headers (From, To, Subject, Date)
+- Lists attachments (filename, type, size, download ID)
+- Keeps the email headers (From, To, Subject, Date)
 
 ### International Character Support
 
-The server fully supports non-ASCII characters in email subjects and content, including:
+The server supports non-ASCII characters in email subjects and content, including:
 - Turkish, Chinese, Japanese, Korean, and other non-Latin alphabets
 - Special characters and symbols
-- Proper encoding ensures correct display in email clients
+- Headers and bodies are encoded so email clients display them correctly
 
-### Comprehensive Label Management
+### Label Management
 
-The server provides a complete set of tools for managing Gmail labels:
+The server provides these tools for managing Gmail labels:
 
 - **Create Labels**: Create new labels with customizable visibility settings
 - **Update Labels**: Rename labels or change their visibility settings
@@ -1144,17 +1109,14 @@ Label visibility settings include:
 - `messageListVisibility`: Controls whether the label appears in the message list (`show` or `hide`)
 - `labelListVisibility`: Controls how the label appears in the label list (`labelShow`, `labelShowIfUnread`, or `labelHide`)
 
-These label management features enable sophisticated organization of emails directly through Claude, without needing to switch to the Gmail interface.
-
 ### Batch Operations
 
-The server includes efficient batch processing capabilities:
+The server processes emails in batches:
 
-- Process up to 50 emails at once (configurable batch size)
-- Automatic chunking of large email sets to avoid API limits
-- Detailed success/failure reporting for each operation
-- Graceful error handling with individual retries
-- Perfect for bulk inbox management and organization tasks
+- Up to 50 emails at once (configurable batch size)
+- Large sets are split into chunks to stay within API limits
+- Success or failure is reported for each message
+- A failed batch is retried one message at a time
 
 ## Security Notes
 
@@ -1208,6 +1170,10 @@ The evals package loads an mcp client that then runs the index.ts file, so there
 ```bash
 OPENAI_API_KEY=your-key  npx mcp-eval src/evals/evals.ts src/index.ts
 ```
+
+## Credits
+
+Authors: gongrzhe and Arty McLabin. Contributors: @MaxGhenis, @nicholas-anthony-ai, @tansanDOTeth, @JF10R, @panghy, @ShivamB25, @thisisambros, @bryankthompson, @icanhasjonas, @BrentBaccala, @soapergem and @caioribeiroclw-pixel.
 
 ## License
 

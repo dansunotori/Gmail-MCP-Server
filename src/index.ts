@@ -11,7 +11,7 @@ import { createGmailServer } from "./server.js";
 // Optional tool-name prefix — lets multiple instances of this server run side-by-side
 // without their tool names colliding in clients that disambiguate by base name.
 // Precedence: --tool-prefix=<value> / --tool-prefix <value> CLI flag, then
-// GMAIL_MCP_TOOL_PREFIX env var, then empty (no prefix → backward compatible).
+// GMAIL_MCP_TOOL_PREFIX env var, then empty (no prefix).
 // Does not affect the `auth` subcommand, which is detected via process.argv[2] === 'auth'
 // and exits before the server starts — run `auth` without --tool-prefix.
 const TOOL_PREFIX = resolveToolPrefix(process.argv.slice(2), process.env);

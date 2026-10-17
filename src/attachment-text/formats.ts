@@ -1,7 +1,6 @@
 /**
  * What get_attachment_text can read, how text bytes are decoded, the size ceiling, and the
  * error a file fault raises. Shared by the server-side tool and the extraction worker.
- * The design follows outlook-claude-mcp's src/workers/extract-text-constants.ts.
  */
 
 // Why a file cannot be read, as the contract names it: a caller tells a file fault from a

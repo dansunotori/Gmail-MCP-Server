@@ -1,7 +1,7 @@
 /**
  * Spreadsheet (xlsx, xlsm, xls, csv) to text, inside the extraction worker. SheetJS reads
  * the data only: formulas are never evaluated (cached results are used) and VBA is never
- * loaded. Ported from outlook-claude-mcp's src/workers/extract-spreadsheet.ts.
+ * loaded.
  */
 
 import * as XLSX from 'xlsx';

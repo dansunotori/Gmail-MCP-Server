@@ -1,6 +1,6 @@
 # Gmail Filter Management Examples
 
-This document provides practical examples of how to use the new Gmail filter functionality in the MCP server.
+This document provides practical examples of how to use the MCP server's Gmail filter tools.
 
 ## Quick Start
 

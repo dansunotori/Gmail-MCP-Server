@@ -121,11 +121,9 @@ describe('htmlToText', () => {
 describe('isPlainTextStub', () => {
   it('recognises the stub wording real senders put in the plain part', () => {
     for (const stub of [
-      // Seen in a live mailbox.
       'This is an HTML message; reading this requires an HTML-capable mail reader.',
       "Your email client doesn't support HTML emails, please view this email in a client that supports HTML.",
       'Plain text version not available.',
-      // Named in the request.
       'This message was sent to you as HTML-only.',
       'Having trouble reading this? View it in your browser: https://example.com/v/123',
       'The plain-text version of this email is not available.',

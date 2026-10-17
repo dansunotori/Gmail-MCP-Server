@@ -1,14 +1,4 @@
-/**
- * Tests for email threading header fixes (issue #66)
- *
- * Verifies:
- * 1. createEmailMessage uses separate `references` field when provided
- * 2. createEmailMessage falls back to `inReplyTo` for References when no `references` field
- * 3. No References/In-Reply-To headers on new emails
- * 4. Source verification: createEmailWithNodemailer uses references field
- * 5. Source verification: handleEmailAction auto-resolves threading headers
- * 6. read_email returns Message-ID
- */
+/** Tests for email threading headers. */
 
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';

@@ -71,7 +71,7 @@ describe('loadCredentials', () => {
     expect(kindOf(() => loadCredentials({ requireCredentials: true }))).toBe('missing-credentials');
   });
 
-  it('loads the v1.2.0 shape with its scopes and the legacy shape with the default scopes', () => {
+  it('loads the saved shape with its scopes, and a bare token shape with the default scopes', () => {
     fs.writeFileSync(oauthPath, JSON.stringify(KEYS));
     fs.writeFileSync(credentialsPath, JSON.stringify({ tokens: { refresh_token: 'r1' }, scopes: ['gmail.readonly'] }));
     const current = loadCredentials({ requireCredentials: true });

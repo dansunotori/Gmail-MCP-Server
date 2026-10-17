@@ -374,7 +374,7 @@ const CrossCheckRanSchema = z.object({
   unexplainedIds: z.array(NonEmptyString),
   errors: z.array(CrossCheckErrorSchema),
   counts: CrossCheckCountsSchema,
-  // The same four counts, kept flat for compatibility.
+  // The same four counts, also at the top level of crossCheck.
   window: z.number().int().min(0),
   spam: z.number().int().min(0),
   trash: z.number().int().min(0),

@@ -848,7 +848,7 @@ describe('gmail-batch-fetch-window', () => {
     expect(deps.gmail).not.toHaveBeenCalled();
   });
 
-  it('keeps the guard: a foreign messages/ directory is refused and nothing is printed or deleted', async () => {
+  it('refuses a foreign messages/ directory and prints or deletes nothing', async () => {
     fs.mkdirSync(path.join(dir, 'messages'));
     fs.writeFileSync(path.join(dir, 'messages', 'keep.txt'), 'mine');
     const { deps, out } = harness();

@@ -2,12 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
 
-## 10. Remove changelogs, history, reports, and trumpet-blowing
-
-- Add standing rules that no changelogs, history, reports, or trumpet-blowing survive in this repository files or code comments. 
-- Double-check model logic for reporting preservation and close those gaps in the repo instructions, too
-- Review every documend and code file for the violations and remove changelogs, history, reports, and trumpet-blowing.
-
 ## 11. Decode numeric character references in the HTML-to-text conversion
 
 `htmlToText` (`src/message-body.ts`) decodes five named entities and leaves numeric references as they are, so a body converted from HTML can read `&#8199;&#8199;` or `&#x2019;` where the sender wrote a space or an apostrophe. Live, marketing mail delivered through `html-over-stub` and HTML-only messages shows them. The conversion is pinned as a stable output shape for message files, so this changes that shape on purpose.
@@ -15,7 +9,7 @@ Work to implement, in order. Every change applies to the MCP tools and to the CL
 Done when:
 
 - Decimal (`&#8217;`) and hexadecimal (`&#x2019;`) references, and the common named entities beyond the five handled today (`&rsquo;`, `&ndash;`, `&hellip;`, `&copy;`), decode to their characters; an invalid reference is left as written.
-- The test that pins the conversion is updated with the new cases, and the README and spec say the conversion changed shape.
+- The test that pins the conversion is updated with the new cases, and the README and spec describe how numeric and named references are decoded.
 
 ## 12. One body rule for every tool that returns a body
 

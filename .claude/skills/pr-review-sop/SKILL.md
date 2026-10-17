@@ -78,12 +78,12 @@ This repository is installed from source only. `package.json` is marked `"privat
    b. Or: merge first via GitHub, then commit fixes on top.
 3. `gh pr merge {N} --merge` (merge via GitHub - shows purple "merged" badge, credits the contributor)
 4. **Verify CI:** `gh run list --repo dansunotori/Gmail-MCP-Server --branch main --limit 1` - wait for result. If CI fails, fix before proceeding.
-5. Comment on PR explaining security audit result + any post-merge fixes applied.
+5. Comment on PR explaining security audit result + any post-merge fixes applied. A PR comment is the only place such a report goes: never into a repository file or code comment.
 
 **Why not manual close:** "Closed" (red) looks like rejection to contributors and doesn't credit their work on their GitHub profile. Always use `gh pr merge` for accepted PRs.
 
 **Post-merge integration test (mandatory for feature PRs):**
-After merging a PR that adds new tools or features, rebuild from source (`npm run build`) and test the actual new functionality end-to-end. Do NOT simulate by using existing tools that happen to call the same API - test the actual new code path. For new MCP tools: rebuild, then invoke the tool via the local MCP server or direct `node` execution to verify it returns correct data.
+After merging a PR that adds new tools or features, rebuild from source (`npm run build`) and test the actual new functionality end-to-end. Its result goes to the maintainer in chat, never into a repository file. Do NOT simulate by using existing tools that happen to call the same API - test the actual new code path. For new MCP tools: rebuild, then invoke the tool via the local MCP server or direct `node` execution to verify it returns correct data.
 
 **If `gh pr merge` can't be used (conflicts):** Merge locally, resolve conflicts, push to the target branch. GitHub will auto-detect the PR as merged when the PR's head commit appears in the target branch history. Leave the PR open (don't close manually) - let GitHub close it automatically with the purple badge.
 
@@ -105,7 +105,7 @@ When scanning issues:
 
 **Threat model: local stdio MCP server.** User self-hosts on own machine. LLM client already has full filesystem/shell access. Security audits must account for this context.
 
-Established hardening from commits `95071e7` and `208ce00`:
+Hardening every change must keep:
 - CRLF header injection prevention
 - OAuth callback localhost binding
 - Credential file permission hardening

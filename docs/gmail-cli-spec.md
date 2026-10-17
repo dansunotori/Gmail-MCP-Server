@@ -1,12 +1,9 @@
 # Gmail CLI — Specification
 
-Four command-line tools, each exposing an existing MCP tool with the same semantics and nothing
+Six command-line tools, each exposing an existing MCP tool with the same semantics and nothing
 more, installed as bins of the package. Scripts (and Claude sessions) can then search, read,
-download and fetch a window of Gmail without an MCP session. This document is self-contained and
-the output contracts below are the requirement.
-
-Revised on 2026-09-25: each CLI now mirrors one MCP tool exactly, including
-`batch_fetch_window`, in place of the 2026-09-08 design with its own output shapes.
+download, read attachment text, fetch a window of Gmail and save a draft without an MCP session.
+This document is self-contained and the output contracts below are the requirement.
 
 ## Non-negotiables
 
@@ -31,9 +28,9 @@ Revised on 2026-09-25: each CLI now mirrors one MCP tool exactly, including
   `~/.gmail-mcp/credentials.json` (or `GMAIL_OAUTH_PATH` / `GMAIL_CREDENTIALS_PATH`), including the
   persisted `refresh_token` handling in `loadCredentials()`. A tool the saved scopes do not grant is
   refused with the server's own message.
-- Do not change MCP server behaviour. The CLIs are additive.
+- Do not change MCP server behaviour.
 - Sending mail stays out of scope: no CLI sends, replies, forwards, labels, trashes or modifies a
-  message.
+  message. `gmail-create-draft` saves a draft and never sends it.
 
 ## Commands and bin entries
 
@@ -42,7 +39,9 @@ Revised on 2026-09-25: each CLI now mirrors one MCP tool exactly, including
 | `gmail-search` | `search_emails` |
 | `gmail-get-message` | `read_email` |
 | `gmail-download-attachment` | `download_attachment` |
+| `gmail-get-attachment-text` | `get_attachment_text` |
 | `gmail-batch-fetch-window` | `batch_fetch_window` |
+| `gmail-create-draft` | `draft_email` |
 
 Names are prefixed `gmail-` so that they cannot clash with generic mail CLIs a user may already
 have installed globally.
@@ -92,17 +91,21 @@ Exposes `read_email` (`messages.get` with `format: 'full'`). Prints:
   "to": "me@example.com",
   "cc": "",
   "date": "Mon, 07 Sep 2026 14:00:00 +0000",
+  "messageIdHeader": "<CAB123@mail.example.com>",
   "labels": ["INBOX", "UNREAD"],
   "body": "Please find attached…",
+  "bodySource": "text",
   "attachments": [
     { "id": "ANGjdJ...", "filename": "invoice.pdf", "mimeType": "application/pdf", "size": 123456 }
   ]
 }
 ```
 
-`body` is the tool's body: the plain-text part, or the HTML when there is none. With
-`--format markdown` it is the HTML part converted to Markdown (turndown, with `head`, `style` and
-`script` removed), or the plain text when the message has no HTML part.
+`body` is the tool's body: the plain-text part; the HTML part as it is, markup included, when
+there is no plain part (`bodySource` `html`); or the HTML part converted to text when the plain
+part is only a stub (`bodySource` `html-over-stub`). `messageIdHeader` is the RFC 822 `Message-ID` header, or `null`. With
+`--format markdown` the body is the HTML part converted to Markdown (turndown, with `head`, `style`
+and `script` removed), or the plain text when the message has no HTML part.
 
 ### gmail-download-attachment
 
@@ -120,6 +123,25 @@ and prints:
 
 A download the server reports as failed is an error (non-zero exit, empty stdout), whether the
 server reports it as an error result or as text.
+
+### gmail-get-attachment-text
+
+```
+gmail-get-attachment-text <message_id> <attachment_id> [-o <file>]
+```
+
+Exposes `get_attachment_text`. Prints `{name, format, text, truncated, sheets}`; an attachment
+that is protected, encrypted, corrupt or unsupported exits 6. `README.md` gives the formats and
+the spreadsheet layout.
+
+### gmail-create-draft
+
+```
+gmail-create-draft --to <addresses> --subject <text> (--body <text> | --body-file <file>) [options] [-o <file>]
+```
+
+Exposes `draft_email` through the same compose code, with one option per tool input, and prints
+the draft read back from Gmail. It never sends. `gmail-create-draft --help` lists every option.
 
 ### gmail-batch-fetch-window
 
@@ -144,8 +166,10 @@ CLIs share:
   through an injected logger (stdout for the server, stderr for the CLIs).
 - `src/read-tools.ts`: `searchEmails`, `readEmail` and `downloadAttachment`, each returning
   structured data, plus the formatters that render the exact text the server returns.
-- `src/batch-fetch-window.ts`: `batchFetchWindow`, unchanged.
-- `src/cli/common.ts` (parsing, help, output, exit codes) and `src/cli/commands.ts` (the four
+- `src/batch-fetch-window.ts`: `batchFetchWindow`.
+- `src/attachment-text/`: `getAttachmentText` and the extraction worker.
+- `src/compose.ts`: the draft and send logic `draft_email` uses.
+- `src/cli/common.ts` (parsing, help, output, exit codes) and `src/cli/commands.ts` (the six
   commands); `src/cli/gmail-*.ts` are the bin entry points.
 
 ## Errors and exit codes
@@ -158,6 +182,7 @@ CLIs share:
 | 3 | Missing/invalid credentials, Gmail auth failure, or a scope the credentials lack (sign in with `--auth`) |
 | 4 | Rate limited (Gmail 429, or a 403 with a rate-limit reason) |
 | 5 | Message or attachment not found (404) |
+| 6 | `gmail-get-attachment-text` only: the attachment is protected, encrypted, corrupt or unsupported |
 
 Never print tokens or full request headers to stderr.
 
@@ -171,4 +196,4 @@ Never print tokens or full request headers to stderr.
   `gmail-batch-fetch-window` against a temporary directory, including the guard refusal.
 - `scripts/install-cli.test.ts`: links are created, own links replaced, and a foreign link, a
   regular file or a missing build left alone and reported.
-- The existing vitest suite passes after the extraction.
+- The full vitest suite must pass.

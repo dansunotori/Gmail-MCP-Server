@@ -49,7 +49,7 @@ const modify_emailEval: EvalFunction = {
     }
 };
 
-// New filter management evaluations
+// Filter management evaluations
 const create_filterEval: EvalFunction = {
     name: 'create_filter Tool Evaluation',
     description: 'Evaluates creating a custom Gmail filter',
@@ -79,7 +79,7 @@ const list_filtersEval: EvalFunction = {
 
 const filter_managementEval: EvalFunction = {
     name: 'filter_management Tool Evaluation',
-    description: 'Evaluates comprehensive filter management operations',
+    description: 'Evaluates a filter that labels, marks read and archives marketing emails',
     run: async () => {
         const result = await grade(openai("gpt-4"), "I want to create a filter for managing marketing emails. Filter emails containing 'unsubscribe' in the body, label them as 'Marketing', mark them as read, and skip the inbox.");
         return JSON.parse(result);

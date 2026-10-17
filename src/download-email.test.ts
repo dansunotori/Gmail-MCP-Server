@@ -1,12 +1,3 @@
-/**
- * Test plan for download_email tool (PR #13)
- *
- * 1. Verify download_email with each format (json, eml, txt, html)
- * 2. Verify scope filtering works (tool visible with gmail.readonly)
- * 3. Verify directory creation when savePath doesn't exist
- * 4. Verify existing tools still work after extractHeaders refactor
- */
-
 import { describe, it, expect } from "vitest";
 import {
   gmailMessageToJson,

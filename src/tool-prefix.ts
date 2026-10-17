@@ -4,8 +4,7 @@
  * that disambiguate tools by base name.
  *
  * Precedence: `--tool-prefix=<value>` / `--tool-prefix <value>` CLI flag, then
- * the `GMAIL_MCP_TOOL_PREFIX` env var, then empty string (no prefix — the
- * backward-compatible default).
+ * the `GMAIL_MCP_TOOL_PREFIX` env var, then empty string (no prefix).
  *
  * Pure function: argv (already sliced past the node binary and script) and the
  * env map are passed in explicitly, so it is unit-testable without spawning the
