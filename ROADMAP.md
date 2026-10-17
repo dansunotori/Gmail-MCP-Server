@@ -21,6 +21,13 @@ Done when:
 - Live, a password-protected PDF exits non-zero naming it protected.
 - `gmail-get-attachment-text --help` documents the formats, the output and the exit codes.
 
+Approach: `outlook-claude-mcp` already ships the same tool (`get_attachment_text`, `get-attachment-text`) for XLSX/XLSM/XLS/CSV, PDF and DOCX, so this item reuses its design rather than a new one:
+
+- Parsers: `pdf-parse` for PDF, `mammoth` for DOCX, SheetJS `xlsx` 0.20.3 from `cdn.sheetjs.com` for spreadsheets (the npm copy, 0.18.5, carries unpatched high advisories GHSA-4r6h-8v6p-xvw6 and GHSA-5pgg-2g8v-p4x9 and parses untrusted input). `cdn.sheetjs.com` joins lockfile-lint's allowed hosts, pinned by integrity hash.
+- Isolation: extraction runs in a forked worker with a timeout and a sanitised environment (its `src/workers/fork-extractor.ts`, `extract-text-worker.ts`, `sanitise-env.ts`, `extract-spreadsheet.ts`), so a hostile or huge file cannot hang or crash the server.
+- Checks: magic bytes before parsing (a mislabelled file is reported as such), encrypted workbooks and password-protected PDFs reported by name, macros never executed, a size ceiling cut on a row or line boundary.
+- Runtime: Node 24 as the minimum (`engines`, CI), matching `outlook-claude-mcp` and the local standard; current `pdfjs-dist` needs Node 22.13 or later.
+
 ## 7. Script to import Gmail prompts into this roadmap
 
 Picking this server's prompts out of `figaro-pa-predecessor/docs/prompts` and copying them here was done by hand: the files were selected by their `gmail-` prefix and each one was transcribed into a section. Add `scripts/import-prompts.mjs`, which takes the prompts directory, selects `gmail-*.md`, skips any prompt whose `Source:` line already appears in `ROADMAP.md`, and appends each new prompt as a numbered section with its `Source:` line. That makes the import repeatable and avoids transcription errors.
@@ -72,3 +79,31 @@ Done when:
 
 - With no `mimeType`, the MCP tools pick it the way `gmail-create-draft` does (`text/html` for an HTML body alone, `multipart/alternative` for both), with and without attachments, and an explicit `text/plain` beside `htmlBody` is an error result rather than a silently dropped body.
 - The schema descriptions and README say so, and `server.test.ts` covers each tool's HTML-only and both-bodies cases.
+
+## 14. Refuse unknown MCP tool arguments
+
+Most input schemas in `src/tools.ts` are plain `z.object`, which drops keys it does not know, so a misnamed argument (`message_id` for `messageId`, `max_results` for `maxResults`) is silently ignored and the call runs without it. `outlook-claude-mcp` makes every input schema strict and names the accepted arguments in the refusal, with the likely intended one (`src/mcp/strict-input.ts`: `strictInputSchema`, `suggestReplacement`, `unknownArgumentsMessage`).
+
+Done when:
+
+- Every MCP tool refuses an unknown argument with an error result naming it, the accepted arguments, and the intended one where a spelling or prefix match makes it evident (`message_id (use messageId instead)`).
+- The CLIs' `--input` refuses an unknown field the same way, with the same wording.
+- A test walks `toolDefinitions` and fails for any input schema that is not strict.
+
+## 15. Tool-to-CLI parity test
+
+`outlook-claude-mcp`'s `src/cli/tool-cli-parity.test.ts` proves each CLI exposes its tool one to one: every schema field is a positional or a same-named kebab-case flag (`--<field>-file` for a file), every alias points at a real flag, and every help example parses. Here only "every flag has an example" is checked; nothing stops `draft_email` gaining an input that `gmail-create-draft` lacks, or a help example that no longer parses.
+
+Done when:
+
+- A test fails when a schema field of a command's MCP tool has no matching flag or positional, unless the command declares it input-only.
+- Every example line in every command's `--help` is parsed by the command's own parser without error.
+
+## 16. Guard the roadmap against finished-work wording
+
+Item 10's rule (no changelogs, history or reports in the repository) is enforced by review alone. `outlook-claude-mcp`'s `scripts/check-roadmap.mjs` enforces it deterministically for its roadmap: a word list ("fixed", "shipped", "landed", "implemented", "no longer", ticked boxes, struck-through text, `**Done:**`) checked by a pre-commit step and a Claude Code PreToolUse hook on the roadmap file.
+
+Done when:
+
+- A script local to this repository refuses `ROADMAP.md` content that reports finished work, run as a pre-commit check and as a project-level PreToolUse hook on edits to that file, with fenced and inline code exempt.
+- Its tests cover each pattern and the exemptions.
