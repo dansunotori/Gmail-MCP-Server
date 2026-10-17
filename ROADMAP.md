@@ -125,3 +125,13 @@ Done when:
 - `CLAUDE.md`, `README.md` and `.claude/skills/pr-review-sop/SKILL.md` describe a single-branch workflow: no staging branch, no promotion or soak step; CI is checked after every push to `main`.
 - `.github/workflows/ci.yml` triggers only on `main` (pushes and PRs) and on manual runs.
 - No file in the repository still names the staging branch.
+
+## 9. Upgrade nodemailer and googleapis past their advisories
+
+`npm audit` still reports advisories that only a major upgrade fixes: `nodemailer` 7 (high; fixed in 10.1.2), which builds every message this server sends, drafts or replies with attachments, and `uuid` through `googleapis` 129 (moderate; fixed by moving to a current `googleapis`). CI passes only because it fails on critical advisories alone.
+
+Done when:
+
+- `nodemailer` and `googleapis` are on releases with no open advisory, and `npm audit` reports nothing above low for production dependencies.
+- The MIME builder tests (`utl.test.ts`, `inline-images.test.ts`, `reply-all-helpers.test.ts`) and the draft lifecycle script pass unchanged, and a live draft with an attachment and an inline image renders correctly in Gmail.
+- The lockfile is generated so that `npm ci` succeeds under the npm 10 that CI runs (npm 11 prunes optional esbuild entries npm 10 needs; `npx npm@10 install --package-lock-only` restores them).
