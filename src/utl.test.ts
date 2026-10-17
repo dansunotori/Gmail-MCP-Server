@@ -76,14 +76,8 @@ describe('Source verification', () => {
         expect(source).toContain('references: validatedArgs.references || validatedArgs.inReplyTo');
     });
 
-    it('handleEmailAction auto-resolves threading headers', () => {
-        const source = fs.readFileSync(path.join(srcDir, 'server.ts'), 'utf-8');
-        expect(source).toContain('validatedArgs.threadId && !validatedArgs.inReplyTo');
-        expect(source).toContain('gmail.users.threads.get');
-        expect(source).toContain('validatedArgs.inReplyTo = lastMessageId');
-        expect(source).toContain("validatedArgs.references = allMessageIds.join(' ')");
-    });
-
+    // Threading-header resolution is exercised through the tools themselves: server.test.ts
+    // (send_email in a thread) and cli/commands.test.ts (gmail-create-draft --thread-id).
 });
 
 describe('read_email Message-ID', () => {

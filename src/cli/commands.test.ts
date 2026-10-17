@@ -9,6 +9,7 @@ import { GmailRequestError } from '../gmail-sync.js';
 import {
   COMMANDS,
   batchFetchWindowCommand,
+  createDraftCommand,
   downloadAttachmentCommand,
   getMessageCommand,
   searchCommand,
@@ -568,6 +569,178 @@ describe('gmail-download-attachment', () => {
     await expect(downloadAttachmentCommand(['m1', 'att-1', '--save-path', dir], deps)).rejects.toThrow('No attachment data received');
     expect(out).toEqual([]);
     expect(fs.readdirSync(dir)).toEqual([]);
+  });
+});
+
+describe('gmail-create-draft', () => {
+  // A saved draft as drafts.get returns it. Its values differ from any input, so a test can
+  // tell a read-back from an echo.
+  const savedDraft = {
+    id: 'r-draft-1',
+    message: {
+      id: 'm-draft-1',
+      threadId: 't-draft-1',
+      payload: {
+        mimeType: 'multipart/mixed',
+        headers: [
+          { name: 'To', value: 'Alice <alice@example.com>, bob@example.com' },
+          { name: 'Cc', value: 'carol@example.com' },
+          { name: 'Bcc', value: 'dave@example.com' },
+          { name: 'Subject', value: 'Saved subject' },
+        ],
+        parts: [
+          { mimeType: 'text/plain', body: { data: b64('saved body'), size: 10 } },
+          { mimeType: 'application/pdf', filename: 'saved.pdf', headers: [{ name: 'Content-Disposition', value: 'attachment; filename="saved.pdf"' }], body: { attachmentId: 'a1', size: 4321 } },
+          { mimeType: 'image/png', filename: 'logo.png', headers: [{ name: 'Content-Disposition', value: 'inline; filename="logo.png"' }, { name: 'Content-ID', value: '<logo>' }], body: { attachmentId: 'a2', size: 99 } },
+          // nodemailer marks an attached message inline without a Content-ID; it is still an attachment.
+          { mimeType: 'message/rfc822', filename: 'original.eml', headers: [{ name: 'Content-Disposition', value: 'inline; filename="original.eml"' }], body: { attachmentId: 'a3', size: 777 } },
+        ],
+      },
+    },
+  };
+
+  function draftGmail() {
+    const create = vi.fn(async (_params: { requestBody: { message: { raw: string; threadId?: string } } }) => ({ data: { id: 'r-draft-1' } }));
+    const get = vi.fn(async (_params: { id: string; format: string }) => ({ data: savedDraft }));
+    const send = vi.fn();
+    const threadsGet = vi.fn(async () => ({ data: { messages: [
+      { payload: { headers: [{ name: 'Message-ID', value: '<first@example.com>' }] } },
+      { payload: { headers: [{ name: 'Message-ID', value: '<last@example.com>' }] } },
+    ] } }));
+    const gmail = { users: {
+      drafts: { create, get, send },
+      messages: { send },
+      threads: { get: threadsGet },
+    } } as unknown as gmail_v1.Gmail;
+    const raw = () => Buffer.from(create.mock.calls[0][0].requestBody.message.raw, 'base64url').toString('utf8');
+    return { gmail, create, get, send, threadsGet, raw };
+  }
+
+  const write = (name: string, content: string | Buffer) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, content);
+    return file;
+  };
+
+  it('creates the draft, never sends, and prints the fields read back from the saved draft', async () => {
+    const fake = draftGmail();
+    const { deps, json } = harness(fake.gmail);
+    const bodyFile = write('body.txt', 'Grüße aus Stroud — £5');
+    const attachment = write('report.pdf', '%PDF-1.7 report');
+    await createDraftCommand([
+      '--to', 'alice@example.com,bob@example.com', '--cc', 'carol@example.com', '--bcc', 'dave@example.com',
+      '--subject', 'Quarterly report', '--body-file', bodyFile, '--attachment', attachment,
+    ], deps);
+    expect(deps.gmail).toHaveBeenCalledWith('draft_email');
+    expect(fake.send).not.toHaveBeenCalled();
+    expect(fake.get).toHaveBeenCalledWith({ userId: 'me', id: 'r-draft-1', format: 'full' });
+    const raw = fake.raw();
+    expect(raw).toContain('To: alice@example.com, bob@example.com');
+    expect(raw).toContain('Subject: Quarterly report');
+    expect(raw).toContain('filename=report.pdf');
+    // The body file's UTF-8 bytes, quoted-printable encoded: "Grüße aus Stroud — £5".
+    expect(raw).toContain('Gr=C3=BC=C3=9Fe aus Stroud =E2=80=94 =C2=A35');
+    expect(json()).toEqual({
+      draft_id: 'r-draft-1',
+      message_id: 'm-draft-1',
+      thread_id: 't-draft-1',
+      to: ['alice@example.com', 'bob@example.com'],
+      cc: ['carol@example.com'],
+      bcc: ['dave@example.com'],
+      subject: 'Saved subject',
+      attachments: [{ name: 'saved.pdf', size: 4321 }, { name: 'original.eml', size: 777 }],
+    });
+  });
+
+  it('sends an HTML-only body as text/html, and both bodies as multipart/alternative, when no --mime-type is given', async () => {
+    const htmlOnly = draftGmail();
+    await createDraftCommand(['--to', 'a@example.com', '--subject', 's', '--html-body', '<p>Hello <b>there</b></p>'], harness(htmlOnly.gmail).deps);
+    expect(htmlOnly.raw()).toContain('Content-Type: text/html');
+    expect(htmlOnly.raw()).toContain('<p>Hello <b>there</b></p>');
+
+    const both = draftGmail();
+    await createDraftCommand(['--to', 'a@example.com', '--subject', 's', '--body', 'Hello', '--html-body', '<p>Hello</p>'], harness(both.gmail).deps);
+    expect(both.raw()).toContain('Content-Type: multipart/alternative');
+    expect(both.raw()).toContain('<p>Hello</p>');
+  });
+
+  it('takes the tool\'s JSON request from --input, with options overriding its fields', async () => {
+    const fake = draftGmail();
+    const { deps } = harness(fake.gmail);
+    const input = write('request.json', JSON.stringify({ to: ['old@example.com'], subject: 'From input', body: 'Input body', cc: ['keep@example.com'] }));
+    await createDraftCommand(['--input', input, '--to', 'new@example.com'], deps);
+    const raw = fake.raw();
+    expect(raw).toContain('To: new@example.com');
+    expect(raw).toContain('Cc: keep@example.com');
+    expect(raw).toContain('Subject: From input');
+    expect(raw).toContain('Input body');
+  });
+
+  it('builds an HTML draft with an inline image from files', async () => {
+    const fake = draftGmail();
+    const { deps } = harness(fake.gmail);
+    const html = write('body.html', '<p>Hello <img src="cid:logo"></p>');
+    const image = write('logo.png', Buffer.from('89504e470d0a1a0a', 'hex'));
+    await createDraftCommand([
+      '--to', 'alice@example.com', '--subject', 'With logo', '--body', 'Hello',
+      '--html-body-file', html, '--mime-type', 'multipart/alternative', '--inline-image', `cid=logo,path=${image}`,
+    ], deps);
+    const raw = fake.raw();
+    expect(raw).toContain('Content-ID: <logo>');
+    expect(raw).toContain('text/html');
+  });
+
+  it('accepts a send-as address with a display name', async () => {
+    const fake = draftGmail();
+    await createDraftCommand(['--to', 'a@example.com', '--subject', 's', '--body', 'b', '--from', 'Team <team@example.com>'], harness(fake.gmail).deps);
+    expect(fake.raw()).toContain('From: Team <team@example.com>');
+  });
+
+  it('sets the threading headers from the thread like draft_email', async () => {
+    const fake = draftGmail();
+    const { deps } = harness(fake.gmail);
+    await createDraftCommand(['--to', 'alice@example.com', '--subject', 'Re: x', '--body', 'b', '--thread-id', 't-1'], deps);
+    expect(fake.create.mock.calls[0][0].requestBody.message.threadId).toBe('t-1');
+    const raw = fake.raw();
+    expect(raw).toContain('In-Reply-To: <last@example.com>');
+    expect(raw).toContain('References: <first@example.com> <last@example.com>');
+  });
+
+  it('exits 2 before calling Gmail for an unknown option, a missing input, an unreadable file or a bad value', async () => {
+    const body = write('ok.txt', 'body');
+    for (const argv of [
+      ['--to', 'a@example.com', '--subject', 's', '--body', 'b', '--send'],
+      ['--subject', 's', '--body', 'b'],
+      ['--to', 'a@example.com', '--body', 'b'],
+      ['--to', 'a@example.com', '--subject', 's'],
+      ['--to', 'a@example.com', '--subject', 's', '--body', 'b', '--attachment', path.join(dir, 'missing.pdf')],
+      ['--to', 'a@example.com', '--subject', 's', '--body-file', path.join(dir, 'missing.txt')],
+      ['--to', 'a@example.com', '--subject', 's', '--body', 'b', '--body-file', body],
+      ['--to', 'not-an-address', '--subject', 's', '--body', 'b'],
+      ['--to', 'a@example.com', '--subject', 's', '--body', 'b', '--mime-type', 'text/rtf'],
+      ['--to', 'a@example.com', '--subject', 's', '--body', 'b', '--inline-image', `cid=logo,path=${body}`],
+      ['--to', 'a@example.com', '--subject', 's', '--body', 'b', '--html-body', '<p>x</p>', '--inline-image', `path=${body}`],
+      ['--to', 'a@example.com', '--subject', 's', '--body', 'b', 'stray'],
+      ['--input', path.join(dir, 'missing.json')],
+      ['--to', 'a@example.com', '--subject', 's', '--body', 'b', '--from', 'not-an-address'],
+      ['--input', write('bad-from.json', JSON.stringify({ to: ['a@example.com'], subject: 's', body: 'b', from: 'Team <not-an-address>' }))],
+      ['--to', 'a@example.com', '--subject', 's', '--html-body', '<p>x</p>', '--mime-type', 'text/plain'],
+    ]) {
+      const { deps, out } = harness(draftGmail().gmail);
+      const failed = await createDraftCommand(argv, deps).catch(error => error);
+      expect(mapErrorToExitCode(failed), argv.join(' ')).toBe(2);
+      expect(deps.gmail, argv.join(' ')).not.toHaveBeenCalled();
+      expect(out).toEqual([]);
+    }
+  });
+
+  it('refuses an --output that would overwrite one of its own input files', async () => {
+    const body = write('body.txt', 'keep me');
+    const { deps } = harness(draftGmail().gmail);
+    await expect(createDraftCommand(['--to', 'a@example.com', '--subject', 's', '--body-file', body, '-o', body], deps))
+      .rejects.toThrow(/would overwrite the body file/);
+    expect(deps.gmail).not.toHaveBeenCalled();
+    expect(fs.readFileSync(body, 'utf8')).toBe('keep me');
   });
 });
 

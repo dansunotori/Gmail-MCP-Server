@@ -1,23 +1,6 @@
 # Roadmap
 
-Work to implement, in order. Items 5 and 6 come from the prompts in `figaro-pa-predecessor/docs/prompts/gmail-*.md`; each item keeps its prompt's contract and done-when criteria. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
-
-## 5. A CLI for creating a draft
-
-Source: `gmail-create-draft-cli.md`
-
-`draft_email` creates a draft through the MCP tool only, so a script cannot create a draft and read its own result back. Add the CLI `gmail-create-draft` over the same logic as `draft_email`: every option the tool takes is a CLI option, and the tool and the CLI stay in step from now on.
-
-Contract:
-
-- One option per `draft_email` input: `--to`, `--cc`, `--bcc` (comma-separated addresses), `--subject`, `--body` or `--body-file <path>`, `--html-body` or `--html-body-file <path>`, `--mime-type text/plain|text/html|multipart/alternative`, `--attachment <path>` (repeatable), `--inline-image cid=<cid>,path=<path>` (repeatable, needs an HTML body), `--from <send-as address>`, `--thread-id`, `--in-reply-to`, plus `--input <file>` taking the tool's JSON request (options override its fields) and `--output <file>`. A body is read from a file as UTF-8, so no body ever passes through a shell argument.
-- Output, one JSON document on stdout: `{"draft_id", "message_id", "thread_id", "to", "cc", "bcc", "subject", "attachments": [{"name", "size"}]}`, read back from the saved draft, not echoed from the input.
-- Failure: non-zero exit with empty stdout and one stderr line; an unknown option, a missing required one or an attachment path that cannot be read exits 2 before anything is sent to Gmail. The CLI never sends.
-
-Done when:
-
-- Live, a draft with a body file and one attachment is created, its read-back fields match the input, and it appears in Gmail's Drafts.
-- `gmail-create-draft --help` documents every option, the output and the exit codes.
+Work to implement, in order. Item 6 comes from the prompt `figaro-pa-predecessor/docs/prompts/gmail-attachment-text.md` and keeps its contract and done-when criteria. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
 
 ## 6. Attachment text extraction
 
@@ -80,3 +63,12 @@ Done when:
 
 - Those three tools choose the body through `bodySourceOf` and report `bodySource` per message.
 - A thread holding a stubbed message returns the converted HTML part for it through `get_thread` and `get_inbox_with_threads`, and `download_email` writes it in the txt and json formats.
+
+## 13. HTML bodies dropped by the MCP compose tools' text/plain default
+
+`SendEmailSchema` and `UpdateDraftSchema` default `mimeType` to `text/plain`, and `createEmailMessage` (`src/utl.ts`) then writes only the plain body, so `send_email`, `draft_email` and `update_draft` called with `htmlBody` and no `mimeType` send or save no HTML at all (an HTML-only call produces an empty message). Mail with attachments goes through nodemailer, which keeps the HTML, so the result also depends on whether a file is attached. `gmail-create-draft` already infers the type from the bodies given and refuses `text/plain` beside an HTML body.
+
+Done when:
+
+- With no `mimeType`, the MCP tools pick it the way `gmail-create-draft` does (`text/html` for an HTML body alone, `multipart/alternative` for both), with and without attachments, and an explicit `text/plain` beside `htmlBody` is an error result rather than a silently dropped body.
+- The schema descriptions and README say so, and `server.test.ts` covers each tool's HTML-only and both-bodies cases.

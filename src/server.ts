@@ -14,6 +14,7 @@ import type { OAuth2Client } from 'google-auth-library';
 import fs from 'fs';
 import path from 'path';
 import {createEmailMessage, createEmailWithNodemailer, needsRawBuilder} from "./utl.js";
+import { createDraft, encodeMessage, messageRequest, resolveThreadingHeaders, type ComposeArgs } from "./compose.js";
 import { createLabel, updateLabel, deleteLabel, listLabels, findLabelByName, getOrCreateLabel, GmailLabel } from "./label-manager.js";
 import { createFilter, listFilters, getFilter, deleteFilter, filterTemplates, GmailFilterCriteria, GmailFilterAction } from "./filter-manager.js";
 import { parseEmailAddresses, filterOutEmail, addRePrefix, buildReferencesHeader, buildReplyAllRecipients } from "./reply-all-helpers.js";
@@ -83,162 +84,33 @@ export function createGmailServer(deps: GmailServerDeps): Server {
             return toolErrorResult(name, new Error(scopeRefusal(name)));
         }
 
-        async function handleEmailAction(action: "send" | "draft", validatedArgs: any) {
-            let message: string;
-
+        async function handleEmailAction(action: "send" | "draft", validatedArgs: ComposeArgs) {
             try {
-                // Auto-resolve threading headers when threadId is provided but inReplyTo is missing
-                if (validatedArgs.threadId && !validatedArgs.inReplyTo) {
-                    try {
-                        const threadResponse = await gmail.users.threads.get({
-                            userId: 'me',
-                            id: validatedArgs.threadId,
-                            format: 'metadata',
-                            metadataHeaders: ['Message-ID'],
-                        });
-
-                        const threadMessages = threadResponse.data.messages || [];
-                        if (threadMessages.length > 0) {
-                            // Collect all Message-ID values for the References chain
-                            const allMessageIds: string[] = [];
-                            for (const msg of threadMessages) {
-                                const msgHeaders = msg.payload?.headers || [];
-                                const messageIdHeader = msgHeaders.find(
-                                    (h) => h.name?.toLowerCase() === 'message-id'
-                                );
-                                if (messageIdHeader?.value) {
-                                    allMessageIds.push(messageIdHeader.value);
-                                }
-                            }
-
-                            // Last message's Message-ID becomes In-Reply-To
-                            const lastMessage = threadMessages[threadMessages.length - 1];
-                            const lastHeaders = lastMessage.payload?.headers || [];
-                            const lastMessageId = lastHeaders.find(
-                                (h) => h.name?.toLowerCase() === 'message-id'
-                            )?.value;
-
-                            if (lastMessageId) {
-                                validatedArgs.inReplyTo = lastMessageId;
-                            }
-                            if (allMessageIds.length > 0) {
-                                validatedArgs.references = allMessageIds.join(' ');
-                            }
-                        }
-                    } catch (threadError: any) {
-                        console.warn(`Warning: Could not fetch thread ${validatedArgs.threadId} for header resolution: ${threadError.message}`);
-                        // Continue without threading headers - degraded but not broken
-                    }
-                }
-
-                // Route attachment- or inline-image-bearing mail through the raw MIME builder
-                if (needsRawBuilder(validatedArgs)) {
-                    // Use Nodemailer to create properly formatted RFC822 message
-                    message = await createEmailWithNodemailer(validatedArgs);
-                    
-                    if (action === "send") {
-                        const encodedMessage = Buffer.from(message).toString('base64')
-                            .replace(/\+/g, '-')
-                            .replace(/\//g, '_')
-                            .replace(/=+$/, '');
-
-                        const result = await gmail.users.messages.send({
-                            userId: 'me',
-                            requestBody: {
-                                raw: encodedMessage,
-                                ...(validatedArgs.threadId && { threadId: validatedArgs.threadId })
-                            }
-                        });
-                        
-                        return {
-                            content: [
-                                {
-                                    type: "text",
-                                    text: `Email sent successfully with ID: ${result.data.id}`,
-                                },
-                            ],
-                        };
-                    } else {
-                        // For drafts with attachments, use the raw message
-                        const encodedMessage = Buffer.from(message).toString('base64')
-                            .replace(/\+/g, '-')
-                            .replace(/\//g, '_')
-                            .replace(/=+$/, '');
-                        
-                        const messageRequest = {
-                            raw: encodedMessage,
-                            ...(validatedArgs.threadId && { threadId: validatedArgs.threadId })
-                        };
-                        
-                        const response = await gmail.users.drafts.create({
-                            userId: 'me',
-                            requestBody: {
-                                message: messageRequest,
+                if (action === "draft") {
+                    const draftId = await createDraft(gmail, validatedArgs);
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: `Email draft created successfully with ID: ${draftId}`,
                             },
-                        });
-                        return {
-                            content: [
-                                {
-                                    type: "text",
-                                    text: `Email draft created successfully with ID: ${response.data.id}`,
-                                },
-                            ],
-                        };
-                    }
-                } else {
-                    // For plain / simple-HTML mail with no attachments or inline images
-                    message = createEmailMessage(validatedArgs);
-                    
-                    const encodedMessage = Buffer.from(message).toString('base64')
-                        .replace(/\+/g, '-')
-                        .replace(/\//g, '_')
-                        .replace(/=+$/, '');
-
-                    // Define the type for messageRequest
-                    interface GmailMessageRequest {
-                        raw: string;
-                        threadId?: string;
-                    }
-
-                    const messageRequest: GmailMessageRequest = {
-                        raw: encodedMessage,
+                        ],
                     };
-
-                    // Add threadId if specified
-                    if (validatedArgs.threadId) {
-                        messageRequest.threadId = validatedArgs.threadId;
-                    }
-
-                    if (action === "send") {
-                        const response = await gmail.users.messages.send({
-                            userId: 'me',
-                            requestBody: messageRequest,
-                        });
-                        return {
-                            content: [
-                                {
-                                    type: "text",
-                                    text: `Email sent successfully with ID: ${response.data.id}`,
-                                },
-                            ],
-                        };
-                    } else {
-                        const response = await gmail.users.drafts.create({
-                            userId: 'me',
-                            requestBody: {
-                                message: messageRequest,
-                        },
-                        });
-                        return {
-                            content: [
-                                {
-                                    type: "text",
-                                    text: `Email draft created successfully with ID: ${response.data.id}`,
-                                },
-                            ],
-                        };
-                    }
                 }
+                await resolveThreadingHeaders(gmail, validatedArgs);
+                const raw = await encodeMessage(validatedArgs);
+                const result = await gmail.users.messages.send({
+                    userId: 'me',
+                    requestBody: messageRequest(raw, validatedArgs),
+                });
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: `Email sent successfully with ID: ${result.data.id}`,
+                        },
+                    ],
+                };
             } catch (error: any) {
                 // Log attachment / inline-image errors for debugging
                 if (needsRawBuilder(validatedArgs)) {

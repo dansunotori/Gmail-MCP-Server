@@ -189,6 +189,8 @@ function sharesFile(file: fs.Stats, reserved: string, tree: boolean): boolean {
 
 export interface FlagSpec {
     type: 'string' | 'boolean';
+    // The flag may be given more than once; its value is then the list of values.
+    multiple?: boolean;
     short?: string;
     // Shown after the flag in help, e.g. N or <file>.
     placeholder?: string;
@@ -269,7 +271,11 @@ export function renderHelp(spec: CommandSpec): string {
 
 export function parseOptions(spec: CommandSpec): ParseOptions {
     return Object.fromEntries(Object.entries(spec.flags).map(([flag, entry]) =>
-        [flag, entry.short ? { type: entry.type, short: entry.short } : { type: entry.type }]
+        [flag, {
+            type: entry.type,
+            ...(entry.short ? { short: entry.short } : {}),
+            ...(entry.multiple ? { multiple: true } : {}),
+        }]
     ));
 }
 

@@ -368,7 +368,7 @@ The `auth` subcommand runs before the server starts and is unaffected - invoke i
 
 ## Command-line tools
 
-Four read-only commands expose four MCP tools with the same semantics and nothing more, for scripts that need Gmail without an MCP session. Each calls the same code the server calls.
+Five commands expose five MCP tools with the same semantics and nothing more, for scripts that need Gmail without an MCP session. Each calls the same code the server calls. Four only read; `gmail-create-draft` saves a draft and never sends it.
 
 | Command | MCP tool | Prints |
 |-|-|-|
@@ -376,11 +376,14 @@ Four read-only commands expose four MCP tools with the same semantics and nothin
 | `gmail-get-message <message_id> [--format text\|markdown]` | `read_email` | `{id, threadId, subject, from, to, cc, date, messageIdHeader, labels, body, bodySource, attachments: [{id, filename, mimeType, size}]}` |
 | `gmail-download-attachment <message_id> <attachment_id> --save-path <dir> [--filename <name>]` | `download_attachment` | `{path, size, mimeType}` |
 | `gmail-batch-fetch-window --watermark <ISO 8601 with zone> --output-dir <absolute dir> [--no-cross-check] [--max-messages N]` | `batch_fetch_window` | the tool's result, unchanged (see the [result contract](#batch_fetch_window-result-contract)) |
+| `gmail-create-draft --to <addresses> --subject <text> (--body <text> \| --body-file <file>) [options]` | `draft_email` | `{draft_id, message_id, thread_id, to, cc, bcc, subject, attachments: [{name, size}]}`, read back from the saved draft |
+
+`gmail-create-draft` takes one option per `draft_email` input: `--to`, `--cc` and `--bcc` (comma-separated addresses), `--subject`, `--body` or `--body-file`, `--html-body` or `--html-body-file`, `--mime-type text/plain|text/html|multipart/alternative` (without it the type follows the bodies given: an HTML body alone is `text/html`, both bodies `multipart/alternative`), `--attachment <file>` (repeatable), `--inline-image cid=<cid>,path=<file>` (repeatable, needs an HTML body), `--from <send-as address>`, `--thread-id` and `--in-reply-to`. `--input <file>` reads the tool's JSON request, and options override its fields. Body files are read as UTF-8, so no body has to pass through a shell argument. An unknown option, a missing recipient, subject or body, an invalid recipient or `--from` address, `--mime-type text/plain` beside an HTML body, or an attachment, image or body file that cannot be read exits 2 before anything reaches Gmail, and `--output` never replaces one of those input files.
 
 Every command:
 
 - prints JSON on stdout and diagnostics on stderr; on failure it exits non-zero with nothing on stdout (exit codes: 1 failure, 2 usage error, 3 not signed in or missing scope, 4 Gmail rate limit, 5 not found)
-- writes the JSON to a file instead with `--output`/`-o <file>`, refusing a file the command itself writes or relies on (credentials, the downloaded attachment, the batch outputs), however the path is spelt: symlinks and `..` are resolved in the order the operating system resolves them, on macOS and Windows capitalisation is ignored, and a hard link to one of those files is refused too
+- writes the JSON to a file instead with `--output`/`-o <file>`, refusing a file the command itself writes or relies on (credentials, the downloaded attachment, the batch outputs, a draft's input files), however the path is spelt: symlinks and `..` are resolved in the order the operating system resolves them, on macOS and Windows capitalisation is ignored, and a hard link to one of those files is refused too
 - signs in with `--auth` (it re-requests the scopes already saved, or the default scopes on first sign-in) and shows help, with one example per flag, with `--help`/`-h`
 - uses the server's credentials (`~/.gmail-mcp/`, or `GMAIL_OAUTH_PATH`/`GMAIL_CREDENTIALS_PATH`) and refuses a tool the saved scopes do not grant, as the server does
 

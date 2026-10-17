@@ -5,7 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { gmail_v1 } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createGmailServer } from './server.js';
 
 // The error gaxios throws for a Gmail JSON error response, as observed live.
@@ -52,6 +52,47 @@ beforeEach(() => {
 });
 afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+describe('draft_email and send_email', () => {
+  function composeGmail() {
+    const draftsCreate = vi.fn(async (_params: { requestBody: { message: { raw: string; threadId?: string } } }) => ({ data: { id: 'd-1' } }));
+    const messagesSend = vi.fn(async (_params: { requestBody: { raw: string; threadId?: string } }) => ({ data: { id: 'sent-1' } }));
+    const threadsGet = vi.fn(async () => ({ data: { messages: [
+      { payload: { headers: [{ name: 'Message-ID', value: '<one@example.com>' }] } },
+      { payload: { headers: [{ name: 'Message-ID', value: '<two@example.com>' }] } },
+    ] } }));
+    return {
+      gmail: { users: { drafts: { create: draftsCreate }, messages: { send: messagesSend }, threads: { get: threadsGet } } },
+      draftsCreate,
+      messagesSend,
+      threadsGet,
+    };
+  }
+  const decode = (raw: string) => Buffer.from(raw, 'base64url').toString('utf8');
+
+  it('draft_email saves a draft with its attachment and reports the draft id', async () => {
+    const fake = composeGmail();
+    const attachment = path.join(dir, 'notes.txt');
+    fs.writeFileSync(attachment, 'notes');
+    const result = await call(fake.gmail, 'draft_email', { to: ['a@example.com'], subject: 'Notes', body: 'See attached', attachments: [attachment] });
+    expect(result).toEqual({ isError: undefined, text: 'Email draft created successfully with ID: d-1' });
+    const raw = decode(fake.draftsCreate.mock.calls[0][0].requestBody.message.raw);
+    expect(raw).toContain('filename=notes.txt');
+    expect(raw).toContain('Subject: Notes');
+    expect(fake.messagesSend).not.toHaveBeenCalled();
+  });
+
+  it('send_email sends in the thread with threading headers resolved from it', async () => {
+    const fake = composeGmail();
+    const result = await call(fake.gmail, 'send_email', { to: ['a@example.com'], subject: 'Re: plan', body: 'Agreed', threadId: 'th-1' });
+    expect(result).toEqual({ isError: undefined, text: 'Email sent successfully with ID: sent-1' });
+    const request = fake.messagesSend.mock.calls[0][0].requestBody;
+    expect(request.threadId).toBe('th-1');
+    expect(decode(request.raw)).toContain('In-Reply-To: <two@example.com>');
+    expect(decode(request.raw)).toContain('References: <one@example.com> <two@example.com>');
+    expect(fake.draftsCreate).not.toHaveBeenCalled();
+  });
 });
 
 describe('MCP tool failures', () => {
