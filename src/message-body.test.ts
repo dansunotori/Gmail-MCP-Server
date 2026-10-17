@@ -154,7 +154,12 @@ describe('htmlToText', () => {
   });
 
   it('keeps the documented behaviour: a br right before a newline is not converted', () => {
-    expect(htmlToText('a<br>\nb')).toBe('a \nb');
+    expect(htmlToText('a<br>\nb')).toBe('a\nb');
+  });
+
+  it('trims spaces at the ends of each line, so a line of only spaces is blank and collapses', () => {
+    expect(htmlToText('Re Itamin,\n\n \nWe have')).toBe('Re Itamin,\n\nWe have');
+    expect(htmlToText('<td>a</td> <td>b</td>\n<span> c </span>')).toBe('a b\nc');
   });
 });
 

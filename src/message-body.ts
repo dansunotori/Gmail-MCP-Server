@@ -216,6 +216,9 @@ export function htmlToText(html: string): string {
     .replace(/<[^>]+>/g, ' ');
   return toLf(decodeCharacterReferences(withoutTags))
     .replace(/[ \t]+/g, ' ')
+    // A line's leading and trailing spaces are dropped, so a line left holding only a space
+    // is blank and collapses with the blank lines around it.
+    .replace(/^ +| +$/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }

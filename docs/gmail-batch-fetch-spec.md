@@ -97,7 +97,8 @@ not modify its environment".
    (`&rsquo;`, `&ndash;`, `&hellip;`, `&euro;`, …), with a no-break space in any spelling becoming
    a plain space, and a reference naming no character (unknown name, no closing `;`, code point
    0, a surrogate or one beyond U+10FFFF) left as written; runs of spaces and tabs collapse to one
-   space; three or more newlines collapse to two; the result is trimmed. A body-part fetch failure is recorded in `failures` with the prefix
+   space; each line's leading and trailing spaces are dropped, so a line of only spaces is blank;
+   three or more newlines collapse to two; the result is trimmed. A body-part fetch failure is recorded in `failures` with the prefix
    `body-part-fetch:` and the message is still written with whatever was recovered.
 8. Cross-check (when enabled): list `after:${epoch - 1} in:spam`, `after:${epoch - 1} in:trash`
    and `after:${epoch - 1} in:anywhere` with the same pagination and retries. `unexplainedIds`

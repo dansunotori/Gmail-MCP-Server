@@ -10,12 +10,3 @@ Done when:
 
 - A git pre-commit hook runs `npm run roadmap:check` on the staged `ROADMAP.md` and refuses the commit on a finding, without weakening any review that already runs at commit time.
 - A commit with finished-work wording in a staged `ROADMAP.md` is refused locally, whatever made the change.
-
-## 22. Whitespace-only lines in text converted from HTML
-
-`htmlToText` collapses runs of spaces and tabs to one space and three or more `\n` to two, but a line left holding only spaces (a tag between two line breaks becomes a space) is not blank to that rule, so a converted body reads `"Re Itamin,\n\n \nWe have…"` (live, an AJ Bell secure-message notice through `gmail-get-message`): an extra line of one space between paragraphs.
-
-Done when:
-
-- Spaces and tabs at the start and end of each converted line are removed before blank lines collapse, so no converted line holds only whitespace.
-- The conversion test pins the case, and `docs/gmail-batch-fetch-spec.md` lists the step; the message-file shape changes for such bodies.
