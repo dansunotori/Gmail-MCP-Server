@@ -2,16 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
 
-## 9. Upgrade nodemailer and googleapis past their advisories
-
-`npm audit` still reports advisories that only a major upgrade fixes: `nodemailer` 7 (high; fixed in 10.1.2), which builds every message this server sends, drafts or replies with attachments, and `uuid` through `googleapis` 129 (moderate; fixed by moving to a current `googleapis`). CI passes only because it fails on critical advisories alone.
-
-Done when:
-
-- `nodemailer` and `googleapis` are on releases with no open advisory, and `npm audit` reports nothing above low for production dependencies.
-- The MIME builder tests (`utl.test.ts`, `inline-images.test.ts`, `reply-all-helpers.test.ts`) and the draft lifecycle script pass unchanged, and a live draft with an attachment and an inline image renders correctly in Gmail.
-- `npm ci` succeeds in CI, and `lockfile-lint` passes.
-
 ## 10. Remove changelogs, history, reports, and trumpet-blowing
 
 - Add standing rules that no changelogs, history, reports, or trumpet-blowing survive in this repository files or code comments. 
@@ -90,3 +80,12 @@ Done when:
 
 - The exit-code paragraph is wrapped after the command's codes are added, at the width the rest of the help uses.
 - A test fails when any line of any command's `--help` exceeds that width.
+
+## 19. Drop or replace mcp-evals, whose dependencies carry unfixed advisories
+
+`mcp-evals` (a dev dependency, used only by `src/evals/evals.ts`) pulls in `ai`, `@ai-sdk/*` and `jsondiffpatch`, for which `npm audit` reports a high advisory (`jsondiffpatch`: XSS and prototype pollution) and a moderate one (`@ai-sdk/provider-utils`), both with no fix available. Production dependencies are clean; CI passes only because its audit step fails on critical advisories alone.
+
+Done when:
+
+- `npm audit` reports nothing above low for all dependencies, dev included, with the evals either moved to a maintained runner or removed along with `src/evals/`.
+- CI's audit step fails on high advisories, not only critical ones.

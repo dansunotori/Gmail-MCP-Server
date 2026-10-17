@@ -5,8 +5,8 @@
  * running directly against the Gmail API with this server's OAuth credential, so the
  * underlying behaviour can be checked without going through an MCP client.
  *
- * Set GMAIL_TEST_ADDRESS to the address of the authenticated mailbox; test mail is sent
- * from and to that address and trashed at the end.
+ * Test mail is sent from and to the authenticated mailbox's own address (or GMAIL_TEST_ADDRESS,
+ * when set) and trashed at the end.
  *
  * Scenarios:
  *  1. Create draft → verify it exists in Drafts
@@ -30,11 +30,6 @@ const CREDENTIALS_PATH = path.join(CONFIG_DIR, 'credentials.json');
 // Marker for easy identification + manual cleanup if something goes sideways
 const STAMP = new Date().toISOString().replace(/[:.]/g, '-');
 const MARKER = `[MCP-DRAFT-LIFECYCLE-TEST-${STAMP}]`;
-const SELF = process.env.GMAIL_TEST_ADDRESS;
-if (!SELF) {
-    console.error('Set GMAIL_TEST_ADDRESS to the address of the authenticated mailbox before running this test.');
-    process.exit(2);
-}
 
 function loadAuth() {
     const keysFile = JSON.parse(fs.readFileSync(OAUTH_PATH, 'utf8'));
@@ -70,6 +65,8 @@ function record(name, ok, detail = '') {
 async function main() {
     const auth = loadAuth();
     const gmail = google.gmail({ version: 'v1', auth });
+    const SELF = process.env.GMAIL_TEST_ADDRESS || (await gmail.users.getProfile({ userId: 'me' })).data.emailAddress;
+    if (!SELF) throw new Error('Gmail reported no address for the authenticated mailbox; set GMAIL_TEST_ADDRESS');
 
     // --- Scenario 1: create draft ---
     const subj1 = `${MARKER} scenario 1 initial`;
