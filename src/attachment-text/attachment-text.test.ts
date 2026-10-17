@@ -5,6 +5,7 @@ import type { gmail_v1 } from 'googleapis';
 import { describe, expect, it, vi } from 'vitest';
 import * as XLSX from 'xlsx';
 import { getAttachmentText } from './attachment-text.js';
+import { EXTRACTION_TIMEOUT_MS } from './extract.js';
 import { AttachmentFileError, MAX_TEXT_LENGTH } from './formats.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '__fixtures__');
@@ -31,7 +32,9 @@ function gmailWith(parts: Part[], requested: Buffer, options: { sameId?: boolean
   return { gmail, attachmentsGet, messagesGet };
 }
 
-describe('getAttachmentText', () => {
+// These tests fork real extraction workers, which take seconds each on a slow CI runner, so they
+// get the worker's own limit rather than vitest's five-second default.
+describe('getAttachmentText', { timeout: EXTRACTION_TIMEOUT_MS }, () => {
   it('returns a PDF attachment\'s name, format and text, finding its part by size when Gmail renamed the id', async () => {
     const pdf = fixture('report.pdf');
     const { gmail, attachmentsGet } = gmailWith([{ filename: 'report.pdf', mimeType: 'application/pdf', attachmentId: 'a1', bytes: pdf }], pdf);
@@ -112,7 +115,7 @@ describe('getAttachmentText', () => {
       const result = await getAttachmentText(gmail, { messageId: 'm1', attachmentId: bookType });
       expect(result.text, bookType).toContain('Part\tQty\nBolt\t12');
     }
-  }, 30_000);
+  });
 
   it('reports an .xls that is neither a compound document nor a BIFF stream as corrupt', async () => {
     const bytes = Buffer.from('this is not a spreadsheet');

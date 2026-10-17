@@ -6,6 +6,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { gmail_v1 } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EXTRACTION_TIMEOUT_MS } from './attachment-text/extract.js';
 import { createGmailServer } from './server.js';
 
 // The error gaxios throws for a Gmail JSON error response, as observed live.
@@ -95,7 +96,9 @@ describe('draft_email and send_email', () => {
   });
 });
 
-describe('get_attachment_text', () => {
+// These tests fork real extraction workers, which take seconds each on a slow CI runner, so they
+// get the worker's own limit rather than vitest's five-second default.
+describe('get_attachment_text', { timeout: EXTRACTION_TIMEOUT_MS }, () => {
   const pdfGmail = (file: string) => {
     const bytes = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), 'attachment-text', '__fixtures__', file));
     return { users: { messages: {

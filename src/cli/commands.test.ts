@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { gmail_v1 } from 'googleapis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { EXTRACTION_TIMEOUT_MS } from '../attachment-text/extract.js';
 import { CredentialsError } from '../auth.js';
 import { GmailRequestError } from '../gmail-sync.js';
 import {
@@ -745,7 +746,9 @@ describe('gmail-create-draft', () => {
   });
 });
 
-describe('gmail-get-attachment-text', () => {
+// These tests fork real extraction workers, which take seconds each on a slow CI runner, so they
+// get the worker's own limit rather than vitest's five-second default.
+describe('gmail-get-attachment-text', { timeout: EXTRACTION_TIMEOUT_MS }, () => {
   const fixtureFile = (name: string) => fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'attachment-text', '__fixtures__', name));
   const attachmentGmail = (filename: string, mimeType: string, bytes: Buffer) => ({ users: { messages: {
     attachments: { get: vi.fn(async () => ({ data: { data: bytes.toString('base64url') } })) },
