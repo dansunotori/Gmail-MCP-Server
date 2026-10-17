@@ -464,6 +464,20 @@ describe('gmail-get-message', () => {
     expect(second.json()).toHaveProperty('messageIdHeader', null);
   });
 
+  it('prints calendarMethod and calendarReply for a calendar reply, and neither for other mail', async () => {
+    const reply = ['BEGIN:VCALENDAR', 'METHOD:REPLY', 'BEGIN:VEVENT', 'UID:u1', 'ATTENDEE;PARTSTAT=DECLINED:mailto:bob@example.com', 'END:VEVENT', 'END:VCALENDAR', ''].join('\r\n');
+    const withCalendar = { ...message, payload: { ...message.payload, parts: [...message.payload.parts, { mimeType: 'text/calendar', body: { data: b64(reply) } }] } };
+    const gmail = { users: { messages: { get: async () => ({ data: withCalendar }) } } } as unknown as gmail_v1.Gmail;
+    const calendar = harness(gmail);
+    await getMessageCommand(['m1'], calendar.deps);
+    expect(calendar.json()).toMatchObject({ calendarMethod: 'REPLY', calendarReply: { attendee: 'bob@example.com', partstat: 'DECLINED' } });
+
+    const plain = harness();
+    await getMessageCommand(['m1'], plain.deps);
+    expect(plain.json()).not.toHaveProperty('calendarMethod');
+    expect(plain.json()).not.toHaveProperty('calendarReply');
+  });
+
   it('converts the HTML part to Markdown with --format markdown and says the body came from it', async () => {
     const { deps, json } = harness();
     await getMessageCommand(['m1', '--format', 'markdown'], deps);

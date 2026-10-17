@@ -190,6 +190,43 @@ describe('readEmail', () => {
     expect((await readEmail(gmail, { messageId: 'r' })).messageIdHeader).toBe(' <Mixed.Case@Example.COM> ');
   });
 
+  const ics = (...lines: string[]) => ['BEGIN:VCALENDAR', 'VERSION:2.0', ...lines, 'END:VCALENDAR', ''].join('\r\n');
+  const withCalendar = (id: string, calendar: string) => ({ id, threadId: 't', payload: {
+    mimeType: 'multipart/alternative',
+    headers: [{ name: 'Subject', value: 'Accepted: Planning' }],
+    parts: [
+      { mimeType: 'text/plain', body: { data: b64('Alexander has accepted.') } },
+      { mimeType: 'text/calendar', body: { data: b64(calendar) } },
+    ],
+  } });
+
+  it('reads the calendar method and, for a reply, the replying attendee and partstat, by the window fetch\'s reader', async () => {
+    const reply = ics('METHOD:REPLY', 'BEGIN:VEVENT', 'UID:u1', 'ATTENDEE;PARTSTAT=ACCEPTED:mailto:alice@example.com', 'END:VEVENT');
+    const { gmail } = fakeGmail({ messages: { c: withCalendar('c', reply) } });
+    const result = await readEmail(gmail, { messageId: 'c' });
+    expect(result).toMatchObject({ calendarMethod: 'REPLY', calendarReply: { attendee: 'alice@example.com', partstat: 'ACCEPTED' } });
+    expect(formatReadEmailText(result)).toContain('\nCalendar: REPLY\nCalendar reply: alice@example.com ACCEPTED\n');
+
+    const invite = await readEmail(fakeGmail({ messages: { i: withCalendar('i', ics('METHOD:REQUEST', 'BEGIN:VEVENT', 'UID:u2', 'END:VEVENT')) } }).gmail, { messageId: 'i' });
+    expect(invite.calendarMethod).toBe('REQUEST');
+    expect(invite).not.toHaveProperty('calendarReply');
+  });
+
+  it('carries no calendar field for a message without a calendar part', async () => {
+    const result = await readEmail(fakeGmail({ messages: { m1: fullMessage } }).gmail, { messageId: 'm1' });
+    expect(result).not.toHaveProperty('calendarMethod');
+    expect(result).not.toHaveProperty('calendarReply');
+    expect(result).not.toHaveProperty('calendarFailures');
+    expect(formatReadEmailText(result)).not.toContain('Calendar');
+  });
+
+  it('reports a calendar part it cannot read instead of dropping it', async () => {
+    const result = await readEmail(fakeGmail({ messages: { b: withCalendar('b', 'not a calendar') } }).gmail, { messageId: 'b' });
+    expect(result).not.toHaveProperty('calendarMethod');
+    expect(result.calendarFailures).toEqual([expect.stringMatching(/^calendar-part: /)]);
+    expect(formatReadEmailText(result)).toMatch(/\nCalendar part not read: calendar-part: .+\n/);
+  });
+
   it('formats the message exactly as the read_email tool prints it', async () => {
     const { gmail } = fakeGmail({ messages: { m1: fullMessage } });
     const text = formatReadEmailText(await readEmail(gmail, { messageId: 'm1' }));

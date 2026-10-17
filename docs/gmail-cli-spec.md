@@ -103,7 +103,10 @@ Exposes `read_email` (`messages.get` with `format: 'full'`). Prints:
 
 `body` is the tool's body: the plain-text part; the HTML part as it is, markup included, when
 there is no plain part (`bodySource` `html`); or the HTML part converted to text when the plain
-part is only a stub (`bodySource` `html-over-stub`). `messageIdHeader` is the RFC 822 `Message-ID` header, or `null`. With
+part is only a stub (`bodySource` `html-over-stub`). `messageIdHeader` is the RFC 822 `Message-ID` header, or `null`. A message with a
+`text/calendar` part also carries `calendarMethod` and, for a reply, `calendarReply` `{attendee,
+partstat}`, read as `batch_fetch_window` reads them, and `calendarFailures` when the part cannot be
+read; other mail carries none of them. With
 `--format markdown` the body is the HTML part converted to Markdown (turndown, with `head`, `style`
 and `script` removed), or the plain text when the message has no HTML part.
 

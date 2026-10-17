@@ -28,12 +28,3 @@ Done when:
 
 - Spaces and tabs at the start and end of each converted line are removed before blank lines collapse, so no converted line holds only whitespace.
 - The conversion test pins the case, and `docs/gmail-batch-fetch-spec.md` lists the step; the message-file shape changes for such bodies.
-
-## 23. Calendar reply fields in read_email and gmail-get-message
-
-`batch_fetch_window` and `gmail-batch-fetch-window` write `calendarMethod` and, for a `REPLY`, `calendarReply` `{attendee, partstat}` from a message's `text/calendar` part (`src/calendar-part.ts`), but `read_email` and `gmail-get-message` return neither, so a caller reading one message cannot tell a meeting response from ordinary mail without parsing the body.
-
-Done when:
-
-- `read_email` (as note lines) and `gmail-get-message` (as fields) report the calendar method and, for a reply, the replying attendee and partstat, read from the part by the same code the window fetch uses, and a message without a calendar part carries neither.
-- A calendar part that cannot be read is reported in the result rather than dropped, and live, an invitation and an acceptance between your own two accounts each show the right values through both.

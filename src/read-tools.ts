@@ -10,6 +10,7 @@ import path from 'path';
 import type { gmail_v1 } from 'googleapis';
 import { EmailAttachment } from './email-export.js';
 import { attachmentParts, findAttachmentPart } from './attachment-part.js';
+import { resolveCalendarPart } from './calendar-part.js';
 import { optionalHeader, selectBody, type BodySource, type MessagePart } from './message-body.js';
 
 // Type definitions for Gmail API responses
@@ -173,6 +174,12 @@ export interface ReadEmailResult {
     body: string;
     bodySource: BodySource;
     attachments: EmailAttachment[];
+    // Only a message with a text/calendar part carries these, read by the window fetch's own
+    // reader (resolveCalendarPart): its METHOD and, for a REPLY, the replying attendee.
+    calendarMethod?: string;
+    calendarReply?: { attendee: string; partstat: string };
+    // A calendar part that could not be fetched or parsed, one entry each.
+    calendarFailures?: string[];
 }
 
 export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string }): Promise<ReadEmailResult> {
@@ -188,6 +195,7 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
     const { text, html } = extractEmailContent(response.data.payload as GmailMessagePart || {});
     const attachments = extractAttachments(response.data.payload as GmailMessagePart);
     const { body, bodySource } = selectBody(text, html, 'keep-html');
+    const { calendar, failures } = await resolveCalendarPart(gmail, response.data.id || args.messageId, response.data.payload as MessagePart);
 
     return {
         id: response.data.id || args.messageId,
@@ -205,11 +213,19 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
         body,
         bodySource,
         attachments,
+        ...(calendar === undefined ? {} : { calendarMethod: calendar.method }),
+        ...(calendar?.reply === undefined ? {} : { calendarReply: calendar.reply }),
+        ...(failures.length === 0 ? {} : { calendarFailures: failures.map(failure => failure.code) }),
     };
 }
 
 export function formatReadEmailText(email: ReadEmailResult): string {
     const { threadId, messageIdHeader, subject, from, to, cc, bcc, date, body, bodySource, attachments } = email;
+    const calendarLines = [
+        ...(email.calendarMethod === undefined ? [] : [`\nCalendar: ${email.calendarMethod}`]),
+        ...(email.calendarReply === undefined ? [] : [`\nCalendar reply: ${email.calendarReply.attendee} ${email.calendarReply.partstat}`]),
+        ...(email.calendarFailures ?? []).map(code => `\nCalendar part not read: ${code}`),
+    ].join('');
     const contentTypeNote = bodySource === 'html'
         ? '[Note: This email is HTML-formatted. Plain text version not available.]\n\n'
         : bodySource === 'html-over-stub'
@@ -221,7 +237,7 @@ export function formatReadEmailText(email: ReadEmailResult): string {
         `\n\nAttachments (${attachments.length}):\n` +
         attachments.map(a => `- ${a.filename} (${a.mimeType}, ${Math.round(a.size/1024)} KB, ID: ${a.id})`).join('\n') : '';
 
-    return `Thread ID: ${threadId}\nMessage-ID: ${messageIdHeader ?? '(none)'}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}${cc ? `\nCC: ${cc}` : ''}${bcc ? `\nBCC: ${bcc}` : ''}\nDate: ${date}\n\n${contentTypeNote}${body}${attachmentInfo}`;
+    return `Thread ID: ${threadId}\nMessage-ID: ${messageIdHeader ?? '(none)'}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}${cc ? `\nCC: ${cc}` : ''}${bcc ? `\nBCC: ${bcc}` : ''}\nDate: ${date}${calendarLines}\n\n${contentTypeNote}${body}${attachmentInfo}`;
 }
 
 export interface DownloadAttachmentResult {

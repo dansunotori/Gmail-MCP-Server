@@ -119,7 +119,7 @@ const GET_MESSAGE: CommandSpec = {
     name: 'gmail-get-message',
     tool: 'read_email',
     synopsis: 'gmail-get-message <message_id> [--format text|markdown] [-o <file>]',
-    description: 'Reads one message like the read_email MCP tool and prints id, threadId, subject, from, to, cc, date, messageIdHeader (the Message-ID header, null when absent), labels, body, bodySource (text, html or html-over-stub) and attachments [{id, filename, mimeType, size}].',
+    description: 'Reads one message like the read_email MCP tool and prints id, threadId, subject, from, to, cc, date, messageIdHeader (the Message-ID header, null when absent), labels, body, bodySource (text, html or html-over-stub) and attachments [{id, filename, mimeType, size}]; a message with a text/calendar part also gets calendarMethod and, for a reply, calendarReply {attendee, partstat}, and calendarFailures when the part cannot be read.',
     arguments: [['<message_id>', 'A Gmail message ID, as gmail-search prints it.']],
     example: 'gmail-get-message 18f2a9c4e1b7d3a0',
     flags: {
@@ -170,6 +170,10 @@ export const getMessageCommand: Command = async (argv, deps) => {
         body,
         bodySource,
         attachments: email.attachments,
+        // Only a message with a text/calendar part carries these.
+        ...(email.calendarMethod === undefined ? {} : { calendarMethod: email.calendarMethod }),
+        ...(email.calendarReply === undefined ? {} : { calendarReply: email.calendarReply }),
+        ...(email.calendarFailures === undefined ? {} : { calendarFailures: email.calendarFailures }),
     }, args.output, deps);
 };
 
