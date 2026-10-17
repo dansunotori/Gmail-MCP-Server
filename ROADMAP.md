@@ -1,23 +1,6 @@
 # Roadmap
 
-Work to implement, in order. Items 4 to 6 come from the prompts in `figaro-pa-predecessor/docs/prompts/gmail-*.md`; each item keeps its prompt's contract and done-when criteria. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
-
-## 4. Calendar reply fields in the window fetch
-
-Source: `gmail-calendar-reply-fields.md`
-
-A message carrying a `text/calendar` part (an invitation, a cancellation, an acceptance or decline) is written by `batch_fetch_window` like any other message, so a caller cannot tell a meeting response from ordinary mail without reading the body. Add the calendar part's method and reply fields to the message file written by `batch_fetch_window` and `gmail-batch-fetch-window`.
-
-Contract:
-
-- For a message with a `text/calendar` part, its message file carries `calendarMethod` (the part's `METHOD`, for example `REQUEST`, `CANCEL`, `REPLY`) and, for a `REPLY`, `calendarReply`: `{"attendee": "<address>", "partstat": "<PARTSTAT>"}`, both read from the part itself.
-- A message without such a part carries neither field.
-- A calendar part that cannot be parsed is recorded in `failures` like any other part failure, never silently dropped.
-
-Done when:
-
-- Live, an invitation, a cancellation, an acceptance and a decline in one window each carry the right `calendarMethod`, the two replies with the replying attendee and `ACCEPTED` or `DECLINED`.
-- An ordinary message in the same window carries neither field.
+Work to implement, in order. Items 5 and 6 come from the prompts in `figaro-pa-predecessor/docs/prompts/gmail-*.md`; each item keeps its prompt's contract and done-when criteria. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file once it is implemented.
 
 ## 5. A CLI for creating a draft
 
