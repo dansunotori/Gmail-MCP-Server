@@ -105,3 +105,12 @@ Done when:
 - Live, a PDF, a DOCX and a two-sheet XLSX attachment each return their text, the XLSX with both sheets and their spans.
 - Live, a password-protected PDF exits non-zero naming it protected.
 - `gmail-get-attachment-text --help` documents the formats, the output and the exit codes.
+
+## 7. Script to import Gmail prompts into this roadmap
+
+Picking this server's prompts out of `figaro-pa-predecessor/docs/prompts` and copying them here was done by hand: the files were selected by their `gmail-` prefix and each one was transcribed into a section. Add `scripts/import-prompts.mjs`, which takes the prompts directory, selects `gmail-*.md`, skips any prompt whose `Source:` line already appears in `ROADMAP.md`, and appends each new prompt as a numbered section with its `Source:` line. That makes the import repeatable and avoids transcription errors.
+
+Done when:
+
+- Running it twice against the same prompts directory adds nothing the second time.
+- A new `gmail-*.md` prompt is appended verbatim under the next number, and prompts for other servers are ignored.
