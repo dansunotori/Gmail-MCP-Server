@@ -2,15 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 25. Watch the CI run of the commit just pushed
-
-After each push the CI run is found with `gh run list --branch main --limit 1` and watched with `gh run watch <id>`, and nothing confirms that the listed run is the one for the pushed commit rather than an earlier one still queued.
-
-Done when:
-
-- `npm run ci:watch` finds the CI run whose head commit is `HEAD`, waiting for it to appear, watches it to the end and exits with its result, naming the run and the failed step when it fails.
-- It refuses, with a clear message, when `HEAD` is not pushed.
-
 ## 26. Keep the command list in the docs and package.json in step with the code
 
 A new command means a `CommandSpec` in `src/cli/commands.ts`, an entry in `COMMANDS`, a `src/cli/gmail-*.ts` entry file, a `bin` in `package.json`, a row in the README's command table and in `docs/gmail-cli-spec.md`'s bin table, and the command counts in both texts, all kept in step by hand.
