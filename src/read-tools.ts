@@ -183,6 +183,20 @@ export interface ReadEmailResult {
     calendarFailures?: string[];
 }
 
+export type CalendarFields = Pick<ReadEmailResult, 'calendarMethod' | 'calendarReply' | 'calendarFailures'>;
+
+// The calendar fields of a message, read by the window fetch's own reader: none for a message
+// without a text/calendar part. read_email, get_thread, get_inbox_with_threads and
+// download_email's json all carry them.
+export async function calendarFields(gmail: gmail_v1.Gmail, messageId: string, payload: gmail_v1.Schema$MessagePart | null | undefined): Promise<CalendarFields> {
+    const { calendar, failures } = await resolveCalendarPart(gmail, messageId, payload as MessagePart);
+    return {
+        ...(calendar === undefined ? {} : { calendarMethod: calendar.method }),
+        ...(calendar?.reply === undefined ? {} : { calendarReply: calendar.reply }),
+        ...(failures.length === 0 ? {} : { calendarFailures: failures.map(failure => failure.code) }),
+    };
+}
+
 export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string }): Promise<ReadEmailResult> {
     const response = await gmail.users.messages.get({
         userId: 'me',
@@ -196,7 +210,7 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
     const { text, html } = extractEmailContent(response.data.payload as GmailMessagePart || {});
     const attachments = extractAttachments(response.data.payload as GmailMessagePart);
     const { body, bodySource } = selectBody(text, html, 'keep-html');
-    const { calendar, failures } = await resolveCalendarPart(gmail, response.data.id || args.messageId, response.data.payload as MessagePart);
+    const calendar = await calendarFields(gmail, response.data.id || args.messageId, response.data.payload);
 
     return {
         id: response.data.id || args.messageId,
@@ -214,9 +228,7 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
         body,
         bodySource,
         attachments,
-        ...(calendar === undefined ? {} : { calendarMethod: calendar.method }),
-        ...(calendar?.reply === undefined ? {} : { calendarReply: calendar.reply }),
-        ...(failures.length === 0 ? {} : { calendarFailures: failures.map(failure => failure.code) }),
+        ...calendar,
     };
 }
 
@@ -323,9 +335,10 @@ export function formatDownloadAttachmentText(result: DownloadAttachmentResult): 
     return `Attachment downloaded successfully:\nFile: ${result.filename}\nSize: ${result.size} bytes\nSaved to: ${result.path}`;
 }
 
-// One message of a thread as get_thread and get_inbox_with_threads return it. A
-// minimal-format message carries no body.
-function threadMessage(message: gmail_v1.Schema$Message, withBody: boolean) {
+// One message of a thread as get_thread and get_inbox_with_threads return it, with
+// read_email's calendar fields. A minimal-format message carries no body, and a message
+// fetched without its parts (metadata, minimal) no calendar part to read.
+async function threadMessage(gmail: gmail_v1.Gmail, message: gmail_v1.Schema$Message, withBody: boolean) {
     const headers = message.payload?.headers || [];
     const header = (name: string) => headers.find(h => h.name?.toLowerCase() === name)?.value || '';
     let body = '';
@@ -362,13 +375,14 @@ function threadMessage(message: gmail_v1.Schema$Message, withBody: boolean) {
         bodySource,
         labelIds: message.labelIds || [],
         attachments: attachments.map(a => ({ filename: a.filename, mimeType: a.mimeType, size: a.size })),
+        ...await calendarFields(gmail, message.id || '', message.payload),
     };
 }
 
 // get_thread: every message of a thread, oldest first, as the Gmail API returns them.
 export async function getThread(gmail: gmail_v1.Gmail, args: { threadId: string; format?: 'full' | 'metadata' | 'minimal' }) {
     const response = await gmail.users.threads.get({ userId: 'me', id: args.threadId, format: args.format || 'full' });
-    const messages = (response.data.messages || []).map(message => threadMessage(message, args.format !== 'minimal'));
+    const messages = await Promise.all((response.data.messages || []).map(message => threadMessage(gmail, message, args.format !== 'minimal')));
     return { threadId: args.threadId, messageCount: messages.length, messages };
 }
 
@@ -398,7 +412,7 @@ export async function getInboxWithThreads(gmail: gmail_v1.Gmail, args: { query?:
     }
     const expanded = await Promise.all(threads.map(async thread => {
         const detail = await gmail.users.threads.get({ userId: 'me', id: thread.id!, format: 'full' });
-        const messages = (detail.data.messages || []).map(message => threadMessage(message, true));
+        const messages = await Promise.all((detail.data.messages || []).map(message => threadMessage(gmail, message, true)));
         return { threadId: thread.id || '', messageCount: messages.length, messages };
     }));
     return { resultCount: expanded.length, threads: expanded };
@@ -440,7 +454,10 @@ export async function downloadEmail(
     } else {
         const emailContent = extractEmailContent(fullResponse.data.payload as GmailMessagePart || {});
         content = format === 'json'
-            ? JSON.stringify(gmailMessageToJson(fullResponse.data, emailContent, attachments), null, 2)
+            ? JSON.stringify({
+                ...gmailMessageToJson(fullResponse.data, emailContent, attachments),
+                ...await calendarFields(gmail, messageId, fullResponse.data.payload),
+            }, null, 2)
             : format === 'txt'
                 ? emailToTxt(fullResponse.data, emailContent, attachments)
                 : emailToHtml(emailContent);

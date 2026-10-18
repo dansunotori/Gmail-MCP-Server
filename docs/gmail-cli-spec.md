@@ -168,7 +168,9 @@ gmail-get-thread <thread_id> [--format full|metadata|minimal] [-o <file>]
 
 Exposes `get_thread` (`threads.get`, format `full` by default) and prints its result:
 `{threadId, messageCount, messages}`, each message with `body` and `bodySource` chosen as
-`gmail-get-message` chooses them, and no body for `minimal`.
+`gmail-get-message` chooses them, and no body for `minimal`. A message read in `full` with a
+`text/calendar` part also carries `gmail-get-message`'s `calendarMethod`, `calendarReply` and
+`calendarFailures`, from the same reader.
 
 ### gmail-get-inbox-with-threads
 
@@ -177,8 +179,9 @@ gmail-get-inbox-with-threads [--query '<gmail query>'] [--max-results N] [--no-e
 ```
 
 Exposes `get_inbox_with_threads` with its defaults (`in:inbox`, 50 threads, expanded) and prints
-`{resultCount, threads}`; `--no-expand-threads` gives each thread as a summary of its latest
-message instead of its messages.
+`{resultCount, threads}`, each expanded message with the calendar fields `gmail-get-thread`
+gives it; `--no-expand-threads` gives each thread as a summary of its latest message instead of
+its messages.
 
 ### gmail-download-email
 
@@ -187,8 +190,9 @@ gmail-download-email <message_id> --save-path <dir> [--format json|eml|txt|html]
 ```
 
 Exposes `download_email`: saves `<dir>/<message_id>.<format>` (json by default) and prints the
-tool's result, `{status, path, size, messageId, subject, from, date, attachments}`. An `--output`
-naming the file it saves is refused before any Gmail call.
+tool's result, `{status, path, size, messageId, subject, from, date, attachments}`. The json file
+carries the calendar fields `gmail-get-message` prints, for a message with a `text/calendar`
+part. An `--output` naming the file it saves is refused before any Gmail call.
 
 ### gmail-list-inbox-threads
 

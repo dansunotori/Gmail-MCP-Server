@@ -5,12 +5,15 @@ import type { gmail_v1 } from 'googleapis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   downloadAttachment,
+  downloadEmail,
   extractAttachments,
   extractEmailContent,
   extractHeaders,
   formatDownloadAttachmentText,
   formatReadEmailText,
   formatSearchEmailsText,
+  getInboxWithThreads,
+  getThread,
   readEmail,
   searchEmails,
 } from './read-tools.js';
@@ -352,5 +355,70 @@ describe('downloadAttachment', () => {
     await expect(downloadAttachment(failing.gmail, { messageId: 'm1', attachmentId: 'att-1', savePath: dir }))
       .rejects.toThrow('boom');
     expect(fs.readdirSync(dir)).toEqual([]);
+  });
+});
+
+// get_thread, get_inbox_with_threads and download_email's json read a message's text/calendar
+// part with read_email's reader, so a thread read tells a meeting response from ordinary mail.
+describe('calendar fields in thread reads and the json download', () => {
+  const ics = (...lines: string[]) => ['BEGIN:VCALENDAR', 'VERSION:2.0', ...lines, 'END:VCALENDAR', ''].join('\r\n');
+  const accept = ics('METHOD:REPLY', 'BEGIN:VEVENT', 'UID:u1', 'ATTENDEE;PARTSTAT=ACCEPTED:mailto:alice@example.com', 'END:VEVENT');
+  const decline = ics('METHOD:REPLY', 'BEGIN:VEVENT', 'UID:u1', 'ATTENDEE;PARTSTAT=DECLINED:mailto:bob@example.com', 'END:VEVENT');
+  const calendarMessage = (id: string, calendarPart: Record<string, unknown>) => ({ id, threadId: 'th', payload: {
+    mimeType: 'multipart/alternative',
+    headers: [{ name: 'Subject', value: `Reply ${id}` }],
+    parts: [{ mimeType: 'text/plain', body: { data: b64('A reply.') } }, { mimeType: 'text/calendar', ...calendarPart }],
+  } });
+  const messages = [
+    // One inline, one stored as an attachment, one that cannot be parsed, and ordinary mail.
+    calendarMessage('accepted', { body: { data: b64(accept) } }),
+    calendarMessage('declined', { body: { attachmentId: 'ics-1', size: decline.length } }),
+    calendarMessage('broken', { body: { data: b64('not a calendar') } }),
+    fullMessage,
+  ];
+  const threadGmail = () => {
+    const attachmentsGet = vi.fn(async () => ({ data: { data: Buffer.from(decline).toString('base64url') } }));
+    const gmail = { users: {
+      threads: {
+        get: vi.fn(async () => ({ data: { messages } })),
+        list: vi.fn(async () => ({ data: { threads: [{ id: 'th' }] } })),
+      },
+      messages: { attachments: { get: attachmentsGet } },
+    } } as unknown as gmail_v1.Gmail;
+    return { gmail, attachmentsGet };
+  };
+  const expectCalendarFields = (read: Array<Record<string, unknown>>) => {
+    expect(read[0]).toMatchObject({ calendarMethod: 'REPLY', calendarReply: { attendee: 'alice@example.com', partstat: 'ACCEPTED' } });
+    expect(read[1]).toMatchObject({ calendarMethod: 'REPLY', calendarReply: { attendee: 'bob@example.com', partstat: 'DECLINED' } });
+    expect(read[2]).not.toHaveProperty('calendarMethod');
+    expect(read[2].calendarFailures).toEqual([expect.stringMatching(/^calendar-part: /)]);
+    for (const field of ['calendarMethod', 'calendarReply', 'calendarFailures']) expect(read[3]).not.toHaveProperty(field);
+  };
+
+  it("getThread gives each message read_email's calendar fields, fetching a part stored as an attachment", async () => {
+    const fake = threadGmail();
+    const thread = await getThread(fake.gmail, { threadId: 'th' });
+    expectCalendarFields(thread.messages);
+    expect(fake.attachmentsGet).toHaveBeenCalledWith({ userId: 'me', messageId: 'declined', id: 'ics-1' });
+  });
+
+  it('getInboxWithThreads gives each expanded message the same fields', async () => {
+    const inbox = await getInboxWithThreads(threadGmail().gmail, { expandThreads: true });
+    expectCalendarFields((inbox.threads[0] as { messages: Array<Record<string, unknown>> }).messages);
+  });
+
+  it("downloadEmail's json file carries the fields, and a message without a calendar part none of them", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'read-tools-'));
+    try {
+      const reply = fakeGmail({ messages: { accepted: messages[0], m1: fullMessage } });
+      await downloadEmail(reply.gmail, { messageId: 'accepted', savePath: dir, format: 'json' });
+      const saved = JSON.parse(fs.readFileSync(path.join(dir, 'accepted.json'), 'utf8'));
+      expect(saved).toMatchObject({ calendarMethod: 'REPLY', calendarReply: { attendee: 'alice@example.com', partstat: 'ACCEPTED' } });
+      await downloadEmail(reply.gmail, { messageId: 'm1', savePath: dir, format: 'json' });
+      const plain = JSON.parse(fs.readFileSync(path.join(dir, 'm1.json'), 'utf8'));
+      for (const field of ['calendarMethod', 'calendarReply', 'calendarFailures']) expect(plain).not.toHaveProperty(field);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
