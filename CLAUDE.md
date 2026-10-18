@@ -1,7 +1,7 @@
 # CLAUDE.md - Gmail MCP Server
 
 ## Branch Workflow
-Single branch: work lands on `main` directly, and CI must pass after every push. See `.claude/skills/pr-review-sop/SKILL.md` for full SOP.
+Single branch: work lands on `main` directly, and CI must pass after every push. Before each commit run `npm run verify`: it runs `npm test`, `npm run typecheck`, `npm run lockfile:lint`, `npm run roadmap:check` and `npm run install-cli` in that order and stops at the first failure, naming it. See `.claude/skills/pr-review-sop/SKILL.md` for full SOP.
 
 ## PR & Issue Review
 Mandatory security audit on every PR before presenting. See `.claude/skills/pr-review-sop/SKILL.md`.

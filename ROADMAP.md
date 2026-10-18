@@ -2,15 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 24. One command for the checks every change runs
-
-Before each commit a change runs `npm test`, `npm run typecheck`, `npm run lockfile:lint`, `npm run roadmap:check` and `npm run install-cli` (the CLIs are links into `dist`, so a change that is not rebuilt is not what the CLIs run), each by hand and in any order, so one is easily skipped.
-
-Done when:
-
-- `npm run verify` runs those steps in that order, stops at the first failure with its exit code, and prints which step failed.
-- `CLAUDE.md` names `npm run verify` as the check before a commit.
-
 ## 25. Watch the CI run of the commit just pushed
 
 After each push the CI run is found with `gh run list --branch main --limit 1` and watched with `gh run watch <id>`, and nothing confirms that the listed run is the one for the pushed commit rather than an earlier one still queued.

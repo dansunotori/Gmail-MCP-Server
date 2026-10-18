@@ -28,7 +28,8 @@
     "lockfile:lint": "lockfile-lint --path package-lock.json --type npm --validate-https --validate-integrity --allowed-hosts npm cdn.sheetjs.com",
     "prepare": "npm run build",
     "roadmap:check": "node scripts/check-roadmap.mjs",
-    "roadmap:check:staged": "node scripts/check-roadmap.mjs --staged"
+    "roadmap:check:staged": "node scripts/check-roadmap.mjs --staged",
+    "verify": "node scripts/verify.mjs"
   },
   "keywords": [
     "gmail",
