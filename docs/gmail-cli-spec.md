@@ -237,6 +237,9 @@ Never print tokens or full request headers to stderr.
   boolean, or one the command's spec maps in `fields`), unless the spec lists it in `inputOnly`
   with a reason; and every example in every command's `--help` parses with the command's own
   parser.
+- `src/cli/command-list-parity.test.ts`: `COMMANDS`, `package.json`'s `bin`, the
+  `src/cli/gmail-*.ts` entry files, the README's command table and this document's bin table
+  name the same commands with the same MCP tools, and both texts count them as `COMMANDS` does.
 - `scripts/install-cli.test.ts`: links are created, own links replaced, and a foreign link, a
   regular file or a missing build left alone and reported.
 - The full vitest suite must pass.

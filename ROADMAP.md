@@ -2,14 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 26. Keep the command list in the docs and package.json in step with the code
-
-A new command means a `CommandSpec` in `src/cli/commands.ts`, an entry in `COMMANDS`, a `src/cli/gmail-*.ts` entry file, a `bin` in `package.json`, a row in the README's command table and in `docs/gmail-cli-spec.md`'s bin table, and the command counts in both texts, all kept in step by hand.
-
-Done when:
-
-- A test fails when `COMMANDS`, `package.json` `bin`, the `src/cli/gmail-*.ts` entry files, the README command table and the spec's bin table do not name the same commands, or when either text's command count differs from `COMMANDS.length`.
-
 ## 27. CLIs for the remaining read-only tools
 
 `list_inbox_threads`, `get_gmail_profile`, `list_gmail_message_ids`, `list_gmail_added_history`, `batch_get_gmail_index_metadata`, `list_email_labels`, `list_filters` and `get_filter` only read Gmail but have no CLI, so a script needs an MCP session to call them, against the rule at the top of this file.
