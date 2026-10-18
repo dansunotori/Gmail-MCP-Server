@@ -335,7 +335,7 @@ The `auth` subcommand runs before the server starts and is unaffected - invoke i
 
 ## Command-line tools
 
-Nine commands expose nine MCP tools with the same semantics and nothing more, for scripts that need Gmail without an MCP session. Each calls the same code the server calls. All but one only read Gmail; `gmail-create-draft` saves a draft and never sends it.
+Seventeen commands expose seventeen MCP tools with the same semantics and nothing more, for scripts that need Gmail without an MCP session. Each calls the same code the server calls. All but one only read Gmail; `gmail-create-draft` saves a draft and never sends it.
 
 | Command | MCP tool | Prints |
 |-|-|-|
@@ -348,6 +348,14 @@ Nine commands expose nine MCP tools with the same semantics and nothing more, fo
 | `gmail-get-thread <thread_id> [--format full\|metadata\|minimal]` | `get_thread` | `{threadId, messageCount, messages}`, each message with its `body` and `bodySource` |
 | `gmail-get-inbox-with-threads [--query '<gmail query>'] [--max-results N] [--no-expand-threads]` | `get_inbox_with_threads` | `{resultCount, threads}`, each thread expanded to its messages or, with `--no-expand-threads`, summarised by its latest one |
 | `gmail-download-email <message_id> --save-path <dir> [--format json\|eml\|txt\|html]` | `download_email` | `{status, path, size, messageId, subject, from, date, attachments}`, the message saved as `<dir>/<message_id>.<format>` |
+| `gmail-list-inbox-threads [--query '<gmail query>'] [--max-results N]` | `list_inbox_threads` | `{resultCount, threads: [{threadId, snippet, historyId, messageCount, latestMessage: {from, subject, date}}]}` |
+| `gmail-get-profile` | `get_gmail_profile` | `{historyId}` |
+| `gmail-list-message-ids [--page-token <token>] [--max-results N]` | `list_gmail_message_ids` | `{messageIds, nextPageToken}`, one page of up to 500 IDs, spam and trash excluded |
+| `gmail-list-added-history <start_history_id> [--page-token <token>] [--max-results N]` | `list_gmail_added_history` | `{status: "ok", messageIds, nextPageToken, historyId}`, or `{status: "cursor_expired", startHistoryId}` when Gmail no longer keeps history from that ID |
+| `gmail-batch-get-index-metadata <message_id>...` | `batch_get_gmail_index_metadata` | `{messages: [{id, internalDate, labelIds}], missingMessageIds}` for 1 to 50 IDs, in the order given |
+| `gmail-list-labels` | `list_email_labels` | `{count: {total, system, user}, system, user}`, each label as Gmail returns it |
+| `gmail-list-filters` | `list_filters` | `{count, filters: [{id, criteria, action}]}` |
+| `gmail-get-filter <filter_id>` | `get_filter` | `{id, criteria, action}` |
 
 `gmail-create-draft` takes one option per `draft_email` input: `--to`, `--cc` and `--bcc` (comma-separated addresses), `--subject`, `--body` or `--body-file`, `--html-body` or `--html-body-file`, `--mime-type text/plain|text/html|multipart/alternative` (without it the type follows the bodies given: an HTML body alone is `text/html`, both bodies `multipart/alternative`), `--attachment <file>` (repeatable), `--inline-image cid=<cid>,path=<file>` (repeatable, needs an HTML body), `--from <send-as address>`, `--thread-id` and `--in-reply-to`. `--input <file>` reads the tool's JSON request, and options override its fields. Body files are read as UTF-8, so no body has to pass through a shell argument. An unknown option, a missing recipient, subject or body, an invalid recipient or `--from` address, `--mime-type text/plain` beside an HTML body, or an attachment, image or body file that cannot be read exits 2 before anything reaches Gmail, and `--output` never replaces one of those input files.
 

@@ -24,7 +24,7 @@ import { getGmailProfile, listGmailAddedHistory, listGmailMessageIds, structured
 import { batchGetGmailIndexMetadata } from "./gmail-batch.js";
 import { handleBatchFetchWindow } from "./batch-fetch-window.js";
 import { failureDetail, scopeRefusal, toolErrorResult } from "./error-text.js";
-import { searchEmails, formatSearchEmailsText, readEmail, formatReadEmailText, downloadAttachment, formatDownloadAttachmentText, downloadEmail, getInboxWithThreads, getThread } from "./read-tools.js";
+import { searchEmails, formatSearchEmailsText, readEmail, formatReadEmailText, downloadAttachment, formatDownloadAttachmentText, downloadEmail, getInboxWithThreads, getThread, listInboxThreads } from "./read-tools.js";
 
 export interface GmailServerDeps {
     gmail: gmail_v1.Gmail;
@@ -770,53 +770,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
 
                 case "list_inbox_threads": {
                     const validatedArgs = ListInboxThreadsSchema.parse(args);
-                    const threadsResponse = await gmail.users.threads.list({
-                        userId: 'me',
-                        q: validatedArgs.query || 'in:inbox',
-                        maxResults: validatedArgs.maxResults || 50,
-                    });
-
-                    const threads = threadsResponse.data.threads || [];
-
-                    // Fetch metadata for each thread to get message count and latest message info
-                    const threadDetails = await Promise.all(
-                        threads.map(async (thread) => {
-                            const detail = await gmail.users.threads.get({
-                                userId: 'me',
-                                id: thread.id!,
-                                format: 'metadata',
-                                metadataHeaders: ['Subject', 'From', 'Date'],
-                            });
-
-                            const messages = detail.data.messages || [];
-                            const latestMessage = messages[messages.length - 1];
-                            const latestHeaders = latestMessage?.payload?.headers || [];
-
-                            return {
-                                threadId: thread.id || '',
-                                snippet: thread.snippet || '',
-                                historyId: thread.historyId || '',
-                                messageCount: messages.length,
-                                latestMessage: {
-                                    from: latestHeaders.find(h => h.name === 'From')?.value || '',
-                                    subject: latestHeaders.find(h => h.name === 'Subject')?.value || '',
-                                    date: latestHeaders.find(h => h.name === 'Date')?.value || '',
-                                },
-                            };
-                        })
-                    );
-
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: JSON.stringify({
-                                    resultCount: threadDetails.length,
-                                    threads: threadDetails,
-                                }, null, 2),
-                            },
-                        ],
-                    };
+                    return { content: [{ type: "text", text: JSON.stringify(await listInboxThreads(gmail, validatedArgs), null, 2) }] };
                 }
 
                 case "get_inbox_with_threads": {

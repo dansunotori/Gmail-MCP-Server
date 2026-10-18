@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import { GmailRequestError, toGmailRequestError } from './gmail-sync.js';
+import { GmailRequestError, toGmailRequestError, withParsedErrorBody } from './gmail-sync.js';
 
 // The verb phrase each MCP tool names in its error text.
 const TOOL_ACTIONS: Record<string, string> = {
@@ -60,6 +60,14 @@ const CLI_TOOLS: Record<string, string> = {
   'gmail-get-thread': 'get_thread',
   'gmail-get-inbox-with-threads': 'get_inbox_with_threads',
   'gmail-download-email': 'download_email',
+  'gmail-list-inbox-threads': 'list_inbox_threads',
+  'gmail-get-profile': 'get_gmail_profile',
+  'gmail-list-message-ids': 'list_gmail_message_ids',
+  'gmail-list-added-history': 'list_gmail_added_history',
+  'gmail-batch-get-index-metadata': 'batch_get_gmail_index_metadata',
+  'gmail-list-labels': 'list_email_labels',
+  'gmail-list-filters': 'list_filters',
+  'gmail-get-filter': 'get_filter',
 };
 
 // Why a tool the saved credentials do not cover is refused, by the server and the CLIs alike.
@@ -97,40 +105,13 @@ type ErrorShape = {
 // readable, by this module and by the exit-code mapping and auth check (toGmailRequestError
 // returns a GmailRequestError unchanged).
 export function withContext(message: string, cause: unknown): GmailRequestError {
-  const upstream = toGmailRequestError(withParsedBody(cause));
+  const upstream = toGmailRequestError(cause);
   return new GmailRequestError(message, {
     code: upstream.code,
     status: upstream.status,
     reason: upstream.reason,
     cause,
   });
-}
-
-// A request made with responseType 'text' (the metadata batch) gets its JSON error body
-// as a string; read it as the object every other request gets. Anything else, including a
-// body that is not JSON (an HTML error page), is returned unchanged.
-function withParsedBody(error: unknown): unknown {
-  const record = typeof error === 'object' && error !== null ? error as ErrorShape & { code?: unknown } : undefined;
-  const data: unknown = record?.response?.data;
-  if (record === undefined || typeof data !== 'string') {
-    return error;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(data);
-  } catch {
-    return error;
-  }
-  if (typeof parsed !== 'object' || parsed === null) {
-    return error;
-  }
-  return {
-    message: record.message,
-    code: record.code,
-    errors: record.errors,
-    cause: record.cause,
-    response: { ...record.response, data: parsed },
-  };
 }
 
 // The error followed by every error it wraps, outermost first, each with its body parsed.
@@ -140,7 +121,7 @@ function causeChain(error: unknown): ErrorShape[] {
   let current = error;
   while (typeof current === 'object' && current !== null && !seen.has(current)) {
     seen.add(current);
-    const shape = withParsedBody(current) as ErrorShape;
+    const shape = withParsedErrorBody(current) as ErrorShape;
     chain.push(shape);
     current = shape.cause;
   }
@@ -202,7 +183,7 @@ export function failureDetail(error: unknown): string {
   const chain = causeChain(error);
   // A GmailRequestError (from withContext or toGmailRequestError) carries the reason and
   // status of the error it wraps; any other error is read directly.
-  const wrapped = toGmailRequestError(withParsedBody(error));
+  const wrapped = toGmailRequestError(error);
   const detail = [
     ...(wrapped.reason !== undefined ? [`code ${wrapped.reason}`] : []),
     ...(wrapped.status !== undefined ? [`HTTP ${wrapped.status}`] : []),

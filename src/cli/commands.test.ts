@@ -10,13 +10,21 @@ import { GmailRequestError } from '../gmail-sync.js';
 import {
   COMMANDS,
   batchFetchWindowCommand,
+  batchGetIndexMetadataCommand,
   createDraftCommand,
   downloadAttachmentCommand,
   downloadEmailCommand,
   getAttachmentTextCommand,
+  getFilterCommand,
   getInboxWithThreadsCommand,
   getMessageCommand,
+  getProfileCommand,
   getThreadCommand,
+  listAddedHistoryCommand,
+  listFiltersCommand,
+  listInboxThreadsCommand,
+  listLabelsCommand,
+  listMessageIdsCommand,
   searchCommand,
   type CliDeps,
 } from './commands.js';
@@ -71,10 +79,11 @@ function fakeGmail() {
   };
 }
 
-function harness(gmail: gmail_v1.Gmail = fakeGmail().gmail) {
+function harness(gmail: gmail_v1.Gmail = fakeGmail().gmail, auth: unknown = {}) {
   const out: string[] = [];
   const deps: CliDeps = {
     gmail: vi.fn(() => gmail),
+    oauth: vi.fn(() => auth as ReturnType<CliDeps['oauth']>),
     signIn: vi.fn(async () => ({ scopes: ['gmail.readonly'] })),
     write: vi.fn(async (text: string) => { out.push(text); }),
   };
@@ -138,6 +147,7 @@ describe('every command', () => {
         await run([flag], deps);
         expect(out.join('')).toContain(`Usage: ${name}`);
         expect(deps.gmail).not.toHaveBeenCalled();
+        expect(deps.oauth).not.toHaveBeenCalled();
       }
     },
   );
@@ -148,6 +158,7 @@ describe('every command', () => {
       await run(['--auth'], deps);
       expect(deps.signIn).toHaveBeenCalledTimes(1);
       expect(deps.gmail).not.toHaveBeenCalled();
+      expect(deps.oauth).not.toHaveBeenCalled();
       expect(json()).toEqual({ authenticated: true, scopes: ['gmail.readonly'] });
     },
   );
@@ -950,6 +961,192 @@ describe('gmail-get-inbox-with-threads', () => {
     expect(json().threads[0]).not.toHaveProperty('messages');
     const failed = await getInboxWithThreadsCommand(['--max-results', '0'], harness(threadGmail().gmail).deps).catch(error => error);
     expect(mapErrorToExitCode(failed)).toBe(2);
+  });
+});
+
+describe('gmail-list-inbox-threads', () => {
+  it('prints each thread summarised by its latest message, with the tool\'s query and limit defaults', async () => {
+    const fake = threadGmail();
+    const { deps, json } = harness(fake.gmail);
+    await listInboxThreadsCommand([], deps);
+    expect(deps.gmail).toHaveBeenCalledWith('list_inbox_threads');
+    expect(fake.list).toHaveBeenCalledWith({ userId: 'me', q: 'in:inbox', maxResults: 50 });
+    expect(fake.get).toHaveBeenCalledWith({ userId: 'me', id: 'th1', format: 'metadata', metadataHeaders: ['Subject', 'From', 'Date'] });
+    expect(json()).toEqual({
+      resultCount: 1,
+      threads: [{ threadId: 'th1', snippet: 's', historyId: 'h', messageCount: 2, latestMessage: { from: 'Billing <billing@example.com>', subject: 'Invoice', date: 'Mon, 07 Sep 2026 14:00:00 +0000' } }],
+    });
+  });
+
+  it('passes --query and --max-results, and refuses a bad limit or an argument', async () => {
+    const fake = threadGmail();
+    await listInboxThreadsCommand(['--query', 'is:unread', '--max-results', '5'], harness(fake.gmail).deps);
+    expect(fake.list).toHaveBeenCalledWith({ userId: 'me', q: 'is:unread', maxResults: 5 });
+    for (const argv of [['--max-results', '0'], ['extra']]) {
+      const failed = await listInboxThreadsCommand(argv, harness(threadGmail().gmail).deps).catch(error => error);
+      expect(mapErrorToExitCode(failed), argv.join(' ')).toBe(2);
+    }
+  });
+});
+
+describe('gmail-get-profile', () => {
+  it("prints get_gmail_profile's result and takes no argument", async () => {
+    const getProfile = vi.fn(async () => ({ data: { historyId: 'h-77' } }));
+    const gmail = { users: { getProfile } } as unknown as gmail_v1.Gmail;
+    const { deps, json } = harness(gmail);
+    await getProfileCommand([], deps);
+    expect(deps.gmail).toHaveBeenCalledWith('get_gmail_profile');
+    expect(getProfile).toHaveBeenCalledWith({ userId: 'me', fields: 'historyId' });
+    expect(json()).toEqual({ historyId: 'h-77' });
+    const failed = await getProfileCommand(['extra'], harness(gmail).deps).catch(error => error);
+    expect(mapErrorToExitCode(failed)).toBe(2);
+  });
+});
+
+describe('gmail-list-message-ids', () => {
+  const idsGmail = () => {
+    const list = vi.fn(async (_params: Record<string, unknown>) => ({ data: { messages: [{ id: 'm1' }, { id: 'm2' }, { id: 'm1' }], nextPageToken: 'p2' } }));
+    return { gmail: { users: { messages: { list } } } as unknown as gmail_v1.Gmail, list };
+  };
+
+  it("prints one page of message ids with the tool's limit of 500 by default", async () => {
+    const fake = idsGmail();
+    const { deps, json } = harness(fake.gmail);
+    await listMessageIdsCommand([], deps);
+    expect(deps.gmail).toHaveBeenCalledWith('list_gmail_message_ids');
+    expect(fake.list).toHaveBeenCalledWith(expect.objectContaining({ maxResults: 500, pageToken: undefined }));
+    expect(json()).toEqual({ messageIds: ['m1', 'm2'], nextPageToken: 'p2' });
+  });
+
+  it('passes --page-token and --max-results, and refuses a limit outside 1 to 500', async () => {
+    const fake = idsGmail();
+    await listMessageIdsCommand(['--page-token', 'p2', '--max-results', '10'], harness(fake.gmail).deps);
+    expect(fake.list).toHaveBeenCalledWith(expect.objectContaining({ maxResults: 10, pageToken: 'p2' }));
+    for (const argv of [['--max-results', '501'], ['--max-results', '0'], ['extra']]) {
+      const failed = await listMessageIdsCommand(argv, harness(idsGmail().gmail).deps).catch(error => error);
+      expect(mapErrorToExitCode(failed), argv.join(' ')).toBe(2);
+    }
+  });
+});
+
+describe('gmail-list-added-history', () => {
+  it('prints the messages added since a history id, with --page-token and --max-results passed through', async () => {
+    const list = vi.fn(async (_params: Record<string, unknown>) => ({ data: { history: [{ messagesAdded: [{ message: { id: 'm9' } }] }], historyId: 'h-20' } }));
+    const gmail = { users: { history: { list } } } as unknown as gmail_v1.Gmail;
+    const { deps, json } = harness(gmail);
+    await listAddedHistoryCommand(['h-10', '--page-token', 'p', '--max-results', '20'], deps);
+    expect(deps.gmail).toHaveBeenCalledWith('list_gmail_added_history');
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ startHistoryId: 'h-10', pageToken: 'p', maxResults: 20 }));
+    expect(json()).toEqual({ status: 'ok', messageIds: ['m9'], historyId: 'h-20' });
+  });
+
+  it('prints cursor_expired for a history id Gmail no longer has, and refuses a missing one', async () => {
+    const list = vi.fn(async () => { throw httpError(404); });
+    const { deps, json } = harness({ users: { history: { list } } } as unknown as gmail_v1.Gmail);
+    await listAddedHistoryCommand(['h-1'], deps);
+    expect(json()).toEqual({ status: 'cursor_expired', startHistoryId: 'h-1' });
+    const failed = await listAddedHistoryCommand([], harness().deps).catch(error => error);
+    expect(mapErrorToExitCode(failed)).toBe(2);
+  });
+});
+
+describe('gmail-batch-get-index-metadata', () => {
+  const batchPart = (index: number, id: string) => [
+    '--batch_response',
+    'Content-Type: application/http',
+    `Content-ID: <response-gmail-index-${index}>`,
+    '',
+    'HTTP/1.1 200 OK',
+    'Content-Type: application/json; charset=UTF-8',
+    '',
+    JSON.stringify({ id, internalDate: '1710000000000', labelIds: ['INBOX'] }),
+  ].join('\r\n');
+
+  it("fetches each message's index metadata through the tool's OAuth client and prints the tool's result", async () => {
+    const request = vi.fn(async () => ({
+      data: `${batchPart(0, 'm1')}\r\n${batchPart(1, 'm2')}\r\n--batch_response--\r\n`,
+      headers: new Headers({ 'content-type': 'multipart/mixed; boundary=batch_response' }),
+    }));
+    const { deps, json } = harness(fakeGmail().gmail, { request });
+    await batchGetIndexMetadataCommand(['m1', 'm2'], deps);
+    expect(deps.oauth).toHaveBeenCalledWith('batch_get_gmail_index_metadata');
+    expect(deps.gmail).not.toHaveBeenCalled();
+    expect(json()).toEqual({
+      messages: [
+        { id: 'm1', internalDate: '1710000000000', labelIds: ['INBOX'] },
+        { id: 'm2', internalDate: '1710000000000', labelIds: ['INBOX'] },
+      ],
+      missingMessageIds: [],
+    });
+  });
+
+  it('exits 4 for a rate-limited batch request and 3 for a refused one, whose JSON bodies come as text', async () => {
+    const rejected = (reason: string) => Object.assign(new Error('HTTP 403'), {
+      response: { status: 403, data: JSON.stringify({ error: { code: 403, message: 'm', errors: [{ reason }] } }) },
+    });
+    for (const [reason, code] of [['rateLimitExceeded', 4], ['userRateLimitExceeded', 4], ['insufficientPermissions', 3]] as const) {
+      const request = vi.fn(async () => { throw rejected(reason); });
+      const failed = await batchGetIndexMetadataCommand(['m1'], harness(fakeGmail().gmail, { request }).deps).catch(error => error);
+      expect(mapErrorToExitCode(failed), reason).toBe(code);
+    }
+  });
+
+  it('refuses no message id or more than 50 before calling Gmail', async () => {
+    for (const argv of [[], Array.from({ length: 51 }, (_, index) => `m${index}`)]) {
+      const { deps } = harness();
+      const failed = await batchGetIndexMetadataCommand(argv, deps).catch(error => error);
+      expect(mapErrorToExitCode(failed), `${argv.length} ids`).toBe(2);
+      expect(deps.oauth).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe('gmail-list-labels', () => {
+  it('prints the label counts and the system and user labels', async () => {
+    const labels = [
+      { id: 'INBOX', name: 'INBOX', type: 'system' },
+      { id: 'Label_1', name: 'Receipts', type: 'user' },
+    ];
+    const list = vi.fn(async () => ({ data: { labels } }));
+    const { deps, json } = harness({ users: { labels: { list } } } as unknown as gmail_v1.Gmail);
+    await listLabelsCommand([], deps);
+    expect(deps.gmail).toHaveBeenCalledWith('list_email_labels');
+    expect(json()).toEqual({ count: { total: 2, system: 1, user: 1 }, system: [labels[0]], user: [labels[1]] });
+    const failed = await listLabelsCommand(['extra'], harness().deps).catch(error => error);
+    expect(mapErrorToExitCode(failed)).toBe(2);
+  });
+});
+
+describe('gmail-list-filters and gmail-get-filter', () => {
+  const filter = { id: 'f1', criteria: { from: 'billing@example.com' }, action: { addLabelIds: ['Label_1'] } };
+  const filterGmail = () => {
+    const list = vi.fn(async () => ({ data: { filter: [filter] } }));
+    const get = vi.fn(async ({ id }: { id: string }) => {
+      if (id !== 'f1') throw Object.assign(httpError(404), { code: 404 });
+      return { data: filter };
+    });
+    return { users: { settings: { filters: { list, get } } } } as unknown as gmail_v1.Gmail;
+  };
+
+  it('gmail-list-filters prints the count and every filter', async () => {
+    const { deps, json } = harness(filterGmail());
+    await listFiltersCommand([], deps);
+    expect(deps.gmail).toHaveBeenCalledWith('list_filters');
+    expect(json()).toEqual({ count: 1, filters: [filter] });
+    const failed = await listFiltersCommand(['extra'], harness(filterGmail()).deps).catch(error => error);
+    expect(mapErrorToExitCode(failed)).toBe(2);
+  });
+
+  it('gmail-get-filter prints one filter, exits 5 for an unknown id and 2 without one', async () => {
+    const { deps, json } = harness(filterGmail());
+    await getFilterCommand(['f1'], deps);
+    expect(deps.gmail).toHaveBeenCalledWith('get_filter');
+    expect(json()).toEqual(filter);
+    const missing = await getFilterCommand(['f9'], harness(filterGmail()).deps).catch(error => error);
+    expect(mapErrorToExitCode(missing)).toBe(5);
+    expect(missing.message).toContain('Filter with ID "f9" not found.');
+    const usage = await getFilterCommand([], harness(filterGmail()).deps).catch(error => error);
+    expect(mapErrorToExitCode(usage)).toBe(2);
   });
 });
 

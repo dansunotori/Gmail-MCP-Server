@@ -126,11 +126,39 @@ function readReason(record: ErrorRecord | undefined): string | undefined {
   return undefined;
 }
 
+// A request made with responseType 'text' (the metadata batch) gets its JSON error body
+// as a string; read it as the object every other request gets. Anything else, including a
+// body that is not JSON (an HTML error page), is returned unchanged.
+export function withParsedErrorBody(error: unknown): unknown {
+  const record = asRecord(error) as (ErrorRecord & { errors?: unknown; cause?: unknown; response?: Record<string, unknown> }) | undefined;
+  const data: unknown = record?.response?.data;
+  if (record === undefined || typeof data !== 'string') {
+    return error;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    return error;
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    return error;
+  }
+  return {
+    message: record.message,
+    code: record.code,
+    errors: record.errors,
+    cause: record.cause,
+    response: { ...record.response, data: parsed },
+  };
+}
+
 export function toGmailRequestError(error: unknown): GmailRequestError {
   if (error instanceof GmailRequestError) {
     return error;
   }
-  const record = asRecord(error);
+  // The status, code and reason are read from the parsed body; the cause stays the error itself.
+  const record = asRecord(withParsedErrorBody(error));
   const message = typeof record?.message === 'string' ? record.message : String(error);
   return new GmailRequestError(message, {
     code: readCode(record),

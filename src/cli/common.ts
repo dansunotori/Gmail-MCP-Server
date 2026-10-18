@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import type { OAuth2Client } from 'google-auth-library';
 import { google, type gmail_v1 } from 'googleapis';
 import { z } from 'zod';
 import { AttachmentFileError } from '../attachment-text/formats.js';
@@ -326,6 +327,9 @@ export interface CliDeps {
     // A Gmail client for the named MCP tool, refused like the server refuses the tool when
     // the saved credentials lack its scopes.
     gmail: (toolName: string) => gmail_v1.Gmail;
+    // The signed-in OAuth client itself, refused the same way, for a tool that sends its own
+    // requests (batch_get_gmail_index_metadata's batch endpoint).
+    oauth: (toolName: string) => OAuth2Client;
     signIn: () => Promise<{ scopes: string[] }>;
     // Writes to stdout and resolves once the text is flushed.
     write: (text: string) => Promise<void>;
@@ -359,16 +363,22 @@ function writeStream(stream: NodeJS.WriteStream, text: string): Promise<void> {
     });
 }
 
+// The saved OAuth client, once the saved scopes are known to grant the tool.
+function authorisedClient(toolName: string): OAuth2Client {
+    const { oauth2Client, authorizedScopes } = loadCredentials({ log: stderrLog, requireCredentials: true });
+    const tool = getToolByName(toolName);
+    if (!tool || !hasScope(authorizedScopes, tool.scopes)) {
+        throw new ScopeError(toolName);
+    }
+    return oauth2Client;
+}
+
 export function defaultDeps(): CliDeps {
     return {
         gmail(toolName) {
-            const { oauth2Client, authorizedScopes } = loadCredentials({ log: stderrLog, requireCredentials: true });
-            const tool = getToolByName(toolName);
-            if (!tool || !hasScope(authorizedScopes, tool.scopes)) {
-                throw new ScopeError(toolName);
-            }
-            return google.gmail({ version: 'v1', auth: oauth2Client });
+            return google.gmail({ version: 'v1', auth: authorisedClient(toolName) });
         },
+        oauth: authorisedClient,
         async signIn() {
             // Re-request the scopes already saved (DEFAULT_SCOPES when none are), so signing in
             // from a command-line tool never changes what the MCP server is allowed to do.

@@ -1,9 +1,10 @@
 # Gmail CLI — Specification
 
-Nine command-line tools, each exposing an existing MCP tool with the same semantics and nothing
-more, installed as bins of the package. Scripts (and Claude sessions) can then search, read
-messages and threads, download attachments and messages, read attachment text, fetch a window of
-Gmail and save a draft without an MCP session.
+Seventeen command-line tools, each exposing an existing MCP tool with the same semantics and
+nothing more, installed as bins of the package. Scripts (and Claude sessions) can then search,
+read messages and threads, list threads, labels and filters, page through message IDs and the
+history of added messages, download attachments and messages, read attachment text, fetch a
+window of Gmail and save a draft without an MCP session.
 This document is self-contained and the output contracts below are the requirement.
 
 ## Non-negotiables
@@ -31,7 +32,8 @@ This document is self-contained and the output contracts below are the requireme
   refused with the server's own message.
 - Do not change MCP server behaviour.
 - Sending mail stays out of scope: no CLI sends, replies, forwards, labels, trashes or modifies a
-  message. `gmail-create-draft` saves a draft and never sends it.
+  message, and none creates, changes or deletes a label or filter. `gmail-create-draft` saves a
+  draft and never sends it.
 
 ## Commands and bin entries
 
@@ -46,6 +48,14 @@ This document is self-contained and the output contracts below are the requireme
 | `gmail-get-thread` | `get_thread` |
 | `gmail-get-inbox-with-threads` | `get_inbox_with_threads` |
 | `gmail-download-email` | `download_email` |
+| `gmail-list-inbox-threads` | `list_inbox_threads` |
+| `gmail-get-profile` | `get_gmail_profile` |
+| `gmail-list-message-ids` | `list_gmail_message_ids` |
+| `gmail-list-added-history` | `list_gmail_added_history` |
+| `gmail-batch-get-index-metadata` | `batch_get_gmail_index_metadata` |
+| `gmail-list-labels` | `list_email_labels` |
+| `gmail-list-filters` | `list_filters` |
+| `gmail-get-filter` | `get_filter` |
 
 Names are prefixed `gmail-` so that they cannot clash with generic mail CLIs a user may already
 have installed globally.
@@ -180,6 +190,82 @@ Exposes `download_email`: saves `<dir>/<message_id>.<format>` (json by default) 
 tool's result, `{status, path, size, messageId, subject, from, date, attachments}`. An `--output`
 naming the file it saves is refused before any Gmail call.
 
+### gmail-list-inbox-threads
+
+```
+gmail-list-inbox-threads [--query '<gmail query>'] [--max-results N] [-o <file>]
+```
+
+Exposes `list_inbox_threads` with its defaults (`in:inbox`, 50 threads) and prints
+`{resultCount, threads}`, each thread `{threadId, snippet, historyId, messageCount,
+latestMessage: {from, subject, date}}`. The server and the command share `listInboxThreads`, which
+is `getInboxWithThreads` without expanding the threads.
+
+### gmail-get-profile
+
+```
+gmail-get-profile [-o <file>]
+```
+
+Exposes `get_gmail_profile` and prints `{historyId}`, the mailbox's current history ID.
+
+### gmail-list-message-ids
+
+```
+gmail-list-message-ids [--page-token <token>] [--max-results N] [-o <file>]
+```
+
+Exposes `list_gmail_message_ids`: one page of message IDs, spam and trash excluded, 500 by default
+and at most 500, printed as `{messageIds, nextPageToken}`; `nextPageToken` is absent on the last
+page.
+
+### gmail-list-added-history
+
+```
+gmail-list-added-history <start_history_id> [--page-token <token>] [--max-results N] [-o <file>]
+```
+
+Exposes `list_gmail_added_history` and prints `{status: "ok", messageIds, nextPageToken,
+historyId}`, or `{status: "cursor_expired", startHistoryId}` when Gmail no longer keeps history
+from that ID (it answers 404), which is a result, not an error.
+
+### gmail-batch-get-index-metadata
+
+```
+gmail-batch-get-index-metadata <message_id>... [-o <file>]
+```
+
+Exposes `batch_get_gmail_index_metadata` for 1 to 50 message IDs, sent as one Gmail batch request
+through the signed-in OAuth client, and prints `{messages: [{id, internalDate, labelIds}],
+missingMessageIds}` in the order given. No ID, or more than 50, is a usage error before any
+request.
+
+### gmail-list-labels
+
+```
+gmail-list-labels [-o <file>]
+```
+
+Exposes `list_email_labels` and prints `{count: {total, system, user}, system, user}`, each label
+as Gmail returns it.
+
+### gmail-list-filters
+
+```
+gmail-list-filters [-o <file>]
+```
+
+Exposes `list_filters` and prints `{count, filters: [{id, criteria, action}]}`.
+
+### gmail-get-filter
+
+```
+gmail-get-filter <filter_id> [-o <file>]
+```
+
+Exposes `get_filter` and prints `{id, criteria, action}`; an unknown ID exits 5 with
+`Failed to get filter: Filter with ID "<id>" not found. (…)`.
+
 ### gmail-batch-fetch-window
 
 ```
@@ -202,12 +288,15 @@ CLIs share:
 - `src/auth.ts`: `loadCredentials()` and the interactive `authenticate()` flow, with progress lines
   through an injected logger (stdout for the server, stderr for the CLIs).
 - `src/read-tools.ts`: `searchEmails`, `readEmail`, `downloadAttachment`, `getThread`,
-  `getInboxWithThreads` and `downloadEmail`, each returning
+  `getInboxWithThreads`, `listInboxThreads` and `downloadEmail`, each returning
   structured data, plus the formatters that render the exact text the server returns.
+- `src/gmail-sync.ts`: `getGmailProfile`, `listGmailMessageIds` and `listGmailAddedHistory`;
+  `src/gmail-batch.ts`: `batchGetGmailIndexMetadata`.
+- `src/label-manager.ts`: `listLabels`; `src/filter-manager.ts`: `listFilters` and `getFilter`.
 - `src/batch-fetch-window.ts`: `batchFetchWindow`.
 - `src/attachment-text/`: `getAttachmentText` and the extraction worker.
 - `src/compose.ts`: the draft and send logic `draft_email` uses.
-- `src/cli/common.ts` (parsing, help, output, exit codes) and `src/cli/commands.ts` (the nine
+- `src/cli/common.ts` (parsing, help, output, exit codes) and `src/cli/commands.ts` (the seventeen
   commands); `src/cli/gmail-*.ts` are the bin entry points.
 
 ## Errors and exit codes

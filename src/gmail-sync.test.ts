@@ -386,6 +386,26 @@ describe('GmailRequestError helpers', () => {
     expect(isAuthError(httpError(429))).toBe(false);
     expect(isAuthError(new Error('network'))).toBe(false);
   });
+
+  // A request made with responseType 'text' (the metadata batch) gets its JSON error body as a
+  // string, which is read as the object every other request gets.
+  const textBodied = (status: number, reason: string) => Object.assign(new Error(`HTTP ${status}`), {
+    response: { status, data: JSON.stringify({ error: { code: status, message: 'm', errors: [{ reason }] } }) },
+  });
+
+  it('reads the reason of an error whose JSON body came as text, so a rate limit is not an auth error', () => {
+    expect(toGmailRequestError(textBodied(403, 'rateLimitExceeded')).reason).toBe('rateLimitExceeded');
+    expect(toGmailRequestError(textBodied(403, 'rateLimitExceeded')).status).toBe(403);
+    expect(isAuthError(textBodied(403, 'rateLimitExceeded'))).toBe(false);
+    expect(isAuthError(textBodied(403, 'insufficientPermissions'))).toBe(true);
+  });
+
+  it('leaves a text body that is not a JSON error unread, keeping the original error as the cause', () => {
+    const page = Object.assign(new Error('<html>'), { response: { status: 403, data: '<html>Forbidden</html>' } });
+    expect(toGmailRequestError(page).reason).toBeUndefined();
+    expect(toGmailRequestError(page).cause).toBe(page);
+    expect(isAuthError(page)).toBe(true);
+  });
 });
 
 function pagedList(pages: Array<{ ids: string[]; next?: string } | Error>) {

@@ -2,7 +2,7 @@
  * The command-line tools. Each exposes one MCP tool with the same Gmail calls, defaults and
  * guards, by calling the same core function the server calls. All but one only read Gmail;
  * gmail-create-draft saves a draft. Nothing here sends, replies, forwards, labels, trashes
- * or modifies a message.
+ * or modifies a message, and no label or filter is created, changed or deleted.
  */
 
 import fs from 'node:fs';
@@ -11,10 +11,25 @@ import TurndownService from 'turndown';
 import { getAttachmentText } from '../attachment-text/attachment-text.js';
 import { batchFetchWindow } from '../batch-fetch-window.js';
 import { contentTypeFor, createDraft, readDraft, type ComposeArgs } from '../compose.js';
+import { getFilter, listFilters } from '../filter-manager.js';
+import { batchGetGmailIndexMetadata } from '../gmail-batch.js';
+import { getGmailProfile, listGmailAddedHistory, listGmailMessageIds } from '../gmail-sync.js';
+import { listLabels } from '../label-manager.js';
 import { validateEmail } from '../utl.js';
 import type { BodySource } from '../message-body.js';
-import { downloadAttachment, downloadEmail, getInboxWithThreads, getThread, readEmail, searchEmails, type ReadEmailResult } from '../read-tools.js';
-import { BatchFetchWindowSchema, DownloadEmailSchema, GetInboxWithThreadsSchema, GetThreadSchema, SendEmailSchema } from '../tools.js';
+import { downloadAttachment, downloadEmail, getInboxWithThreads, getThread, listInboxThreads, readEmail, searchEmails, type ReadEmailResult } from '../read-tools.js';
+import {
+    BatchFetchWindowSchema,
+    BatchGetGmailIndexMetadataSchema,
+    DownloadEmailSchema,
+    GetFilterSchema,
+    GetInboxWithThreadsSchema,
+    GetThreadSchema,
+    ListGmailAddedHistorySchema,
+    ListGmailMessageIdsSchema,
+    ListInboxThreadsSchema,
+    SendEmailSchema,
+} from '../tools.js';
 import {
     assertOutputAvoids,
     commonFlags,
@@ -701,6 +716,218 @@ export const downloadEmailCommand: Command = async (argv, deps) => {
     await emitJson(await downloadEmail(deps.gmail('download_email'), input), args.output, deps);
 };
 
+const LIST_INBOX_THREADS: CommandSpec = {
+    name: 'gmail-list-inbox-threads',
+    tool: 'list_inbox_threads',
+    synopsis: "gmail-list-inbox-threads [--query '<gmail query>'] [--max-results N] [-o <file>]",
+    description: 'Lists the threads matching a query like the list_inbox_threads MCP tool and prints {resultCount, threads: [{threadId, snippet, historyId, messageCount, latestMessage: {from, subject, date}}]}, each thread summarised by its latest message.',
+    arguments: [],
+    example: 'gmail-list-inbox-threads',
+    flags: {
+        query: {
+            type: 'string',
+            placeholder: "'<gmail query>'",
+            description: "Gmail search syntax (default 'in:inbox'). Quote it.",
+            example: "gmail-list-inbox-threads --query 'is:unread label:receipts'",
+        },
+        'max-results': {
+            type: 'string',
+            placeholder: 'N',
+            description: 'Return at most N threads (default 50).',
+            example: 'gmail-list-inbox-threads --max-results 10',
+        },
+        ...commonFlags('gmail-list-inbox-threads', 'gmail-list-inbox-threads --output threads.json'),
+    },
+};
+
+export const listInboxThreadsCommand: Command = async (argv, deps) => {
+    const args = await start(LIST_INBOX_THREADS, argv, deps);
+    if (!args) return;
+    expectPositionals(args.positionals, []);
+    const maxResults = positiveInteger('max-results', args.values['max-results'] as string | undefined);
+    const input = ListInboxThreadsSchema.parse({
+        ...(args.values.query !== undefined ? { query: args.values.query } : {}),
+        ...(maxResults !== undefined ? { maxResults } : {}),
+    });
+    await emitJson(await listInboxThreads(deps.gmail('list_inbox_threads'), input), args.output, deps);
+};
+
+const GET_PROFILE: CommandSpec = {
+    name: 'gmail-get-profile',
+    tool: 'get_gmail_profile',
+    synopsis: 'gmail-get-profile [-o <file>]',
+    description: "Prints the mailbox's current history ID like the get_gmail_profile MCP tool, as {historyId}: the cursor gmail-list-added-history starts from.",
+    arguments: [],
+    example: 'gmail-get-profile',
+    flags: {
+        ...commonFlags('gmail-get-profile', 'gmail-get-profile --output profile.json'),
+    },
+};
+
+export const getProfileCommand: Command = async (argv, deps) => {
+    const args = await start(GET_PROFILE, argv, deps);
+    if (!args) return;
+    expectPositionals(args.positionals, []);
+    await emitJson(await getGmailProfile(deps.gmail('get_gmail_profile')), args.output, deps);
+};
+
+const LIST_MESSAGE_IDS: CommandSpec = {
+    name: 'gmail-list-message-ids',
+    tool: 'list_gmail_message_ids',
+    synopsis: 'gmail-list-message-ids [--page-token <token>] [--max-results N] [-o <file>]',
+    description: 'Lists one page of message IDs in the mailbox, spam and trash excluded, like the list_gmail_message_ids MCP tool, as {messageIds, nextPageToken}; nextPageToken is absent on the last page.',
+    arguments: [],
+    example: 'gmail-list-message-ids',
+    flags: {
+        'page-token': {
+            type: 'string',
+            placeholder: '<token>',
+            description: 'The page to read: a nextPageToken an earlier call printed.',
+            example: 'gmail-list-message-ids --page-token 09876543210987654321',
+        },
+        'max-results': {
+            type: 'string',
+            placeholder: 'N',
+            description: 'Return at most N IDs, 1 to 500 (default 500).',
+            example: 'gmail-list-message-ids --max-results 100',
+        },
+        ...commonFlags('gmail-list-message-ids', 'gmail-list-message-ids --output ids.json'),
+    },
+};
+
+export const listMessageIdsCommand: Command = async (argv, deps) => {
+    const args = await start(LIST_MESSAGE_IDS, argv, deps);
+    if (!args) return;
+    expectPositionals(args.positionals, []);
+    const maxResults = positiveInteger('max-results', args.values['max-results'] as string | undefined);
+    // The tool's own schema supplies the default and refuses a limit above 500.
+    const input = ListGmailMessageIdsSchema.parse({
+        ...(args.values['page-token'] !== undefined ? { pageToken: args.values['page-token'] } : {}),
+        ...(maxResults !== undefined ? { maxResults } : {}),
+    });
+    await emitJson(await listGmailMessageIds(deps.gmail('list_gmail_message_ids'), input), args.output, deps);
+};
+
+const LIST_ADDED_HISTORY: CommandSpec = {
+    name: 'gmail-list-added-history',
+    tool: 'list_gmail_added_history',
+    synopsis: 'gmail-list-added-history <start_history_id> [--page-token <token>] [--max-results N] [-o <file>]',
+    description: 'Lists the IDs of messages added since a history ID like the list_gmail_added_history MCP tool, as {status: "ok", messageIds, nextPageToken, historyId}, or {status: "cursor_expired", startHistoryId} when Gmail no longer keeps history that far back.',
+    arguments: [['<start_history_id>', 'The history ID to read from, as gmail-get-profile or an earlier call printed it.']],
+    example: 'gmail-list-added-history 4182736',
+    flags: {
+        'page-token': {
+            type: 'string',
+            placeholder: '<token>',
+            description: 'The page to read: a nextPageToken an earlier call printed.',
+            example: 'gmail-list-added-history 4182736 --page-token 09876543210987654321',
+        },
+        'max-results': {
+            type: 'string',
+            placeholder: 'N',
+            description: 'Read at most N history records, 1 to 500 (default 500).',
+            example: 'gmail-list-added-history 4182736 --max-results 100',
+        },
+        ...commonFlags('gmail-list-added-history', 'gmail-list-added-history 4182736 --output added.json'),
+    },
+};
+
+export const listAddedHistoryCommand: Command = async (argv, deps) => {
+    const args = await start(LIST_ADDED_HISTORY, argv, deps);
+    if (!args) return;
+    expectPositionals(args.positionals, ['<start_history_id>']);
+    const maxResults = positiveInteger('max-results', args.values['max-results'] as string | undefined);
+    const input = ListGmailAddedHistorySchema.parse({
+        startHistoryId: args.positionals[0],
+        ...(args.values['page-token'] !== undefined ? { pageToken: args.values['page-token'] } : {}),
+        ...(maxResults !== undefined ? { maxResults } : {}),
+    });
+    await emitJson(await listGmailAddedHistory(deps.gmail('list_gmail_added_history'), input), args.output, deps);
+};
+
+const BATCH_GET_INDEX_METADATA: CommandSpec = {
+    name: 'gmail-batch-get-index-metadata',
+    tool: 'batch_get_gmail_index_metadata',
+    fields: { messageIds: '<message_id>...' },
+    synopsis: 'gmail-batch-get-index-metadata <message_id>... [-o <file>]',
+    description: 'Fetches the index metadata of 1 to 50 messages in one batch request like the batch_get_gmail_index_metadata MCP tool, as {messages: [{id, internalDate, labelIds}], missingMessageIds}, in the order given; a message Gmail does not find is listed in missingMessageIds.',
+    arguments: [['<message_id>...', 'One to 50 Gmail message IDs, as gmail-list-message-ids prints them.']],
+    example: 'gmail-batch-get-index-metadata 18f2a9c4e1b7d3a0 18f2a9c4e1b7d3a1',
+    flags: {
+        ...commonFlags('gmail-batch-get-index-metadata', 'gmail-batch-get-index-metadata 18f2a9c4e1b7d3a0 --output index.json'),
+    },
+};
+
+export const batchGetIndexMetadataCommand: Command = async (argv, deps) => {
+    const args = await start(BATCH_GET_INDEX_METADATA, argv, deps);
+    if (!args) return;
+    if (args.positionals.length === 0) {
+        throw new UsageError('missing <message_id>');
+    }
+    // The tool's own schema refuses more than 50 IDs before any request is made.
+    const input = BatchGetGmailIndexMetadataSchema.parse({ messageIds: args.positionals });
+    await emitJson(await batchGetGmailIndexMetadata(deps.oauth('batch_get_gmail_index_metadata'), input.messageIds), args.output, deps);
+};
+
+const LIST_LABELS: CommandSpec = {
+    name: 'gmail-list-labels',
+    tool: 'list_email_labels',
+    synopsis: 'gmail-list-labels [-o <file>]',
+    description: "Lists the mailbox's labels like the list_email_labels MCP tool, as {count: {total, system, user}, system, user}, each label as Gmail returns it (id, name, type and its visibility settings).",
+    arguments: [],
+    example: 'gmail-list-labels',
+    flags: {
+        ...commonFlags('gmail-list-labels', 'gmail-list-labels --output labels.json'),
+    },
+};
+
+export const listLabelsCommand: Command = async (argv, deps) => {
+    const args = await start(LIST_LABELS, argv, deps);
+    if (!args) return;
+    expectPositionals(args.positionals, []);
+    const { count, system, user } = await listLabels(deps.gmail('list_email_labels'));
+    await emitJson({ count, system, user }, args.output, deps);
+};
+
+const LIST_FILTERS: CommandSpec = {
+    name: 'gmail-list-filters',
+    tool: 'list_filters',
+    synopsis: 'gmail-list-filters [-o <file>]',
+    description: "Lists the mailbox's filters like the list_filters MCP tool, as {count, filters: [{id, criteria, action}]}.",
+    arguments: [],
+    example: 'gmail-list-filters',
+    flags: {
+        ...commonFlags('gmail-list-filters', 'gmail-list-filters --output filters.json'),
+    },
+};
+
+export const listFiltersCommand: Command = async (argv, deps) => {
+    const args = await start(LIST_FILTERS, argv, deps);
+    if (!args) return;
+    expectPositionals(args.positionals, []);
+    await emitJson(await listFilters(deps.gmail('list_filters')), args.output, deps);
+};
+
+const GET_FILTER: CommandSpec = {
+    name: 'gmail-get-filter',
+    tool: 'get_filter',
+    synopsis: 'gmail-get-filter <filter_id> [-o <file>]',
+    description: 'Prints one filter like the get_filter MCP tool, as {id, criteria, action}.',
+    arguments: [['<filter_id>', 'The filter ID, as gmail-list-filters prints it.']],
+    example: 'gmail-get-filter ANe1BmhGd4wFkLMNo',
+    flags: {
+        ...commonFlags('gmail-get-filter', 'gmail-get-filter ANe1BmhGd4wFkLMNo --output filter.json'),
+    },
+};
+
+export const getFilterCommand: Command = async (argv, deps) => {
+    const args = await start(GET_FILTER, argv, deps);
+    if (!args) return;
+    expectPositionals(args.positionals, ['<filter_id>']);
+    const input = GetFilterSchema.parse({ filterId: args.positionals[0] });
+    await emitJson(await getFilter(deps.gmail('get_filter'), input.filterId), args.output, deps);
+};
+
 export const COMMANDS: CliCommand[] = [
     command(SEARCH, searchCommand),
     command(GET_MESSAGE, getMessageCommand),
@@ -711,4 +938,12 @@ export const COMMANDS: CliCommand[] = [
     command(GET_THREAD, getThreadCommand),
     command(GET_INBOX_WITH_THREADS, getInboxWithThreadsCommand),
     command(DOWNLOAD_EMAIL, downloadEmailCommand),
+    command(LIST_INBOX_THREADS, listInboxThreadsCommand),
+    command(GET_PROFILE, getProfileCommand),
+    command(LIST_MESSAGE_IDS, listMessageIdsCommand),
+    command(LIST_ADDED_HISTORY, listAddedHistoryCommand),
+    command(BATCH_GET_INDEX_METADATA, batchGetIndexMetadataCommand),
+    command(LIST_LABELS, listLabelsCommand),
+    command(LIST_FILTERS, listFiltersCommand),
+    command(GET_FILTER, getFilterCommand),
 ];

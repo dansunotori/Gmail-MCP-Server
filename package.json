@@ -15,7 +15,15 @@
     "gmail-get-attachment-text": "./dist/cli/gmail-get-attachment-text.js",
     "gmail-get-thread": "./dist/cli/gmail-get-thread.js",
     "gmail-get-inbox-with-threads": "./dist/cli/gmail-get-inbox-with-threads.js",
-    "gmail-download-email": "./dist/cli/gmail-download-email.js"
+    "gmail-download-email": "./dist/cli/gmail-download-email.js",
+    "gmail-list-inbox-threads": "./dist/cli/gmail-list-inbox-threads.js",
+    "gmail-get-profile": "./dist/cli/gmail-get-profile.js",
+    "gmail-list-message-ids": "./dist/cli/gmail-list-message-ids.js",
+    "gmail-list-added-history": "./dist/cli/gmail-list-added-history.js",
+    "gmail-batch-get-index-metadata": "./dist/cli/gmail-batch-get-index-metadata.js",
+    "gmail-list-labels": "./dist/cli/gmail-list-labels.js",
+    "gmail-list-filters": "./dist/cli/gmail-list-filters.js",
+    "gmail-get-filter": "./dist/cli/gmail-get-filter.js"
   },
   "scripts": {
     "build": "tsc",

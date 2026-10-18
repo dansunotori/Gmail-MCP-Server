@@ -226,6 +226,31 @@ describe('get_thread and get_inbox_with_threads bodies', () => {
   });
 });
 
+describe('list_inbox_threads', () => {
+  it("summarises each thread by its latest message, from the inbox and 50 threads by default", async () => {
+    const headers = (from: string, subject: string, date: string) =>
+      ({ payload: { headers: [{ name: 'From', value: from }, { name: 'Subject', value: subject }, { name: 'Date', value: date }] } });
+    const list = vi.fn(async () => ({ data: { threads: [{ id: 'th-1', snippet: 'Latest words', historyId: 'h-9' }] } }));
+    const get = vi.fn(async () => ({ data: { messages: [
+      headers('a@example.com', 'Plan', 'Mon, 07 Sep 2026 09:00:00 +0000'),
+      headers('b@example.com', 'Re: Plan', 'Mon, 07 Sep 2026 10:00:00 +0000'),
+    ] } }));
+    const result = await call({ users: { threads: { list, get } } }, 'list_inbox_threads', {});
+    expect(JSON.parse(result.text)).toEqual({
+      resultCount: 1,
+      threads: [{
+        threadId: 'th-1',
+        snippet: 'Latest words',
+        historyId: 'h-9',
+        messageCount: 2,
+        latestMessage: { from: 'b@example.com', subject: 'Re: Plan', date: 'Mon, 07 Sep 2026 10:00:00 +0000' },
+      }],
+    });
+    expect(list).toHaveBeenCalledWith({ userId: 'me', q: 'in:inbox', maxResults: 50 });
+    expect(get).toHaveBeenCalledWith({ userId: 'me', id: 'th-1', format: 'metadata', metadataHeaders: ['Subject', 'From', 'Date'] });
+  });
+});
+
 // These tests fork real extraction workers, which take seconds each on a slow CI runner, so they
 // get the worker's own limit rather than vitest's five-second default.
 describe('get_attachment_text', { timeout: EXTRACTION_TIMEOUT_MS }, () => {

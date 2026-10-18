@@ -404,6 +404,12 @@ export async function getInboxWithThreads(gmail: gmail_v1.Gmail, args: { query?:
     return { resultCount: expanded.length, threads: expanded };
 }
 
+// list_inbox_threads: each matching thread summarised by its latest message, which is
+// get_inbox_with_threads without expanding the threads.
+export function listInboxThreads(gmail: gmail_v1.Gmail, args: { query?: string; maxResults?: number }) {
+    return getInboxWithThreads(gmail, { ...args, expandThreads: false });
+}
+
 export interface DownloadEmailResult {
     status: 'saved';
     path: string;
