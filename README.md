@@ -340,7 +340,7 @@ Nine commands expose nine MCP tools with the same semantics and nothing more, fo
 | Command | MCP tool | Prints |
 |-|-|-|
 | `gmail-search '<gmail query>' [--max-results N]` | `search_emails` | `{query, count, messages: [{id, subject, from, date}]}` |
-| `gmail-get-message <message_id> [--format text\|markdown]` | `read_email` | `{id, threadId, subject, from, to, cc, date, messageIdHeader, labels, body, bodySource, attachments: [{id, filename, mimeType, size}]}` |
+| `gmail-get-message <message_id> [--format text\|markdown]` | `read_email` | `{id, threadId, subject, from, to, cc, date, messageIdHeader, labels, body, bodySource, attachments: [{id, filename, mimeType, size}]}`, plus `calendarMethod`, `calendarReply` and `calendarFailures` for a message with a calendar part |
 | `gmail-download-attachment <message_id> <attachment_id> --save-path <dir> [--filename <name>]` | `download_attachment` | `{path, size, mimeType}` |
 | `gmail-get-attachment-text <message_id> <attachment_id>` | `get_attachment_text` | `{name, format, text, truncated, sheets}` (see [Get attachment text](#get-attachment-text-get_attachment_text)); exits 6 when the file is protected, encrypted, corrupt or unsupported |
 | `gmail-batch-fetch-window --watermark <ISO 8601 with zone> --output-dir <absolute dir> [--no-cross-check] [--max-messages N]` | `batch_fetch_window` | the tool's result, unchanged (see the [result contract](#batch_fetch_window-result-contract)) |
