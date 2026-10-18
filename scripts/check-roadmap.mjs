@@ -7,6 +7,9 @@
 //   node scripts/check-roadmap.mjs --hook   Claude Code PreToolUse hook: reads the Write/Edit
 //                                           payload on stdin and denies a change to ROADMAP.md
 //                                           whose result fails
+//   node scripts/check-roadmap.mjs --staged check the ROADMAP.md staged for commit, for a git
+//                                           pre-commit hook; exit 1 on a finding
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -113,10 +116,29 @@ function runHook() {
   }));
 }
 
+// The ROADMAP.md the commit will record, from git's index, or null when none is staged. Run
+// from a pre-commit hook, git's own environment names the repository.
+function stagedRoadmap() {
+  try {
+    return execFileSync('git', ['show', `:${ROADMAP}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch (error) {
+    // git exits non-zero when the index holds no ROADMAP.md; anything else is a real failure.
+    if (typeof error?.status === 'number') return null;
+    throw error;
+  }
+}
+
 function main(args) {
   if (args[0] === '--hook') {
     runHook();
     return 0;
+  }
+  if (args[0] === '--staged') {
+    const staged = stagedRoadmap();
+    const findings = staged === null ? [] : findCompletionLanguage(staged);
+    if (findings.length === 0) return 0;
+    process.stderr.write(`${format(`${ROADMAP} (staged)`, findings)}\n`);
+    return 1;
   }
   const file = args[0] ?? ROADMAP;
   const findings = findCompletionLanguage(fs.readFileSync(file, 'utf8'));

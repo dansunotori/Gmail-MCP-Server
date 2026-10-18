@@ -157,6 +157,46 @@ describe('check-roadmap.mjs', () => {
   });
 });
 
+describe('check-roadmap.mjs --staged', () => {
+  let repo: string;
+  // The fixture repository is driven without any repository location the run inherits.
+  const isolated = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, env: isolated, stdio: 'pipe' });
+  const staged = () => {
+    try {
+      execFileSync('node', [script, '--staged'], { cwd: repo, env: isolated, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+      return { code: 0, stderr: '' };
+    } catch (error) {
+      const failed = error as { status: number; stderr: string };
+      return { code: failed.status, stderr: failed.stderr };
+    }
+  };
+
+  beforeEach(() => {
+    repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'check-roadmap-repo-')));
+    git('init', '-q');
+  });
+  afterEach(() => {
+    fs.rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('checks the staged ROADMAP.md, not the working copy, and refuses one reporting finished work', () => {
+    fs.writeFileSync(path.join(repo, 'ROADMAP.md'), '# Roadmap\n\nThis is shipped.\n');
+    git('add', 'ROADMAP.md');
+    fs.writeFileSync(path.join(repo, 'ROADMAP.md'), '# Roadmap\n\nOpen work.\n');
+    const failed = staged();
+    expect(failed.code).toBe(1);
+    expect(failed.stderr).toContain('ROADMAP.md (staged):3: "shipped"');
+
+    git('add', 'ROADMAP.md');
+    expect(staged().code).toBe(0);
+  });
+
+  it('passes when no ROADMAP.md is staged', () => {
+    expect(staged().code).toBe(0);
+  });
+});
+
 describe('the repository roadmap', () => {
   it('reports no finished work', () => {
     const roadmap = fs.readFileSync(path.join(path.dirname(script), '..', 'ROADMAP.md'), 'utf8');
