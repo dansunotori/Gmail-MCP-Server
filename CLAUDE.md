@@ -1,7 +1,7 @@
 # CLAUDE.md - Gmail MCP Server
 
 ## Branch Workflow
-Single branch: work lands on `main` directly, and CI must pass after every push: `npm run ci:watch` watches the CI runs of the pushed `HEAD` to the end and exits with their result. Before each commit run `npm run verify`: it runs `npm test`, `npm run typecheck`, `npm run lockfile:lint`, `npm run roadmap:check` and `npm run install-cli` in that order and stops at the first failure, naming it. See `.claude/skills/pr-review-sop/SKILL.md` for full SOP.
+Single branch: work lands on `main` directly, and CI must pass after every push: `npm run ci:watch` watches the CI runs of the pushed `HEAD` to the end and exits with their result. `scripts/ci-gate.mjs` holds agents to it as this project's Stop hook: a turn cannot end while `HEAD`'s branch has commits not pushed to origin, pushed `HEAD` has no CI run, its runs are still going after seven minutes, any of them failed, or `git` or `gh` cannot answer; the message names the failed steps and the commands that read, rerun or fix them, and the gate keeps blocking until that is resolved. As the SessionStart hook it puts the same findings in a new session's context. Before each commit run `npm run verify`: it runs `npm test`, `npm run typecheck`, `npm run lockfile:lint`, `npm run roadmap:check` and `npm run install-cli` in that order and stops at the first failure, naming it. See `.claude/skills/pr-review-sop/SKILL.md` for full SOP.
 
 ## PR & Issue Review
 Mandatory security audit on every PR before presenting. See `.claude/skills/pr-review-sop/SKILL.md`.

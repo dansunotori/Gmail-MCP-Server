@@ -16,7 +16,7 @@ export function parseRepo(url) {
 
 // "job / step" for each failed step of a `gh run view --json jobs` result; a failed job whose
 // steps report no failure is named alone.
-function failedSteps(jobs) {
+export function failedSteps(jobs) {
   const failed = [];
   for (const job of jobs ?? []) {
     if (job.conclusion !== 'failure') continue;
