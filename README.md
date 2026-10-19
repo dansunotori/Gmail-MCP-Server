@@ -340,7 +340,7 @@ Seventeen commands expose seventeen MCP tools with the same semantics and nothin
 | Command | MCP tool | Prints |
 |-|-|-|
 | `gmail-search '<gmail query>' [--max-results N]` | `search_emails` | `{query, count, messages: [{id, subject, from, date}]}` |
-| `gmail-get-message <message_id> [--format text\|markdown]` | `read_email` | `{id, threadId, subject, from, to, cc, date, messageIdHeader, labels, body, bodySource, attachments: [{id, filename, mimeType, size}]}`, plus `calendarMethod`, `calendarReply` and `calendarFailures` for a message with a calendar part |
+| `gmail-get-message <message_id> [--format text\|markdown]` | `read_email` | `{id, threadId, subject, from, to, cc, date, messageIdHeader, labels, body, bodySource, htmlBody, attachments: [{id, filename, mimeType, size}]}`, plus `htmlBodyError` when the HTML part cannot be fetched and `calendarMethod`, `calendarReply` and `calendarFailures` for a message with a calendar part |
 | `gmail-download-attachment <message_id> <attachment_id> --save-path <dir> [--filename <name>]` | `download_attachment` | `{path, size, mimeType}` |
 | `gmail-get-attachment-text <message_id> <attachment_id>` | `get_attachment_text` | `{name, format, text, truncated, sheets}` (see [Get attachment text](#get-attachment-text-get_attachment_text)); exits 6 when the file is protected, encrypted, corrupt or unsupported |
 | `gmail-batch-fetch-window --watermark <ISO 8601 with zone> --output-dir <absolute dir> [--no-cross-check] [--max-messages N]` | `batch_fetch_window` | the tool's result, unchanged (see the [result contract](#batch_fetch_window-result-contract)) |
@@ -444,6 +444,8 @@ The first four tools never request or return subjects, addresses, snippets, head
 **Message-ID.** Each message file and each manifest `messages[]` entry carries `messageIdHeader`: the RFC 822 `Message-ID` header exactly as the message holds it, or `null` when it has none. Two entries with different `id` and the same `messageIdHeader` are one message held twice, such as the sent and received copies of a self-addressed message. `read_email` prints the same value on its `Message-ID:` line (`(none)` when absent) and `gmail-get-message` returns it as `messageIdHeader`.
 
 **Body.** Each message file carries `body` and `bodySource`. `bodySource` is `text` when the body is the plain-text part, `html` when the message has no plain part and the body is its HTML part converted to text, and `html-over-stub` when the plain part is only a stub pointing at the HTML part ("This is an HTML message…", "Your email client doesn't support HTML…", "Plain text version not available", "view it in your browser") and the body is the HTML part converted to text instead. A stub is a plain part of at most 400 characters that matches one of the stub phrasings kept in `src/message-body.ts`. The conversion to text drops tags and decodes character references once each: decimal (`&#8217;`) and hexadecimal (`&#x2019;`) references, `&amp;` `&lt;` `&gt;` `&quot;` `&apos;`, HTML's Latin-1 names (`&eacute;`, `&copy;`, …) and common punctuation names (`&rsquo;`, `&ndash;`, `&hellip;`, `&euro;`, …); a no-break space becomes a plain space, and a reference that names no character is left as written. `docs/gmail-batch-fetch-spec.md` gives every step. `read_email` and `gmail-get-message` choose the body by the same rule (for an HTML-only message they keep the HTML itself), report `bodySource` (`gmail-get-message` as a field, `read_email` as a note line), and convert the HTML of a stubbed message to text the same way. `gmail-get-message --format markdown` converts the HTML part whenever there is one and then reports `html`, or `html-over-stub` when the plain part is a stub. `get_thread` and `get_inbox_with_threads` choose each message's body as `read_email` does and report its `bodySource`. `download_email` writes the plain part, or the HTML part converted to text when there is no plain part or the plain part is a stub, in its txt file and as `body.text` with `bodySource` in its json file, which also keeps both parts as `body.plain` and `body.html`.
+
+**HTML part.** Each message file, `read_email` and `gmail-get-message` also deliver the message's `text/html` part as `htmlBody`, whatever `body` is, so a message whose plain part is full but stale (a sender that repeats last year's reminder in the text part under every new subject) still delivers its real content. `htmlBody` is the part as delivered, markup included, with a part Gmail defers fetched; it is `null` when the message has no HTML part, and a `text/html` part with a filename is an attachment, not the HTML part. When the HTML part cannot be fetched, `htmlBody` is `null` and `htmlBodyError` gives the `body-part-fetch:` reason (in the window fetch also a `failures` entry); no other message carries `htmlBodyError`. `body` and `bodySource` do not depend on it. `read_email` prints the part after everything else, as an `HTML part:` section, `HTML part: none` or `HTML part not read: <reason>`; `gmail-get-message` returns the same `htmlBody` with either `--format`. The window fetch and `read_email` give the same `htmlBody` for the same message.
 
 **Calendar.** A message with a `text/calendar` part (an invitation, a cancellation, an attendee's reply) carries `calendarMethod`, the part's `METHOD` (`REQUEST`, `CANCEL`, `REPLY`, `PUBLISH`, …), and for a `REPLY` also `calendarReply: { "attendee": "<address>", "partstat": "<PARTSTAT>" }` (`ACCEPTED`, `DECLINED`, `TENTATIVE`, `DELEGATED`, …), all read from the part itself, inline or stored as an attachment such as `invite.ics`. The attendee is the one who replied: the reply's only attendee (one address repeated across the components of a recurring event is one attendee); in a delegation reply that lists both parties, the one attendee who answered (any `PARTSTAT` but `NEEDS-ACTION` and `DELEGATED`, so the delegate once they accept or decline), or when nobody has answered yet, the delegator. Their `PARTSTAT` is taken from the event's master component, not from a single changed occurrence. A message without such a part carries neither field. A calendar part that cannot be fetched or parsed (no `METHOD`, or a `REPLY` without an `ATTENDEE`, without a `PARTSTAT`, or with several attendees and no single replier) is a `failures` entry with `operation` `"calendar-part"`; another calendar part in the same message that parses still supplies the fields. `read_email` and `gmail-get-message` read the part the same way: `gmail-get-message` returns `calendarMethod`, `calendarReply` and, for a part it cannot read, `calendarFailures` (one code each), and `read_email` prints them as `Calendar:`, `Calendar reply:` and `Calendar part not read:` lines after `Date:`. `get_thread`, `get_inbox_with_threads` with expanded threads, their commands and the json file of `download_email` and `gmail-download-email` carry the same three fields on each message read in full; a thread read in `metadata` or `minimal` format has no parts to read them from.
 
@@ -572,7 +574,7 @@ Retrieves the content of a specific email by its ID, with its attachments listed
 }
 ```
 
-**The response includes CC/BCC headers (when present) and attachment details:**
+**The response includes CC/BCC headers (when present), attachment details and, last, the HTML part (see [HTML part](#batch_fetch_window-result-contract)):**
 ```
 Subject: Project Files
 From: sender@example.com
@@ -585,7 +587,12 @@ Email body content here...
 Attachments (2):
 - document.pdf (application/pdf, 245 KB, ID: ANGjdJ9fkTs-i3GCQo5o97f_itG...)
 - spreadsheet.xlsx (application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, 89 KB, ID: BWHkeL8gkUt-j4HDRp6o98g_juI...)
+
+HTML part:
+<p>Email body content here...</p>
 ```
+
+A message without an HTML part ends with `HTML part: none`, and one whose HTML part cannot be fetched with `HTML part not read: <reason>`.
 
 ### 4. **Download Attachment (`download_attachment`)**
 Downloads email attachments to your local filesystem.
@@ -1100,6 +1107,7 @@ The server extracts email content from MIME structures:
 - Uses the plain text part when it holds the message
 - Uses the HTML part when there is no plain part: `read_email` and `gmail-get-message` return that HTML as it is, while `batch_fetch_window` converts it to text
 - Uses the HTML part converted to text when the plain part is only a stub ("view this email in your browser"), in every tool that reports `bodySource`, which names the part the body came from
+- Delivers the HTML part as it is beside the body, as `htmlBody`, in `read_email`, `batch_fetch_window` and their commands
 - Handles multi-part MIME messages with nested parts
 - Lists attachments (filename, type, size, download ID)
 - Keeps the email headers (From, To, Subject, Date)

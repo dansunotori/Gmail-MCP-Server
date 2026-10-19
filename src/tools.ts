@@ -477,7 +477,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "batch_fetch_window",
-    description: "Downloads every message received since a watermark into a local directory with manifest and cross-check; deletes and recreates messages/ under output_dir unless the listing exceeds max_messages, in which case nothing is written and earlier outputs remain. Every Gmail call is retried on 429, 5xx, rate-limit 403 and network errors up to 5 attempts with exponential full-jitter backoff (500 ms base, 30 s cap, Retry-After honoured); other 4xx are not retried. Every Gmail call completes before anything under output_dir is deleted or written, so a window listing page that still fails, an authentication failure on any call, or a guard refusal makes the whole call an error and leaves earlier outputs untouched. A message or body part that still fails is recorded in failures as { id, error, operation, status, attempts } and the rest of the window is written. crossCheck is always present with status consistent, inconsistent, failed or skipped; consistent is true only for status consistent",
+    description: "Downloads every message received since a watermark into a local directory with manifest and cross-check; deletes and recreates messages/ under output_dir unless the listing exceeds max_messages, in which case nothing is written and earlier outputs remain. Every Gmail call is retried on 429, 5xx, rate-limit 403 and network errors up to 5 attempts with exponential full-jitter backoff (500 ms base, 30 s cap, Retry-After honoured); other 4xx are not retried. Every Gmail call completes before anything under output_dir is deleted or written, so a window listing page that still fails, an authentication failure on any call, or a guard refusal makes the whole call an error and leaves earlier outputs untouched. A message or body part that still fails is recorded in failures as { id, error, operation, status, attempts } and the rest of the window is written. Each message file carries body, bodySource and htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched). crossCheck is always present with status consistent, inconsistent, failed or skipped; consistent is true only for status consistent",
     schema: BatchFetchWindowSchema,
     outputSchema: BatchFetchWindowOutputSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
@@ -485,7 +485,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "read_email",
-    description: "Retrieves the content of a specific email",
+    description: "Retrieves the content of a specific email. After the body and attachments it prints the message's text/html part as delivered, also when the body is the plain part, under 'HTML part:'; 'HTML part: none' when the message has none, and 'HTML part not read: <reason>' when it cannot be fetched",
     schema: ReadEmailSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Read Email", readOnlyHint: true },

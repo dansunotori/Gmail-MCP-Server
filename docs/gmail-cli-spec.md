@@ -109,6 +109,7 @@ Exposes `read_email` (`messages.get` with `format: 'full'`). Prints:
   "labels": ["INBOX", "UNREAD"],
   "body": "Please find attached…",
   "bodySource": "text",
+  "htmlBody": "<p>Please find attached…</p>",
   "attachments": [
     { "id": "ANGjdJ...", "filename": "invoice.pdf", "mimeType": "application/pdf", "size": 123456 }
   ]
@@ -117,7 +118,11 @@ Exposes `read_email` (`messages.get` with `format: 'full'`). Prints:
 
 `body` is the tool's body: the plain-text part; the HTML part as it is, markup included, when
 there is no plain part (`bodySource` `html`); or the HTML part converted to text when the plain
-part is only a stub (`bodySource` `html-over-stub`). `messageIdHeader` is the RFC 822 `Message-ID` header, or `null`. A message with a
+part is only a stub (`bodySource` `html-over-stub`). `htmlBody` is the `text/html` part as
+delivered, markup included, whatever `body` is, fetched when Gmail defers it, and `null` when the
+message has no HTML part; when that fetch fails, `htmlBody` is `null` and `htmlBodyError` gives the
+reason. It is the `htmlBody` that `gmail-batch-fetch-window` writes for the same message, and it
+does not change with `--format`. `messageIdHeader` is the RFC 822 `Message-ID` header, or `null`. A message with a
 `text/calendar` part also carries `calendarMethod` and, for a reply, `calendarReply` `{attendee,
 partstat}`, read as `batch_fetch_window` reads them, and `calendarFailures` when the part cannot be
 read; other mail carries none of them. With

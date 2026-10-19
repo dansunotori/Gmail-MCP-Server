@@ -51,13 +51,23 @@ export interface BodyFailure {
   error: GmailRequestError;
   // Calls made to attachments.get for this part before it was given up on.
   attempts: number;
+  // The type of the body part that could not be fetched: text/plain or text/html.
+  mimeType: string;
 }
 
 // Which part a delivered body came from: the plain part, the HTML part of a message that has
 // no plain part, or the HTML part because the plain part is only a stub.
 export type BodySource = 'text' | 'html' | 'html-over-stub';
 
-export interface ResolvedBody extends ExtractedParts {
+// The message's text/html part as delivered, whatever body was chosen: null when the message
+// has no HTML part, and null with the reason in htmlBodyError when the part could not be
+// fetched, so a failure never reads as an empty part.
+export interface HtmlBodyFields {
+  htmlBody: string | null;
+  htmlBodyError?: string;
+}
+
+export interface ResolvedBody extends ExtractedParts, HtmlBodyFields {
   body: string;
   bodySource: BodySource;
   failures: BodyFailure[];
@@ -157,6 +167,22 @@ export function extractMessageParts(payload: MessagePart | null | undefined): Ex
   return out;
 }
 
+// Whether the payload holds a text/html body part by walk's rule: a named text/html part is an
+// attached file, not the message's HTML. An HTML part with no data is present and empty.
+function hasHtmlPart(payload: MessagePart | null | undefined): boolean {
+  if (!payload) return false;
+  if (payload.mimeType === 'text/html' && !payload.filename) return true;
+  return (payload.parts ?? []).some(hasHtmlPart);
+}
+
+function htmlBodyFields(payload: MessagePart | null | undefined, html: string, failures: BodyFailure[]): HtmlBodyFields {
+  const htmlFailures = failures.filter(failure => failure.mimeType === 'text/html');
+  if (htmlFailures.length > 0) {
+    return { htmlBody: null, htmlBodyError: htmlFailures.map(failure => failure.code).join('; ') };
+  }
+  return { htmlBody: hasHtmlPart(payload) ? html : null };
+}
+
 // HTML's Latin-1 entity names, for code points 160 to 255 in order.
 const LATIN1_ENTITY_NAMES = (
   'nbsp iexcl cent pound curren yen brvbar sect uml copy ordf laquo not shy reg macr deg plusmn '
@@ -253,11 +279,12 @@ export async function resolveMessageBody(
         code: `body-part-fetch: ${failureCode(error)}`,
         error: toGmailRequestError(error),
         attempts: retryAttempts(error),
+        mimeType: deferred.mimeType,
       });
     }
   }
 
   const bodySource = bodySourceOf(parts.text, parts.html);
   const body = bodySource === 'text' ? parts.text.trim() : htmlToText(parts.html);
-  return { ...parts, body, bodySource, failures };
+  return { ...parts, body, bodySource, failures, ...htmlBodyFields(payload, parts.html, failures) };
 }

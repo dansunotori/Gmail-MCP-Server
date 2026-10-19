@@ -451,8 +451,32 @@ describe('gmail-get-message', () => {
       labels: ['INBOX'],
       body: 'Plain body',
       bodySource: 'text',
+      htmlBody: '<style>p{}</style><p>See <a href="https://x.test">this</a></p>',
       attachments: [{ id: 'att-1', filename: 'invoice.pdf', mimeType: 'application/pdf', size: 14 }],
     });
+  });
+
+  it('prints htmlBody null for a text-only message, whatever the format', async () => {
+    const textOnly = { ...message, payload: { mimeType: 'text/plain', body: { data: b64('Just text') } } };
+    const gmail = { users: { messages: { get: async () => ({ data: textOnly }) } } } as unknown as gmail_v1.Gmail;
+    for (const format of ['text', 'markdown']) {
+      const { deps, json } = harness(gmail);
+      await getMessageCommand(['m1', '--format', format], deps);
+      expect(json()).toHaveProperty('htmlBody', null);
+      expect(json()).not.toHaveProperty('htmlBodyError');
+    }
+  });
+
+  it('prints htmlBody null and htmlBodyError when the HTML part cannot be fetched', async () => {
+    const deferred = { ...message, payload: { ...message.payload, parts: [
+      { mimeType: 'text/plain', body: { data: b64('Plain body') } },
+      { mimeType: 'text/html', body: { attachmentId: 'html-1' } },
+    ] } };
+    const attachmentsGet = async () => { throw Object.assign(new Error('gone'), { response: { status: 404 } }); };
+    const gmail = { users: { messages: { get: async () => ({ data: deferred }), attachments: { get: attachmentsGet } } } } as unknown as gmail_v1.Gmail;
+    const { deps, json } = harness(gmail);
+    await getMessageCommand(['m1'], deps);
+    expect(json()).toMatchObject({ body: 'Plain body', bodySource: 'text', htmlBody: null, htmlBodyError: 'body-part-fetch: 404' });
   });
 
   it('prints the converted HTML part and bodySource html-over-stub when the plain part is a stub', async () => {
@@ -902,6 +926,20 @@ describe('gmail-batch-fetch-window', () => {
     await expect(batchFetchWindowCommand(['--watermark', WATERMARK, '--output-dir', dir], deps)).rejects.toThrow(/refusing to delete/);
     expect(out).toEqual([]);
     expect(fs.readFileSync(path.join(dir, 'messages', 'keep.txt'), 'utf8')).toBe('mine');
+  });
+});
+
+describe('the htmlBody fields in --help', () => {
+  it.each([
+    ['gmail-get-message', getMessageCommand],
+    ['gmail-batch-fetch-window', batchFetchWindowCommand],
+  ] as const)('%s documents htmlBody and htmlBodyError', async (_name, command) => {
+    const { deps, out } = harness();
+    await command(['--help'], deps);
+    const help = out.join('').replace(/\s+/g, ' ');
+    for (const expected of ['htmlBody', 'htmlBodyError', 'null when the message has no HTML part']) {
+      expect(help, expected).toContain(expected);
+    }
   });
 });
 

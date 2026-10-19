@@ -151,17 +151,46 @@ describe('readEmail', () => {
       html: '<p>HTML body</p>',
       body: 'Plain body',
       bodySource: 'text',
+      htmlBody: '<p>HTML body</p>',
       attachments: [{ id: 'att-1', filename: 'invoice.pdf', mimeType: 'application/pdf', size: 2048 }],
     });
   });
 
-  it('uses the HTML as the body when there is no plain text', async () => {
+  it('uses the HTML as the body when there is no plain text, and delivers it as htmlBody too', async () => {
     const htmlOnly = { id: 'h', threadId: 't', payload: { mimeType: 'text/html', body: { data: b64('<b>x</b>') } } };
     const { gmail } = fakeGmail({ messages: { h: htmlOnly } });
     const result = await readEmail(gmail, { messageId: 'h' });
     expect(result.body).toBe('<b>x</b>');
     expect(result.bodySource).toBe('html');
+    expect(result.htmlBody).toBe('<b>x</b>');
     expect(result.labels).toEqual([]);
+  });
+
+  it('gives htmlBody null for a text-only message and says so in the text', async () => {
+    const textOnly = { id: 'p', threadId: 't', payload: { mimeType: 'text/plain', body: { data: b64('Just text') } } };
+    const result = await readEmail(fakeGmail({ messages: { p: textOnly } }).gmail, { messageId: 'p' });
+    expect(result).toMatchObject({ body: 'Just text', bodySource: 'text', htmlBody: null });
+    expect(result).not.toHaveProperty('htmlBodyError');
+    expect(formatReadEmailText(result).endsWith('Just text\n\nHTML part: none')).toBe(true);
+  });
+
+  it('fetches a deferred HTML part for htmlBody without changing body, and reports one it cannot fetch', async () => {
+    const deferred = { id: 'd', threadId: 't', payload: {
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/plain', body: { data: b64('Stale reminder') } },
+        { mimeType: 'text/html', body: { attachmentId: 'html-1', size: 900000 } },
+      ],
+    } };
+    const fetched = fakeGmail({ messages: { d: deferred }, attachments: { 'html-1': Buffer.from('<p>Real content</p>').toString('base64url') } });
+    const result = await readEmail(fetched.gmail, { messageId: 'd' });
+    expect(fetched.attachmentsGet).toHaveBeenCalledWith({ userId: 'me', messageId: 'd', id: 'html-1' });
+    expect(result).toMatchObject({ body: 'Stale reminder', bodySource: 'text', htmlBody: '<p>Real content</p>' });
+
+    const missing = fakeGmail({ messages: { d: deferred }, attachments: { 'html-1': Object.assign(new Error('gone'), { response: { status: 404 } }) } });
+    const failed = await readEmail(missing.gmail, { messageId: 'd' });
+    expect(failed).toMatchObject({ body: 'Stale reminder', bodySource: 'text', htmlBody: null, htmlBodyError: 'body-part-fetch: 404' });
+    expect(formatReadEmailText(failed).endsWith('\n\nHTML part not read: body-part-fetch: 404')).toBe(true);
   });
 
   it('delivers the HTML part converted to text when the plain part is a stub', async () => {
@@ -236,21 +265,22 @@ describe('readEmail', () => {
     expect(text).toBe(
       'Thread ID: t1\nMessage-ID: <abc@example.com>\nSubject: Invoice\nFrom: Billing <billing@example.com>\n'
       + 'To: me@example.com\nCC: boss@example.com\nDate: Mon, 07 Sep 2026 14:00:00 +0000\n\nPlain body'
-      + '\n\nAttachments (1):\n- invoice.pdf (application/pdf, 2 KB, ID: att-1)',
+      + '\n\nAttachments (1):\n- invoice.pdf (application/pdf, 2 KB, ID: att-1)'
+      + '\n\nHTML part:\n<p>HTML body</p>',
     );
   });
 
   it('prints CC and BCC only when present, notes an HTML-only body, and says when there is no Message-ID', () => {
     const base = {
       id: 'x', threadId: 't', messageIdHeader: null, subject: 's', from: 'f', to: 'to', cc: '', bcc: '', date: 'd',
-      labels: [], text: '', html: '<p>h</p>', body: '<p>h</p>', bodySource: 'html' as const, attachments: [],
+      labels: [], text: '', html: '<p>h</p>', body: '<p>h</p>', bodySource: 'html' as const, htmlBody: '<p>h</p>', attachments: [],
     };
     expect(formatReadEmailText(base)).toBe(
       'Thread ID: t\nMessage-ID: (none)\nSubject: s\nFrom: f\nTo: to\nDate: d\n\n'
-      + '[Note: This email is HTML-formatted. Plain text version not available.]\n\n<p>h</p>',
+      + '[Note: This email is HTML-formatted. Plain text version not available.]\n\n<p>h</p>\n\nHTML part:\n<p>h</p>',
     );
-    expect(formatReadEmailText({ ...base, bcc: 'b@x', html: '', body: '', bodySource: 'text' })).toBe(
-      'Thread ID: t\nMessage-ID: (none)\nSubject: s\nFrom: f\nTo: to\nBCC: b@x\nDate: d\n\n',
+    expect(formatReadEmailText({ ...base, bcc: 'b@x', html: '', body: '', bodySource: 'text', htmlBody: null })).toBe(
+      'Thread ID: t\nMessage-ID: (none)\nSubject: s\nFrom: f\nTo: to\nBCC: b@x\nDate: d\n\n\n\nHTML part: none',
     );
   });
 });

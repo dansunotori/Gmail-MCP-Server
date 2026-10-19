@@ -12,7 +12,7 @@ import type { gmail_v1 } from 'googleapis';
 import { EmailAttachment, emailToHtml, emailToTxt, gmailMessageToJson } from './email-export.js';
 import { attachmentParts, findAttachmentPart } from './attachment-part.js';
 import { resolveCalendarPart } from './calendar-part.js';
-import { optionalHeader, selectBody, type BodySource, type MessagePart } from './message-body.js';
+import { optionalHeader, resolveMessageBody, selectBody, type BodySource, type MessagePart } from './message-body.js';
 
 // Type definitions for Gmail API responses
 export interface GmailMessagePart {
@@ -174,6 +174,11 @@ export interface ReadEmailResult {
     // a stub. bodySource says which.
     body: string;
     bodySource: BodySource;
+    // The text/html part as delivered, whatever the body is, read by the window fetch's own
+    // reader (resolveMessageBody): null when there is none, and null with htmlBodyError when
+    // the part could not be fetched.
+    htmlBody: string | null;
+    htmlBodyError?: string;
     attachments: EmailAttachment[];
     // Only a message with a text/calendar part carries these, read by the window fetch's own
     // reader (resolveCalendarPart): its METHOD and, for a REPLY, the replying attendee.
@@ -210,6 +215,7 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
     const { text, html } = extractEmailContent(response.data.payload as GmailMessagePart || {});
     const attachments = extractAttachments(response.data.payload as GmailMessagePart);
     const { body, bodySource } = selectBody(text, html, 'keep-html');
+    const { htmlBody, htmlBodyError } = await resolveMessageBody(gmail, response.data.id || args.messageId, response.data.payload as MessagePart);
     const calendar = await calendarFields(gmail, response.data.id || args.messageId, response.data.payload);
 
     return {
@@ -227,6 +233,8 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
         html,
         body,
         bodySource,
+        htmlBody,
+        ...(htmlBodyError === undefined ? {} : { htmlBodyError }),
         attachments,
         ...calendar,
     };
@@ -250,7 +258,12 @@ export function formatReadEmailText(email: ReadEmailResult): string {
         `\n\nAttachments (${attachments.length}):\n` +
         attachments.map(a => `- ${a.filename} (${a.mimeType}, ${Math.round(a.size/1024)} KB, ID: ${a.id})`).join('\n') : '';
 
-    return `Thread ID: ${threadId}\nMessage-ID: ${messageIdHeader ?? '(none)'}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}${cc ? `\nCC: ${cc}` : ''}${bcc ? `\nBCC: ${bcc}` : ''}\nDate: ${date}${calendarLines}\n\n${contentTypeNote}${body}${attachmentInfo}`;
+    // The HTML part comes last, so everything before it reads as it does without one.
+    const htmlPart = email.htmlBodyError !== undefined
+        ? `\n\nHTML part not read: ${email.htmlBodyError}`
+        : email.htmlBody === null ? '\n\nHTML part: none' : `\n\nHTML part:\n${email.htmlBody}`;
+
+    return `Thread ID: ${threadId}\nMessage-ID: ${messageIdHeader ?? '(none)'}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}${cc ? `\nCC: ${cc}` : ''}${bcc ? `\nBCC: ${bcc}` : ''}\nDate: ${date}${calendarLines}\n\n${contentTypeNote}${body}${attachmentInfo}${htmlPart}`;
 }
 
 export interface DownloadAttachmentResult {

@@ -302,6 +302,69 @@ describe('resolveMessageBody', () => {
     expect(gmail.users.messages.attachments.get).toHaveBeenCalledTimes(1);
   });
 
+  it('delivers the HTML part as htmlBody beside a full plain part, inline or deferred, and null without one', async () => {
+    const gmail = gmailWithAttachments(async () => ({ data: { data: b64('<p>Deferred</p>') } }));
+    const inline = await resolveMessageBody(gmail as never, 'm1', {
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/plain', body: { data: b64('Stale reminder') } },
+        { mimeType: 'text/html', body: { data: b64('<p>Real content</p>') } },
+      ],
+    });
+    expect(inline).toMatchObject({ body: 'Stale reminder', bodySource: 'text', htmlBody: '<p>Real content</p>' });
+    expect(inline).not.toHaveProperty('htmlBodyError');
+
+    const deferred = await resolveMessageBody(gmail as never, 'm1', {
+      parts: [
+        { mimeType: 'text/plain', body: { data: b64('Plain') } },
+        { mimeType: 'text/html', body: { attachmentId: 'h' } },
+      ],
+    });
+    expect(deferred.htmlBody).toBe('<p>Deferred</p>');
+
+    const textOnly = await resolveMessageBody(gmail as never, 'm1', { mimeType: 'text/plain', body: { data: b64('Plain') } });
+    expect(textOnly.htmlBody).toBeNull();
+    expect(textOnly).not.toHaveProperty('htmlBodyError');
+  });
+
+  it('gives an empty HTML part as an empty htmlBody, and an attached .html file as no HTML part', async () => {
+    const gmail = gmailWithAttachments(async () => ({ data: {} }));
+    const empty = await resolveMessageBody(gmail as never, 'm1', {
+      parts: [
+        { mimeType: 'text/plain', body: { data: b64('Plain') } },
+        { mimeType: 'text/html', body: { size: 0 } },
+      ],
+    });
+    expect(empty.htmlBody).toBe('');
+    const attached = await resolveMessageBody(gmail as never, 'm1', {
+      parts: [
+        { mimeType: 'text/plain', body: { data: b64('Plain') } },
+        { mimeType: 'text/html', filename: 'page.html', body: { data: b64('<p>attached</p>') } },
+      ],
+    });
+    expect(attached.htmlBody).toBeNull();
+  });
+
+  it('gives htmlBody null and the reason in htmlBodyError when the HTML part cannot be fetched, and not for a failed plain part', async () => {
+    const gmail = gmailWithAttachments(async () => { throw httpError(404); });
+    const html = await resolveMessageBody(gmail as never, 'm1', {
+      parts: [
+        { mimeType: 'text/plain', body: { data: b64('Plain') } },
+        { mimeType: 'text/html', body: { attachmentId: 'gone' } },
+      ],
+    }, { sleep: async () => {} });
+    expect(html).toMatchObject({ body: 'Plain', bodySource: 'text', htmlBody: null, htmlBodyError: 'body-part-fetch: 404' });
+
+    const plain = await resolveMessageBody(gmail as never, 'm1', {
+      parts: [
+        { mimeType: 'text/plain', body: { attachmentId: 'gone' } },
+        { mimeType: 'text/html', body: { data: b64('<p>Here</p>') } },
+      ],
+    }, { sleep: async () => {} });
+    expect(plain.htmlBody).toBe('<p>Here</p>');
+    expect(plain).not.toHaveProperty('htmlBodyError');
+  });
+
   it('rethrows an auth failure', async () => {
     const unauthorised = httpError(401);
     const gmail = gmailWithAttachments(async () => { throw unauthorised; });

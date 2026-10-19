@@ -134,7 +134,7 @@ const GET_MESSAGE: CommandSpec = {
     name: 'gmail-get-message',
     tool: 'read_email',
     synopsis: 'gmail-get-message <message_id> [--format text|markdown] [-o <file>]',
-    description: 'Reads one message like the read_email MCP tool and prints id, threadId, subject, from, to, cc, date, messageIdHeader (the Message-ID header, null when absent), labels, body, bodySource (text, html or html-over-stub) and attachments [{id, filename, mimeType, size}]; a message with a text/calendar part also gets calendarMethod and, for a reply, calendarReply {attendee, partstat}, and calendarFailures when the part cannot be read.',
+    description: 'Reads one message like the read_email MCP tool and prints id, threadId, subject, from, to, cc, date, messageIdHeader (the Message-ID header, null when absent), labels, body, bodySource (text, html or html-over-stub), htmlBody (the text/html part as delivered, also when body is the plain part, or null when the message has no HTML part; null with htmlBodyError giving the reason when the HTML part cannot be fetched) and attachments [{id, filename, mimeType, size}]; a message with a text/calendar part also gets calendarMethod and, for a reply, calendarReply {attendee, partstat}, and calendarFailures when the part cannot be read.',
     arguments: [['<message_id>', 'A Gmail message ID, as gmail-search prints it.']],
     example: 'gmail-get-message 18f2a9c4e1b7d3a0',
     flags: {
@@ -184,6 +184,8 @@ export const getMessageCommand: Command = async (argv, deps) => {
         labels: email.labels,
         body,
         bodySource,
+        htmlBody: email.htmlBody,
+        ...(email.htmlBodyError === undefined ? {} : { htmlBodyError: email.htmlBodyError }),
         attachments: email.attachments,
         // Only a message with a text/calendar part carries these.
         ...(email.calendarMethod === undefined ? {} : { calendarMethod: email.calendarMethod }),
@@ -252,6 +254,7 @@ const BATCH_FETCH_WINDOW: CommandSpec = {
         "and prints the tool's result unchanged. Deletes and recreates <dir>/messages/ and rewrites",
         '<dir>/manifest.json and <dir>/window-metadata.json, but only when messages/ is absent, empty',
         'or carries the marker a previous run wrote; a window larger than --max-messages writes nothing.',
+        'Each messages/NNN.json carries body and bodySource as read_email chooses them, with HTML alone converted to text, and htmlBody: the text/html part as delivered, also when body is the plain part, or null when the message has no HTML part. When the HTML part cannot be fetched, htmlBody is null and htmlBodyError gives the reason.',
     ].join('\n'),
     arguments: [],
     example: 'gmail-batch-fetch-window --watermark 2026-09-01T00:00:00Z --output-dir /tmp/inbox-window',

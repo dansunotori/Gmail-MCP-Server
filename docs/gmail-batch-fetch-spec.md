@@ -122,11 +122,13 @@ not modify its environment".
   "id": "...", "threadId": "...", "internalDate": "1757600000000", "labelIds": ["INBOX", "UNREAD"],
   "from": "...", "to": "...", "cc": "...", "subject": "...", "dateHeader": "...", "messageIdHeader": "<...@...>",
   "snippet": "...", "attachments": [ { "filename": "...", "mimeType": "...", "size": 0, "attachmentId": "..." } ],
-  "body": "...", "bodySource": "text"
+  "body": "...", "bodySource": "text", "htmlBody": "<html>...</html>"
 }
 ```
 
 `bodySource` is `text` (the plain-text part), `html` (no plain part; the HTML part converted to text) or `html-over-stub` (the plain part is only a stub pointing at the HTML part, so the HTML part converted to text is the body).
+
+`htmlBody` is the message's `text/html` part as delivered (the `html` of step 7, decoded from base64url as UTF-8, markup included), whatever `body` is, so a message whose plain part is full but stale still delivers its HTML content. It is `null` when the message has no `text/html` part; a `text/html` part with a filename is an attachment, not the HTML part. When the HTML part is an `attachmentId` whose fetch fails, `htmlBody` is `null` and `htmlBodyError` gives the `body-part-fetch:` code of that failure, which is also a `failures` entry; no other message carries `htmlBodyError`. `read_email` and `gmail-get-message` deliver the same `htmlBody` and `htmlBodyError` for the same message.
 
 `messageIdHeader` is the RFC 822 `Message-ID` header exactly as the message holds it, or `null` when it has none. Two message files with different `id` and the same `messageIdHeader` hold one message, for example the sent and received copies of a self-addressed message. The manifest entry carries the same field.
 

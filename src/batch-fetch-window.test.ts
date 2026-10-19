@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 import { MESSAGES_DIR_MARKER, batchFetchWindow, handleBatchFetchWindow, type BatchFetchWindowInput } from './batch-fetch-window.js';
 import { GMAIL_RETRY_MAX_ATTEMPTS } from './gmail-sync.js';
+import { readEmail } from './read-tools.js';
 import { hasScope } from './scopes.js';
 import {
   BatchFetchWindowOutputSchema,
@@ -200,11 +201,56 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     });
     await run(gmail, dir);
     const files = messageFiles(dir).map(name => readJson(path.join(dir, 'messages', name)));
-    expect(files.map(file => [file.id, file.bodySource, file.body])).toEqual([
-      ['stub', 'html-over-stub', 'Your order has shipped .'],
-      ['real', 'text', 'Your order has shipped.'],
-      ['htmlonly', 'html', 'Only HTML'],
+    expect(files.map(file => [file.id, file.bodySource, file.body, file.htmlBody])).toEqual([
+      ['stub', 'html-over-stub', 'Your order has shipped .', '<p>Your order has <b>shipped</b>.</p>'],
+      ['real', 'text', 'Your order has shipped.', '<p>Your order has <b>shipped</b>.</p>'],
+      ['htmlonly', 'html', 'Only HTML', '<p>Only <i>HTML</i></p>'],
     ]);
+  });
+
+  it('writes the same bodySource and htmlBody for each kind of message as read_email returns for it', async () => {
+    const parts = (plain: string, html: string) => ({
+      mimeType: 'multipart/alternative',
+      headers: [{ name: 'From', value: 'x@example.com' }],
+      parts: [
+        ...(plain === '' ? [] : [{ mimeType: 'text/plain', body: { data: b64(plain) } }]),
+        ...(html === '' ? [] : [{ mimeType: 'text/html', body: { data: b64(html) } }]),
+      ],
+    });
+    const gmail = fakeGmail({
+      lists: windowOnly(['both', 'text', 'html']),
+      messages: {
+        both: message('both', BOUNDARY + 1000, { payload: parts('Stale reminder', '<p>Real content</p>') }),
+        text: message('text', BOUNDARY + 2000, { payload: parts('Only text', '') }),
+        html: message('html', BOUNDARY + 3000, { payload: parts('', '<p>Only HTML</p>') }),
+      },
+    });
+    await run(gmail, dir);
+    const files = messageFiles(dir).map(name => readJson(path.join(dir, 'messages', name)));
+    for (const file of files) {
+      const read = await readEmail(gmail as never, { messageId: file.id });
+      expect({ bodySource: file.bodySource, htmlBody: file.htmlBody }, file.id).toEqual({ bodySource: read.bodySource, htmlBody: read.htmlBody });
+    }
+    expect(files.map(file => file.htmlBody)).toEqual(['<p>Real content</p>', null, '<p>Only HTML</p>']);
+  });
+
+  it('writes htmlBody null with the reason in htmlBodyError when the HTML part cannot be fetched', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['a']),
+      messages: { a: message('a', BOUNDARY + 1000, { payload: {
+        mimeType: 'multipart/alternative',
+        headers: [{ name: 'From', value: 'a@example.com' }],
+        parts: [
+          { mimeType: 'text/plain', body: { data: b64('Stale reminder') } },
+          { mimeType: 'text/html', body: { attachmentId: 'html-a' } },
+        ],
+      } }) },
+      attachments: { 'html-a': httpError(404) },
+    });
+    const result = await run(gmail, dir);
+    const file = readJson(path.join(dir, 'messages', '001.json'));
+    expect(file).toMatchObject({ body: 'Stale reminder', bodySource: 'text', htmlBody: null, htmlBodyError: 'body-part-fetch: 404' });
+    expect(result.failures).toEqual([{ id: 'a', error: 'body-part-fetch: 404', operation: 'body-part-fetch', status: 404, attempts: 1 }]);
   });
 
   it('writes the calendar method and reply fields of meeting messages, and neither field for ordinary mail', async () => {
@@ -311,6 +357,7 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
       attachments: [],
       body: 'body of a',
       bodySource: 'text',
+      htmlBody: null,
     });
 
     expect(readJson(path.join(dir, 'window-metadata.json'))).toEqual({
