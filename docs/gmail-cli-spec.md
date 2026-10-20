@@ -361,3 +361,15 @@ Never print tokens or full request headers to stderr.
   two tools deliver differently), and every read that failed. It exits 0 when every compared
   message agrees, 1 when one differs, and 2 on a usage error or a failed read.
   `scripts/window-compare.test.ts` tests it against fixture windows.
+- Live: `npm run live:charset-check` (`scripts/live-charset-check.mjs`) builds, then checks that
+  `read_email` decodes a body part by the charset it names however Gmail serves it. It inserts
+  one unsent, unlabelled message per case (a 4 MiB windows-1251 message, whose parts Gmail serves
+  through `attachments.get` in their own bytes, and a 2 KiB KOI8-R one, whose parts arrive inline
+  already in UTF-8; `gmail.modify` scope), records how each part was served, reads the message
+  with `readEmail`, and moves it to Bin whatever happens. It prints counts only (length,
+  replacement characters, whether each of `body` and `htmlBody` equals what was sent, and any
+  `plainBodyError` or `htmlBodyError`), never message text, and exits 0 when every part reads back
+  as sent and was served as its case expects, 1 when one did not (a `body-part-charset:` error
+  included), and 2 when a Gmail call failed, a part Gmail did not serve (`body-part-fetch:`)
+  included.
+  `scripts/live-charset-check.test.ts` tests it against a stubbed Gmail with the real reader.

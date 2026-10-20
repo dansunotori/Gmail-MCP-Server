@@ -40,6 +40,7 @@
     "duplicates:check": "node scripts/check-duplicates.mjs",
     "verify": "node scripts/verify.mjs",
     "graph:check": "node scripts/graph-check.mjs",
+    "live:charset-check": "npm run build && node scripts/live-charset-check.mjs",
     "ci:watch": "node scripts/ci-watch.mjs",
     "window:compare": "node scripts/window-compare.mjs"
   },
