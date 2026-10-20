@@ -342,43 +342,20 @@ describe('resolveMessageBody', () => {
     expect(attached.htmlBody).toBeNull();
   });
 
-  it('gives htmlBody null and the reason in htmlBodyError when the HTML part cannot be fetched, and not for a failed plain part', async () => {
+  it('gives the reason a part cannot be fetched in htmlBodyError for the HTML part and plainBodyError for the plain part, never in the other', async () => {
     const gmail = gmailWithAttachments(async () => { throw httpError(404); });
-    const html = await resolveMessageBody(gmail as never, 'm1', {
-      parts: [
-        { mimeType: 'text/plain', body: { data: b64('Plain') } },
-        { mimeType: 'text/html', body: { attachmentId: 'gone' } },
-      ],
+    const resolve = (plain: Record<string, unknown>, html: Record<string, unknown>) => resolveMessageBody(gmail as never, 'm1', {
+      parts: [{ mimeType: 'text/plain', body: plain }, { mimeType: 'text/html', body: html }],
     }, { sleep: async () => {} });
+
+    const html = await resolve({ data: b64('Plain') }, { attachmentId: 'gone' });
     expect(html).toMatchObject({ body: 'Plain', bodySource: 'text', htmlBody: null, htmlBodyError: 'body-part-fetch: 404' });
-
-    const plain = await resolveMessageBody(gmail as never, 'm1', {
-      parts: [
-        { mimeType: 'text/plain', body: { attachmentId: 'gone' } },
-        { mimeType: 'text/html', body: { data: b64('<p>Here</p>') } },
-      ],
-    }, { sleep: async () => {} });
-    expect(plain.htmlBody).toBe('<p>Here</p>');
-    expect(plain).not.toHaveProperty('htmlBodyError');
-  });
-
-  it('gives the reason in plainBodyError when a plain part cannot be fetched, and not for a failed HTML part', async () => {
-    const gmail = gmailWithAttachments(async () => { throw httpError(404); });
-    const plain = await resolveMessageBody(gmail as never, 'm1', {
-      parts: [
-        { mimeType: 'text/plain', body: { attachmentId: 'gone' } },
-        { mimeType: 'text/html', body: { data: b64('<p>Here</p>') } },
-      ],
-    }, { sleep: async () => {} });
-    expect(plain.plainBodyError).toBe('body-part-fetch: 404');
-
-    const html = await resolveMessageBody(gmail as never, 'm1', {
-      parts: [
-        { mimeType: 'text/plain', body: { data: b64('Plain') } },
-        { mimeType: 'text/html', body: { attachmentId: 'gone' } },
-      ],
-    }, { sleep: async () => {} });
     expect(html).not.toHaveProperty('plainBodyError');
+
+    const plain = await resolve({ attachmentId: 'gone' }, { data: b64('<p>Here</p>') });
+    expect(plain.htmlBody).toBe('<p>Here</p>');
+    expect(plain.plainBodyError).toBe('body-part-fetch: 404');
+    expect(plain).not.toHaveProperty('htmlBodyError');
   });
 
   // attachments.get serves a deferred part in the charset it was written in, unlike an inline

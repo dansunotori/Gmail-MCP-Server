@@ -41,6 +41,12 @@ function fakeGmail(config: {
   return { gmail, list, get, attachmentsGet };
 }
 
+// A multipart/alternative message whose plain and HTML parts have the given bodies.
+const alternative = (id: string, threadId: string, plain: Record<string, unknown>, html: Record<string, unknown>) => ({ id, threadId, payload: {
+  mimeType: 'multipart/alternative',
+  parts: [{ mimeType: 'text/plain', body: plain }, { mimeType: 'text/html', body: html }],
+} });
+
 const fullMessage = {
   id: 'm1',
   threadId: 't1',
@@ -187,13 +193,7 @@ describe('readEmail', () => {
   });
 
   it('fetches a deferred HTML part for htmlBody without changing body, and reports one it cannot fetch', async () => {
-    const deferred = { id: 'd', threadId: 't', payload: {
-      mimeType: 'multipart/alternative',
-      parts: [
-        { mimeType: 'text/plain', body: { data: b64('Stale reminder') } },
-        { mimeType: 'text/html', body: { attachmentId: 'html-1', size: 900000 } },
-      ],
-    } };
+    const deferred = alternative('d', 't', { data: b64('Stale reminder') }, { attachmentId: 'html-1', size: 900000 });
     const fetched = fakeGmail({ messages: { d: deferred }, attachments: { 'html-1': Buffer.from('<p>Real content</p>').toString('base64url') } });
     const result = await readEmail(fetched.gmail, { messageId: 'd' });
     expect(fetched.attachmentsGet).toHaveBeenCalledWith({ userId: 'me', messageId: 'd', id: 'html-1' });
@@ -207,13 +207,7 @@ describe('readEmail', () => {
   });
 
   it('fetches a deferred plain part once and delivers it as the body, as the window fetch does', async () => {
-    const deferredPlain = { id: 'dp', threadId: 't', payload: {
-      mimeType: 'multipart/alternative',
-      parts: [
-        { mimeType: 'text/plain', body: { attachmentId: 'plain-1', size: 700000 } },
-        { mimeType: 'text/html', body: { attachmentId: 'html-1', size: 900000 } },
-      ],
-    } };
+    const deferredPlain = alternative('dp', 't', { attachmentId: 'plain-1', size: 700000 }, { attachmentId: 'html-1', size: 900000 });
     const fake = fakeGmail({ messages: { dp: deferredPlain }, attachments: {
       'plain-1': Buffer.from('Long plain body').toString('base64url'),
       'html-1': Buffer.from('<p>Long HTML body</p>').toString('base64url'),
@@ -226,13 +220,7 @@ describe('readEmail', () => {
   });
 
   it('gives the reason in plainBodyError, and says so before the body, when the plain part cannot be fetched', async () => {
-    const deferredPlain = { id: 'dp', threadId: 't', payload: {
-      mimeType: 'multipart/alternative',
-      parts: [
-        { mimeType: 'text/plain', body: { attachmentId: 'plain-1', size: 700000 } },
-        { mimeType: 'text/html', body: { data: b64('<p>HTML body</p>') } },
-      ],
-    } };
+    const deferredPlain = alternative('dp', 't', { attachmentId: 'plain-1', size: 700000 }, { data: b64('<p>HTML body</p>') });
     const fake = fakeGmail({ messages: { dp: deferredPlain }, attachments: { 'plain-1': Object.assign(new Error('gone'), { response: { status: 404 } }) } });
     const result = await readEmail(fake.gmail, { messageId: 'dp' });
     expect(result).toMatchObject({ plainBodyError: 'body-part-fetch: 404', htmlBody: '<p>HTML body</p>' });
@@ -543,13 +531,7 @@ describe('deferred body parts in thread reads and downloads', () => {
 // get_thread, expanded get_inbox_with_threads and download_email read each message's parts
 // with read_email's reader, so they carry its body and htmlBody for the same message.
 describe('htmlBody in thread reads and the json download', () => {
-  const stalePlain = { id: 'sp', threadId: 'th', payload: {
-    mimeType: 'multipart/alternative',
-    parts: [
-      { mimeType: 'text/plain', body: { data: b64('Stale reminder') } },
-      { mimeType: 'text/html', body: { attachmentId: 'html-1', size: 900000 } },
-    ],
-  } };
+  const stalePlain = alternative('sp', 'th', { data: b64('Stale reminder') }, { attachmentId: 'html-1', size: 900000 });
   const deferredPlain = { id: 'dp', threadId: 'th', payload: {
     mimeType: 'multipart/alternative',
     parts: [{ mimeType: 'text/plain', body: { attachmentId: 'plain-1', size: 700000 } }],
