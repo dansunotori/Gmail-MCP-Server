@@ -39,13 +39,14 @@ afterEach(() => {
   for (const dir of [checkout, origin]) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// Real git in the checkout; npm stubbed, answering each script with the given exit code.
+// Real git in the checkout; npm stubbed, answering each script with the given exit code. npm
+// lists each script run with its arguments.
 function runner(npmStatus: Record<string, number> = {}) {
   const npm: string[] = [];
   const run = (command: string, args: string[]) => {
     if (command === 'npm') {
       const script = args[0] === 'ci' ? 'ci' : args[1];
-      npm.push(script);
+      npm.push(args[0] === 'ci' ? 'ci' : args.slice(1).join(' '));
       return { status: npmStatus[script] ?? 0, stdout: '' };
     }
     const result = spawnSync(command, args, { cwd: checkout, env: isolatedEnv, encoding: 'utf8' });
@@ -76,7 +77,7 @@ describe('land', () => {
   it('fast-forwards main to the branch, verifies, pushes and watches CI', () => {
     const { code, npm, logged } = landing('feature');
     expect(code).toBe(0);
-    expect(npm).toEqual(['verify', 'ci:watch']);
+    expect(npm).toEqual(['verify', 'ci:watch -- --quiet']);
     expect(head('main')).toBe(head('feature'));
     expect(gitIn(origin)('rev-parse', 'main').toString().trim()).toBe(head('feature'));
     expect(logged.at(-1)).toBe('land: feature is on origin/main and its CI passed');
@@ -86,7 +87,7 @@ describe('land', () => {
     git('checkout', '-q', 'feature');
     commitFile('package-lock.json', '{"lockfileVersion":3}');
     git('checkout', '-q', 'main');
-    expect(landing('feature').npm).toEqual(['ci', 'verify', 'ci:watch']);
+    expect(landing('feature').npm).toEqual(['ci', 'verify', 'ci:watch -- --quiet']);
   });
 
   it('refuses a checkout with uncommitted changes before anything moves', () => {

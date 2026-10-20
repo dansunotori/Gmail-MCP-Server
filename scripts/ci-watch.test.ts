@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
-import { ciWatch, parseRepo } from './ci-watch.mjs';
+import { ciWatch, parseRepo, watcherFor } from './ci-watch.mjs';
 import { fakeRun, ghUnauthenticated, REPO, SHA, successive } from './ci-test-support.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -144,5 +144,41 @@ describe('ci-watch.mjs', () => {
       'ci:watch: CI https://ci/7 passed for 90d1a52',
       'ci:watch: Docs https://ci/8 ended cancelled for 90d1a52',
     ]);
+  });
+});
+
+describe('ci-watch.mjs --quiet', () => {
+  const spawned: unknown[][] = [];
+  const spawn = (...args: unknown[]) => {
+    spawned.push(args);
+    return {};
+  };
+
+  it('streams gh run watch without --quiet', () => {
+    spawned.length = 0;
+    watcherFor([], spawn)!('7', 'owner/repo');
+    expect(spawned).toEqual([['gh', ['run', 'watch', '7', '--repo', 'owner/repo', '--interval', '10'], { stdio: 'inherit' }]]);
+  });
+
+  it('prints only the verdict line for a pass, without gh run watch', () => {
+    spawned.length = 0;
+    const w = world();
+    expect(ciWatch({ ...w, watch: watcherFor(['--quiet'], spawn)! })).toBe(0);
+    expect(spawned).toEqual([]);
+    expect(w.logged).toEqual(['ci:watch: CI https://ci/7 passed for 90d1a52']);
+  });
+
+  it('prints the failed steps for a failure, without gh run watch', () => {
+    spawned.length = 0;
+    const w = world({
+      views: { 7: [{ status: 'completed', conclusion: 'failure', name: 'CI', url: 'https://ci/7', jobs: [{ name: 'Build', conclusion: 'failure', steps: [{ name: 'Test', conclusion: 'failure' }] }] }] },
+    });
+    expect(ciWatch({ ...w, watch: watcherFor(['--quiet'], spawn)! })).toBe(1);
+    expect(spawned).toEqual([]);
+    expect(w.logged).toEqual(['ci:watch: CI https://ci/7 ended failure for 90d1a52; failed: Build / Test']);
+  });
+
+  it('refuses any other argument', () => {
+    expect(watcherFor(['--quite'], spawn)).toBeNull();
   });
 });

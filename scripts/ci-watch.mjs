@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Watches the CI runs of the commit just pushed (npm run ci:watch): the runs the push of the
 // current branch started for HEAD, found by its full SHA rather than by being the latest run
-// listed, waited for until GitHub lists them, watched to the end. Exits 0 when every run
+// listed, waited for until GitHub lists them, watched to the end, their progress shown unless
+// --quiet is given (npm run ci:watch -- --quiet), which prints only each run's verdict line.
+// Exits 0 when every run
 // passes, 1 when one does not (naming the run and its failed jobs and steps), 2 when HEAD is
 // detached or not pushed to origin, no run appears in time, or git or gh fails.
 import { execFileSync, spawnSync } from 'child_process';
@@ -97,13 +99,28 @@ function watchRuns({ run, watch, sleep, log, waitSeconds = 180, pollSeconds = 5 
 
 const run = (command, args) => execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
 
-// gh run watch shows the run's progress; how it exits is not the run's result, which ciWatch
-// reads from gh run view once the run is completed.
-const watch = (id, repo) => {
-  const result = spawnSync('gh', ['run', 'watch', id, '--repo', repo, '--interval', '10'], { stdio: 'inherit' });
-  if (result.error) throw result.error;
-};
+// The watch for the command-line arguments, or null for arguments not read here. gh run watch
+// shows the run's progress; how it exits is not the run's result, which ciWatch reads from gh run
+// view once the run is completed. --quiet shows no progress, so only the verdict lines print.
+/**
+ * @param {string[]} argv
+ * @param {(command: string, args: string[], options: { stdio: 'inherit' }) => { error?: Error }} [spawn]
+ */
+export function watcherFor(argv, spawn = spawnSync) {
+  if (argv.length === 1 && argv[0] === '--quiet') return () => {};
+  if (argv.length > 0) return null;
+  return (id, repo) => {
+    const result = spawn('gh', ['run', 'watch', id, '--repo', repo, '--interval', '10'], { stdio: 'inherit' });
+    if (result.error) throw result.error;
+  };
+}
 
 if (runDirectly(import.meta.url)) {
-  process.exitCode = ciWatch({ run, watch, sleep, log: line => process.stderr.write(`${line}\n`) });
+  const watch = watcherFor(process.argv.slice(2));
+  if (watch === null) {
+    process.stderr.write('usage: npm run ci:watch [-- --quiet]\n');
+    process.exitCode = 2;
+  } else {
+    process.exitCode = ciWatch({ run, watch, sleep, log: line => process.stderr.write(`${line}\n`) });
+  }
 }

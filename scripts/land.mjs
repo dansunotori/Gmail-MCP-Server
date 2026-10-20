@@ -2,7 +2,7 @@
 // Lands a worktree branch on main, run from the main checkout (npm run land -- <branch>): on main
 // with a clean tree, fetch, refuse a branch that is not a fast-forward of origin/main,
 // fast-forward main to it, run npm ci when package-lock.json changed, then npm run verify, push
-// and npm run ci:watch. Stops at the first failing step, naming it, with its exit code; a
+// and npm run ci:watch -- --quiet. Stops at the first failing step, naming it, with its exit code; a
 // checkout with uncommitted changes, another session's included, is refused before anything
 // moves.
 import { spawnSync } from 'child_process';
@@ -65,7 +65,7 @@ export function land(branch, run, log) {
     log(`land: git diff of package-lock.json failed ${exited(lockfile.status)}`);
     return lockfile.status ?? 1;
   }
-  for (const [command, args] of [['npm', ['run', 'verify']], ['git', ['push', 'origin', 'main']], ['npm', ['run', 'ci:watch']]]) {
+  for (const [command, args] of [['npm', ['run', 'verify']], ['git', ['push', 'origin', 'main']], ['npm', ['run', 'ci:watch', '--', '--quiet']]]) {
     if (!step(command, args)) return failure;
   }
   log(`land: ${branch} is on origin/main and its CI passed`);
