@@ -611,7 +611,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                     };
 
                     // Use the existing handleEmailAction to send the reply
-                    const result = await handleEmailAction("send", emailArgs);
+                    await handleEmailAction("send", emailArgs);
 
                     // Enhance the response with reply-all specific info
                     return textResult(`Reply-all sent successfully!\nTo: ${replyTo.join(', ')}${replyCc.length > 0 ? `\nCC: ${replyCc.join(', ')}` : ''}\nSubject: ${replySubject}\nThread ID: ${threadId}`);
