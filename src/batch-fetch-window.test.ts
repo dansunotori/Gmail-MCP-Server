@@ -97,7 +97,7 @@ function fakeGmail(config: {
   };
 }
 
-function windowOnly(ids: string[], extra: Partial<Record<string, Page[]>> = {}) {
+function windowOnly(ids: string[], extra: Record<string, Page[]> = {}): Record<string, Page[]> {
   return {
     [WINDOW_QUERY]: [{ ids }],
     [SPAM_QUERY]: [{ ids: [] }],
@@ -162,7 +162,7 @@ async function runOneUnread() {
 }
 
 // A window of one message, a, with the listings in extra in place of the default ones.
-function windowOfA(extra: Partial<Record<string, Page[]>> = {}) {
+function windowOfA(extra: Record<string, Page[]> = {}) {
   return fakeGmail({ lists: windowOnly(['a'], extra), messages: { a: message('a', BOUNDARY + 1) } });
 }
 
@@ -1043,7 +1043,7 @@ describe('batchFetchWindow: cross-check outcomes', () => {
 
     expect(result.status).toBe('incomplete');
     expect(result.failures).toEqual([{ id: `cross-check:${SPAM_QUERY}`, error: '503', operation: 'cross-check', status: 503, attempts: GMAIL_RETRY_MAX_ATTEMPTS }]);
-    expect(result.crossCheck?.spam).toBe(0);
+    expect(result.crossCheck).toMatchObject({ spam: 0 });
     expect(fs.existsSync(path.join(dir, 'messages', '001.json'))).toBe(true);
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true);
   });

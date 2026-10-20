@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-// @ts-expect-error -- plain ESM script without type declarations; its exports are typed by their use here.
 import { CONFIG, REPORT, clonesOf, formatClone, scopeRule } from './check-duplicates.mjs';
 import { fixtureRepo, gitIn, isolatedEnv, runScript } from './git-fixture.js';
 

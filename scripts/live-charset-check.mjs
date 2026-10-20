@@ -100,6 +100,7 @@ async function runCase(gmail, readEmail, address, kase) {
 
 export async function runCharsetCheck({ gmail, readEmail, cases = CASES }) {
   const { data: profile } = await gmail.users.getProfile({ userId: 'me' });
+  /** @type {{ cases: Array<Awaited<ReturnType<typeof runCase>>>, errors: Array<{ case: string, error: string }> }} */
   const report = { cases: [], errors: [] };
   for (const kase of cases) {
     try {

@@ -125,6 +125,11 @@ function judgedDir(cwd, projectDir, runIn) {
 
 // mode is --stop or --session-start; input is the hook's stdin JSON; runIn(dir) gives the run
 // function for that directory; projectDir is $CLAUDE_PROJECT_DIR.
+/**
+ * @param {string} mode
+ * @param {{ cwd?: string, [field: string]: unknown }} input
+ * @param {{ runIn: (dir: string) => (command: string, args: string[]) => string, sleep: (seconds: number) => void, now?: () => number, projectDir?: string }} deps
+ */
 export function hookMain(mode, input, { runIn, sleep, now, projectDir }) {
   if (mode !== '--stop' && mode !== '--session-start') {
     return { exitCode: 1, stdout: '', stderr: 'usage: ci-gate.mjs --stop | --session-start (hook input JSON on stdin)\n' };

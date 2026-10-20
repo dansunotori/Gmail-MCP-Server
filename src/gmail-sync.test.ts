@@ -437,7 +437,7 @@ describe('withGmailRetry', () => {
   });
 
   it('retries a 429, a 503 and a 403 rate limit with exponential full-jitter backoff, then succeeds', async () => {
-    const sleep = vi.fn(async () => {});
+    const sleep = vi.fn(async (_ms: number) => {});
     const request = vi.fn()
       .mockRejectedValueOnce(httpError(429))
       .mockRejectedValueOnce(httpError(503))
@@ -450,7 +450,7 @@ describe('withGmailRetry', () => {
   });
 
   it('makes five attempts by default and throws the last error unchanged', async () => {
-    const sleep = vi.fn(async () => {});
+    const sleep = vi.fn(async (_ms: number) => {});
     const last = httpError(502);
     const request = vi.fn()
       .mockRejectedValueOnce(httpError(500))
@@ -465,14 +465,14 @@ describe('withGmailRetry', () => {
   });
 
   it('caps the backoff ceiling at the maximum delay', async () => {
-    const sleep = vi.fn(async () => {});
+    const sleep = vi.fn(async (_ms: number) => {});
     const request = vi.fn().mockRejectedValue(httpError(503));
     await expect(withGmailRetry(request, { sleep, random: () => 1, baseDelayMs: 20_000 })).rejects.toBeDefined();
     expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([20_000, 30_000, 30_000, 30_000]);
   });
 
   it('honours a Retry-After header in seconds without jitter, capped at the maximum delay', async () => {
-    const sleep = vi.fn(async () => {});
+    const sleep = vi.fn(async (_ms: number) => {});
     const request = vi.fn()
       .mockRejectedValueOnce(withRetryAfter(429, '2'))
       .mockRejectedValueOnce(withRetryAfter(503, '120'))
@@ -482,7 +482,7 @@ describe('withGmailRetry', () => {
   });
 
   it('reads Retry-After from a fetch Headers object, as googleapis responses carry it', async () => {
-    const sleep = vi.fn(async () => {});
+    const sleep = vi.fn(async (_ms: number) => {});
     const throttled = Object.assign(httpError(429), {
       response: { status: 429, headers: new Headers({ 'Retry-After': '3' }) },
     });
@@ -495,7 +495,7 @@ describe('withGmailRetry', () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date('2026-09-16T12:00:00Z'));
-      const sleep = vi.fn(async () => {});
+      const sleep = vi.fn(async (_ms: number) => {});
       const request = vi.fn()
         .mockRejectedValueOnce(withRetryAfter(429, 'Wed, 16 Sep 2026 12:00:03 GMT'))
         .mockResolvedValueOnce('ok');
@@ -507,7 +507,7 @@ describe('withGmailRetry', () => {
   });
 
   it('falls back to jittered backoff when Retry-After is unparseable', async () => {
-    const sleep = vi.fn(async () => {});
+    const sleep = vi.fn(async (_ms: number) => {});
     const request = vi.fn()
       .mockRejectedValueOnce(withRetryAfter(429, 'soon'))
       .mockResolvedValueOnce('ok');

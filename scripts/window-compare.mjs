@@ -57,6 +57,7 @@ export function compareMessage(read, file) {
   return fields;
 }
 
+/** @param {{ outputDir: string, limit?: number, readMessage: (id: string) => Promise<any> }} options */
 export async function compareWindow({ outputDir, limit, readMessage }) {
   const files = windowFiles(outputDir);
   const report = {

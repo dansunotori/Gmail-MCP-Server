@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-// @ts-expect-error -- plain ESM script without type declarations; its exports are typed by their use here.
 import { applyToolEdit, findCompletionLanguage } from './check-roadmap.mjs';
 import { fixtureRepo, gitIn, isolatedEnv as isolated, runScript } from './git-fixture.js';
 

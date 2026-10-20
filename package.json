@@ -28,7 +28,7 @@
   "scripts": {
     "build": "tsc",
     "install-cli": "npm run build && node scripts/install-cli.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "start": "node dist/index.js",
     "auth": "node dist/index.js auth",
     "test": "vitest run --exclude '.worktrees/**'",

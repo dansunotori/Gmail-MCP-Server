@@ -3,7 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fixtureRepo, gitIn, isolatedEnv } from './git-fixture.js';
-// @ts-expect-error -- plain ESM script without type declarations; linkBins is typed by its use here.
 import { linkBins } from './install-cli.mjs';
 import { mainCheckoutOf } from './script-support.mjs';
 

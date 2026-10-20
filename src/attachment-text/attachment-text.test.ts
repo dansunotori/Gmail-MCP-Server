@@ -105,7 +105,8 @@ describe('getAttachmentText', { timeout: EXTRACTION_TIMEOUT_MS }, () => {
     for (const bookType of ['biff2', 'biff3', 'biff4'] as const) {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Part', 'Qty'], ['Bolt', 12]]), 'Sheet1');
-      const bytes = XLSX.write(wb, { type: 'buffer', bookType }) as Buffer;
+      // xlsx's BookType names biff2 but not biff3 or biff4, which XLSX.write writes all the same.
+      const bytes = XLSX.write(wb, { type: 'buffer', bookType: bookType as XLSX.BookType }) as Buffer;
       const { gmail } = gmailWith([{ filename: `${bookType}.xls`, mimeType: 'application/vnd.ms-excel', attachmentId: bookType, bytes }], bytes);
       const result = await getAttachmentText(gmail, { messageId: 'm1', attachmentId: bookType });
       expect(result.text, bookType).toContain('Part\tQty\nBolt\t12');

@@ -262,7 +262,7 @@ describe("extractHeaders", () => {
   it("read_email outputs Message-ID in its response", () => {
     const text = formatReadEmailText({
       id: "m", threadId: "t", messageIdHeader: "<msg123@example.com>", subject: "", from: "", to: "", cc: "", bcc: "",
-      date: "", labels: [], text: "", html: "", body: "", bodySource: "text", attachments: [],
+      date: "", labels: [], text: "", html: "", body: "", bodySource: "text", htmlBody: null, attachments: [],
     });
     expect(text).toContain("Message-ID: <msg123@example.com>");
   });
@@ -316,7 +316,7 @@ describe("email-export parseEmailAddresses", () => {
 describe("extractHeaders CC/BCC", () => {
   const email = {
     id: "m", threadId: "t", messageIdHeader: null, subject: "", from: "", to: "", cc: "", bcc: "",
-    date: "", labels: [], text: "", html: "", body: "", bodySource: "text" as const, attachments: [],
+    date: "", labels: [], text: "", html: "", body: "", bodySource: "text" as const, htmlBody: null, attachments: [],
   };
 
   it("extractHeaders returns cc and bcc", () => {
