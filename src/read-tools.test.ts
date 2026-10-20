@@ -96,6 +96,18 @@ describe('extractEmailContent and extractAttachments', () => {
       { id: 'x9', filename: 'attachment-x9', mimeType: 'application/octet-stream', size: 3 },
     ]);
   });
+
+  it('lists a deferred part as an attachment only when the window fetch does: not an unnamed text/plain or text/html body part', () => {
+    expect(extractAttachments({ mimeType: 'multipart/mixed', parts: [
+      { mimeType: 'text/plain', body: { attachmentId: 'plain-1', size: 700000 } },
+      { mimeType: 'text/html', filename: '', body: { attachmentId: 'html-1', size: 900000 } },
+      { mimeType: 'text/html', filename: 'page.html', body: { attachmentId: 'page-1', size: 50 } },
+      { mimeType: 'text/csv', body: { attachmentId: 'csv-1', size: 20 } },
+    ] })).toEqual([
+      { id: 'page-1', filename: 'page.html', mimeType: 'text/html', size: 50 },
+      { id: 'csv-1', filename: 'attachment-csv-1', mimeType: 'text/csv', size: 20 },
+    ]);
+  });
 });
 
 describe('searchEmails', () => {
@@ -185,7 +197,8 @@ describe('readEmail', () => {
     const fetched = fakeGmail({ messages: { d: deferred }, attachments: { 'html-1': Buffer.from('<p>Real content</p>').toString('base64url') } });
     const result = await readEmail(fetched.gmail, { messageId: 'd' });
     expect(fetched.attachmentsGet).toHaveBeenCalledWith({ userId: 'me', messageId: 'd', id: 'html-1' });
-    expect(result).toMatchObject({ body: 'Stale reminder', bodySource: 'text', htmlBody: '<p>Real content</p>' });
+    expect(result).toMatchObject({ body: 'Stale reminder', bodySource: 'text', htmlBody: '<p>Real content</p>', attachments: [] });
+    expect(formatReadEmailText(result)).not.toContain('Attachments');
 
     const missing = fakeGmail({ messages: { d: deferred }, attachments: { 'html-1': Object.assign(new Error('gone'), { response: { status: 404 } }) } });
     const failed = await readEmail(missing.gmail, { messageId: 'd' });
@@ -466,6 +479,43 @@ describe('calendar fields in thread reads and the json download', () => {
       await downloadEmail(reply.gmail, { messageId: 'm1', savePath: dir, format: 'json' });
       const plain = JSON.parse(fs.readFileSync(path.join(dir, 'm1.json'), 'utf8'));
       for (const field of ['calendarMethod', 'calendarReply', 'calendarFailures']) expect(plain).not.toHaveProperty(field);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// A body part Gmail defers is the message's body, as the window fetch reads it, never an
+// attachment, in every tool that lists attachments.
+describe('deferred body parts in thread reads and downloads', () => {
+  it('getThread, getInboxWithThreads and downloadEmail list a deferred body part as body, not as an attachment', async () => {
+    const deferredHtml = { id: 'dh', threadId: 'th', payload: {
+      mimeType: 'multipart/mixed',
+      parts: [
+        { mimeType: 'text/plain', body: { data: b64('Plain') } },
+        { mimeType: 'text/html', body: { attachmentId: 'html-1', size: 900000 } },
+        fullMessage.payload.parts[2],
+      ],
+    } };
+    const gmail = { users: {
+      threads: {
+        get: vi.fn(async () => ({ data: { messages: [deferredHtml] } })),
+        list: vi.fn(async () => ({ data: { threads: [{ id: 'th' }] } })),
+      },
+      messages: {
+        get: vi.fn(async () => ({ data: deferredHtml })),
+        attachments: { get: vi.fn(async () => ({ data: { data: Buffer.from('<p>Real</p>').toString('base64url') } })) },
+      },
+    } } as unknown as gmail_v1.Gmail;
+    const pdfOnly = [{ filename: 'invoice.pdf', mimeType: 'application/pdf', size: 2048 }];
+    expect((await getThread(gmail, { threadId: 'th' })).messages[0].attachments).toEqual(pdfOnly);
+    const inbox = await getInboxWithThreads(gmail, { expandThreads: true });
+    expect((inbox.threads[0] as { messages: Array<{ attachments: unknown }> }).messages[0].attachments).toEqual(pdfOnly);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'read-tools-'));
+    try {
+      const saved = await downloadEmail(gmail, { messageId: 'dh', savePath: dir, format: 'json' });
+      expect(saved.attachments).toEqual([{ id: 'att-1', ...pdfOnly[0] }]);
+      expect(JSON.parse(fs.readFileSync(saved.path, 'utf8')).attachments).toEqual([{ id: 'att-1', ...pdfOnly[0] }]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

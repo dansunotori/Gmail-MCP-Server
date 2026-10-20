@@ -89,13 +89,16 @@ export function extractHeaders(payload: any): { subject: string; from: string; t
 }
 
 /**
- * Extract attachments from Gmail message payload
+ * Extract attachments from Gmail message payload: every part Gmail delivers by attachmentId
+ * except an unnamed text/plain or text/html part, which is the message body Gmail defers, as
+ * the window fetch's reader (src/message-body.ts) treats it.
  */
 export function extractAttachments(payload: GmailMessagePart): EmailAttachment[] {
     const attachments: EmailAttachment[] = [];
 
     function processAttachmentParts(part: GmailMessagePart) {
-        if (part.body && part.body.attachmentId) {
+        const isDeferredBody = (part.mimeType === 'text/plain' || part.mimeType === 'text/html') && !part.filename;
+        if (part.body && part.body.attachmentId && !isDeferredBody) {
             attachments.push({
                 id: part.body.attachmentId,
                 filename: part.filename || `attachment-${part.body.attachmentId}`,
@@ -361,21 +364,7 @@ async function threadMessage(gmail: gmail_v1.Gmail, message: gmail_v1.Schema$Mes
         const { text, html } = extractEmailContent(message.payload as GmailMessagePart || {});
         ({ body, bodySource } = selectBody(text, html, 'keep-html'));
     }
-    const attachments: EmailAttachment[] = [];
-    const processAttachmentParts = (part: GmailMessagePart) => {
-        if (part.body && part.body.attachmentId) {
-            attachments.push({
-                id: part.body.attachmentId,
-                filename: part.filename || `attachment-${part.body.attachmentId}`,
-                mimeType: part.mimeType || 'application/octet-stream',
-                size: part.body.size || 0,
-            });
-        }
-        part.parts?.forEach(processAttachmentParts);
-    };
-    if (message.payload) {
-        processAttachmentParts(message.payload as GmailMessagePart);
-    }
+    const attachments = message.payload ? extractAttachments(message.payload as GmailMessagePart) : [];
     return {
         messageId: message.id || '',
         threadId: message.threadId || '',

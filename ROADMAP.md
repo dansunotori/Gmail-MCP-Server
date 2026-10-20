@@ -2,10 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 3. read_email lists deferred body parts as attachments
-
-`extractAttachments` treats every part with an `attachmentId` as an attachment. So `read_email` and `gmail-get-message` list a deferred, unnamed `text/plain` or `text/html` body part as an attachment called `attachment-<id>`, while `batch_fetch_window`'s `walk` treats the same part as body. List as attachments only the parts that `walk` lists (a part with a filename, or one that is not an unnamed text/plain or text/html part), in `read_email`, `get_thread`, `get_inbox_with_threads` and `download_email`. Test this with the deferred-HTML fixture in `src/read-tools.test.ts`.
-
 ## 4. The HTML part decoded by its charset
 
 `htmlBody`, and the HTML that `body` is chosen from, are decoded as UTF-8 whatever the part's `Content-Type` charset says. So a part in `windows-1252`, `iso-8859-1` or `koi8-r` comes out with replacement characters. Check from a live message in a non-UTF-8 charset whether the Gmail API returns the part's original bytes. If it does, decode text/plain and text/html parts with `TextDecoder` using the charset parameter, falling back to UTF-8 when there is none. An unknown charset puts the reason in `htmlBodyError` (and a body failure in `failures`), never an empty part.
