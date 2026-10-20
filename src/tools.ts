@@ -466,7 +466,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "batch_fetch_window",
-    description: "Downloads every message received since a watermark into a local directory with manifest and cross-check; deletes and recreates messages/ under output_dir unless the listing exceeds max_messages, in which case nothing is written and earlier outputs remain. Every Gmail call is retried on 429, 5xx, rate-limit 403 and network errors up to 5 attempts with exponential full-jitter backoff (500 ms base, 30 s cap, Retry-After honoured); other 4xx are not retried. Every Gmail call completes before anything under output_dir is deleted or written, so a window listing page that still fails, an authentication failure on any call, or a guard refusal makes the whole call an error and leaves earlier outputs untouched. A message or body part that still fails is recorded in failures as { id, error, operation, status, attempts } and the rest of the window is written. Each message file carries body, bodySource and htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched). crossCheck is always present with status consistent, inconsistent, failed or skipped; consistent is true only for status consistent",
+    description: "Downloads every message received since a watermark into a local directory with manifest and cross-check; deletes and recreates messages/ under output_dir unless the listing exceeds max_messages, in which case nothing is written and earlier outputs remain. Every Gmail call is retried on 429, 5xx, rate-limit 403 and network errors up to 5 attempts with exponential full-jitter backoff (500 ms base, 30 s cap, Retry-After honoured); other 4xx are not retried. Every Gmail call completes before anything under output_dir is deleted or written, so a window listing page that still fails, an authentication failure on any call, or a guard refusal makes the whole call an error and leaves earlier outputs untouched. A message or body part that still fails is recorded in failures as { id, error, operation, status, attempts } and the rest of the window is written. Each message file carries body, bodySource and htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched), and a message with a text/calendar part carries calendarMethod and, for a reply, calendarReply { attendee, partstat }. crossCheck is always present with status consistent, inconsistent, failed or skipped; consistent is true only for status consistent",
     schema: BatchFetchWindowSchema,
     outputSchema: BatchFetchWindowOutputSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
@@ -474,7 +474,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "read_email",
-    description: "Retrieves the content of a specific email. After the body and attachments it prints the message's text/html part as delivered, also when the body is the plain part, under 'HTML part:'; 'HTML part: none' when the message has none, and 'HTML part not read: <reason>' when it cannot be fetched. When the text/plain part cannot be fetched, a note before the body gives the reason",
+    description: "Retrieves the content of a specific email as text; gmail-get-message gives the same message as JSON fields. After the body and attachments it prints the message's text/html part as delivered (htmlBody), also when the body is the plain part, under 'HTML part:'; 'HTML part: none' when the message has none, and 'HTML part not read: <reason>' (htmlBodyError) when it cannot be fetched. When the text/plain part cannot be fetched, a note before the body gives the reason (plainBodyError). A message with a text/calendar part gets lines after Date: 'Calendar: <METHOD>' (calendarMethod), for a reply 'Calendar reply: <attendee> <PARTSTAT>' (calendarReply), and 'Calendar part not read: <reason>' (calendarFailures) for a part that cannot be read",
     schema: ReadEmailSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Read Email", readOnlyHint: true },
@@ -505,7 +505,7 @@ export const toolDefinitions: ToolDefinition[] = [
   // Thread-level operations
   {
     name: "get_thread",
-    description: "Retrieves all messages in an email thread in one call. Returns messages ordered chronologically (oldest first) with full content, headers, labels, and attachment metadata. Each message's body follows read_email: the plain part, the HTML part converted to text when the plain part is only a stub, or the HTML as it is when there is no plain part; bodySource (text, html-over-stub or html) says which, and plainBodyError gives the reason when the text/plain part cannot be fetched. In full format each message also carries read_email's htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched); metadata and minimal carry no htmlBody.",
+    description: "Retrieves all messages in an email thread in one call. Returns messages ordered chronologically (oldest first) with full content, headers, labels, and attachment metadata. Each message's body follows read_email: the plain part, the HTML part converted to text when the plain part is only a stub, or the HTML as it is when there is no plain part; bodySource (text, html-over-stub or html) says which, and plainBodyError gives the reason when the text/plain part cannot be fetched. In full format each message also carries read_email's htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched); metadata and minimal carry no htmlBody. A message read in full with a text/calendar part carries read_email's calendarMethod, calendarReply { attendee, partstat } for a reply, and calendarFailures for a part that cannot be read.",
     schema: GetThreadSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Get Thread", readOnlyHint: true },
@@ -519,7 +519,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "get_inbox_with_threads",
-    description: "Convenience tool that lists threads and optionally expands each with full message content. One call returns the full inbox with complete thread bodies. An expanded message's body, bodySource, htmlBody and htmlBodyError follow get_thread in full format.",
+    description: "Convenience tool that lists threads and optionally expands each with full message content. One call returns the full inbox with complete thread bodies. An expanded message's body, bodySource, plainBodyError, htmlBody, htmlBodyError, calendarMethod, calendarReply and calendarFailures follow get_thread in full format.",
     schema: GetInboxWithThreadsSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Get Inbox with Threads", readOnlyHint: true },
@@ -533,7 +533,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "download_email",
-    description: "Downloads an email to a file in various formats (json, eml, txt, html). Returns metadata only - useful for saving emails without consuming context. The txt file's body, and json's body.text with bodySource, are the plain part, or the HTML part converted to text when there is no plain part or the plain part is only a stub; json also keeps both parts as body.plain and body.html, and carries read_email's htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched), and plainBodyError when the text/plain part cannot be fetched. The txt format is an error when the text/plain part cannot be fetched, and the html format is the HTML part, and an error when the message has none or it cannot be fetched.",
+    description: "Downloads an email to a file in various formats (json, eml, txt, html). Returns metadata only - useful for saving emails without consuming context. The txt file's body, and json's body.text with bodySource, are the plain part, or the HTML part converted to text when there is no plain part or the plain part is only a stub; json also keeps both parts as body.plain and body.html, and carries read_email's htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched), and plainBodyError when the text/plain part cannot be fetched, and for a message with a text/calendar part read_email's calendarMethod, calendarReply and calendarFailures. The txt format is an error when the text/plain part cannot be fetched, and the html format is the HTML part, and an error when the message has none or it cannot be fetched.",
     schema: DownloadEmailSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Download Email", readOnlyHint: true },

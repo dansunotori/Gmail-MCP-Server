@@ -191,9 +191,10 @@ gmail-get-inbox-with-threads [--query '<gmail query>'] [--max-results N] [--no-e
 ```
 
 Exposes `get_inbox_with_threads` with its defaults (`in:inbox`, 50 threads, expanded) and prints
-`{resultCount, threads}`, each expanded message with the `htmlBody`, `htmlBodyError` and calendar
-fields `gmail-get-thread` gives it in `full`; `--no-expand-threads` gives each thread as a summary of its latest message instead of
-its messages.
+`{resultCount, threads}`, each expanded message with the `htmlBody`, `htmlBodyError`,
+`plainBodyError`, `calendarMethod`, `calendarReply` and `calendarFailures` that `gmail-get-thread`
+gives it in `full`; `--no-expand-threads` gives each thread as a summary of its latest message
+instead of its messages.
 
 ### gmail-download-email
 
@@ -205,8 +206,9 @@ Exposes `download_email`: saves `<dir>/<message_id>.<format>` (json by default) 
 tool's result, `{status, path, size, messageId, subject, from, date, attachments}`. The json,
 txt and html files read the parts as `gmail-get-message` does, a part Gmail defers fetched. The
 json file carries `gmail-get-message`'s `htmlBody` and, when the HTML part cannot be fetched,
-`htmlBodyError`, `plainBodyError` when the plain part cannot be fetched, and the calendar fields
-`gmail-get-message` prints, for a message with a `text/calendar` part. The txt format is an error
+`htmlBodyError`, `plainBodyError` when the plain part cannot be fetched, and the
+`calendarMethod`, `calendarReply` and `calendarFailures` `gmail-get-message` prints, for a message
+with a `text/calendar` part. The txt format is an error
 when the plain part cannot be fetched, and the html format when the message has no HTML part or
 that part cannot be fetched, each carrying Gmail's status for the exit code. An `--output` naming the file it saves is refused before any Gmail call.
 
@@ -298,7 +300,9 @@ deleted, and a truncated run writing nothing. Prints the tool's result JSON unch
 `listed`, `inWindow`, `belowBoundaryOrExcluded`, `failures` `[{id, error, operation, status,
 attempts}]`, `crossCheck` `{status, consistent, unexplainedIds, errors, …}`, `truncated` and the
 rest of the tool's result, and leaves `manifest.json`, `window-metadata.json` and `messages/` under
-the output directory exactly as the tool writes them. See `README.md` for the full result contract.
+the output directory exactly as the tool writes them. Each message file carries `htmlBody`,
+`htmlBodyError` when the HTML part cannot be fetched, and `calendarMethod` and `calendarReply` for
+a message with a `text/calendar` part. See `README.md` for the full result contract.
 
 ## Shared code
 
