@@ -469,3 +469,66 @@ describe('MCP tool failures', () => {
     expect(text).not.toMatch(/secret|Bearer|Authorization/);
   });
 });
+
+// The text each single-result tool returns, and the Gmail call it makes, through the MCP
+// transport against a Gmail that records every call.
+describe('single text results', () => {
+  const original = { id: 'm1', threadId: 't1', payload: { headers: [
+    { name: 'From', value: 'Alice <alice@example.com>' },
+    { name: 'To', value: 'me@example.com' },
+    { name: 'Subject', value: 'Hi' },
+    { name: 'Date', value: 'D' },
+    { name: 'Message-ID', value: '<m1@example.com>' },
+  ] } };
+  function recordingGmail() {
+    const calls: Array<[string, unknown]> = [];
+    const answer = (name: string, data: unknown = {}) => async (params: unknown) => {
+      calls.push([name, params]);
+      return { data };
+    };
+    const gmail = { users: {
+      getProfile: answer('getProfile', { emailAddress: 'me@example.com' }),
+      messages: {
+        modify: answer('messages.modify'),
+        delete: answer('messages.delete'),
+        batchModify: answer('messages.batchModify'),
+        send: answer('messages.send', { id: 's1' }),
+        list: answer('messages.list', { messages: [{ id: 'm1' }] }),
+        get: answer('messages.get', original),
+      },
+      drafts: { send: answer('drafts.send', { id: 'sent-1' }), delete: answer('drafts.delete') },
+      threads: { modify: answer('threads.modify') },
+    } };
+    return { gmail, calls };
+  }
+  const SPAM_NOTE = 'the closest public Gmail API approximation of reporting phishing';
+
+  it.each([
+    { tool: 'modify_email', args: { messageId: 'm1', addLabelIds: ['L1'] }, text: 'Email m1 labels updated successfully', made: ['messages.modify', { userId: 'me', id: 'm1', requestBody: { addLabelIds: ['L1'] } }] },
+    { tool: 'delete_email', args: { messageId: 'm1' }, scopes: ['gmail.full'], text: 'Email m1 deleted successfully', made: ['messages.delete', { userId: 'me', id: 'm1' }] },
+    { tool: 'send_draft', args: { draftId: 'd1' }, text: 'Draft d1 sent successfully as message ID: sent-1. The draft has been removed from Drafts.', made: ['drafts.send', { userId: 'me', requestBody: { id: 'd1' } }] },
+    { tool: 'delete_draft', args: { draftId: 'd1' }, text: 'Draft d1 deleted successfully.', made: ['drafts.delete', { userId: 'me', id: 'd1' }] },
+    { tool: 'modify_thread', args: { threadId: 't1', addLabelIds: ['L1'] }, text: 'Thread t1 labels updated successfully (all messages in thread modified)', made: ['threads.modify', { userId: 'me', id: 't1', requestBody: { addLabelIds: ['L1'] } }] },
+    {
+      tool: 'report_phishing', args: { messageId: 'm1' },
+      text: `Email m1 was updated with the SPAM label as ${SPAM_NOTE}. Note: the Gmail API does not expose the full native Report phishing workflow.`,
+      made: ['messages.modify', { userId: 'me', id: 'm1', requestBody: { addLabelIds: ['SPAM'] } }],
+    },
+    {
+      tool: 'batch_report_phishing', args: { messageIds: ['m1', 'm2'] },
+      text: `Batch phishing report complete.\nSuccessfully processed: 2 messages\nBehavior: each message was updated with the SPAM label as ${SPAM_NOTE}.\n`
+        + 'Limitation: the Gmail API does not expose the full native Report phishing workflow.\n',
+      made: ['messages.batchModify', { userId: 'me', requestBody: { ids: ['m1', 'm2'], addLabelIds: ['SPAM'] } }],
+    },
+    { tool: 'search_emails', args: { query: 'from:alice' }, text: 'ID: m1\nSubject: Hi\nFrom: Alice <alice@example.com>\nDate: D\n', made: ['messages.list', { userId: 'me', q: 'from:alice', maxResults: 10 }] },
+    {
+      tool: 'reply_all', args: { messageId: 'm1', body: 'Thanks' },
+      text: 'Reply-all sent successfully!\nTo: alice@example.com\nSubject: Re: Hi\nThread ID: t1',
+      made: ['messages.send', expect.objectContaining({ userId: 'me', requestBody: expect.objectContaining({ threadId: 't1' }) })],
+    },
+  ])('$tool returns its text and makes its Gmail call', async ({ tool, args, scopes, text, made }) => {
+    const { gmail, calls } = recordingGmail();
+    expect(await call(gmail, tool, args, scopes ? { scopes } : undefined)).toEqual({ isError: undefined, text });
+    expect(calls).toContainEqual(made);
+  });
+});

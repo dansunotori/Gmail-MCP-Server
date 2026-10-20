@@ -1,7 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
     ReportPhishingSchema,
     BatchReportPhishingSchema,
@@ -9,9 +6,6 @@ import {
     toolDefinitions,
 } from './tools.js';
 import { hasScope } from './scopes.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const srcDir = __dirname;
 
 describe('ReportPhishingSchema', () => {
     it('parses valid single-message input', () => {
@@ -69,25 +63,5 @@ describe('Phishing tool definitions', () => {
         const batchTool = getToolByName('batch_report_phishing')!;
         expect(hasScope(['gmail.modify'], singleTool.scopes)).toBe(true);
         expect(hasScope(['gmail.modify'], batchTool.scopes)).toBe(true);
-    });
-});
-
-describe('Source verification', () => {
-    it('single phishing report uses SPAM label flow', () => {
-        const source = fs.readFileSync(path.join(srcDir, 'server.ts'), 'utf-8');
-        expect(source).toContain('case "report_phishing"');
-        expect(source).toContain("addLabelIds: ['SPAM']");
-        expect(source).toContain('closest public Gmail API approximation of reporting phishing');
-        expect(source).toContain('does not expose the full native Report phishing workflow');
-    });
-
-    it('batch phishing report uses batchModify with SPAM label flow and documents limitation', () => {
-        const source = fs.readFileSync(path.join(srcDir, 'server.ts'), 'utf-8');
-        expect(source).toContain('case "batch_report_phishing"');
-        expect(source).toContain('gmail.users.messages.batchModify');
-        expect(source).toContain('ids: batch');
-        expect(source).toContain('Batch phishing report complete.');
-        expect(source).toContain('closest public Gmail API approximation of reporting phishing');
-        expect(source).toContain('does not expose the full native Report phishing workflow');
     });
 });

@@ -114,14 +114,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
             try {
                 if (action === "draft") {
                     const draftId = await createDraft(gmail, validatedArgs);
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Email draft created successfully with ID: ${draftId}`,
-                            },
-                        ],
-                    };
+                    return textResult(`Email draft created successfully with ID: ${draftId}`);
                 }
                 await resolveThreadingHeaders(gmail, validatedArgs);
                 const raw = await encodeMessage(validatedArgs);
@@ -129,14 +122,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                     userId: 'me',
                     requestBody: messageRequest(raw, validatedArgs),
                 });
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text: `Email sent successfully with ID: ${result.data.id}`,
-                        },
-                    ],
-                };
+                return textResult(`Email sent successfully with ID: ${result.data.id}`);
             } catch (error: any) {
                 // Log attachment / inline-image errors for debugging
                 if (needsRawBuilder(validatedArgs)) {
@@ -216,38 +202,17 @@ export function createGmailServer(deps: GmailServerDeps): Server {
 
                 case "read_email": {
                     const validatedArgs = ReadEmailSchema.parse(args);
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: formatReadEmailText(await readEmail(gmail, validatedArgs)),
-                            },
-                        ],
-                    };
+                    return textResult(formatReadEmailText(await readEmail(gmail, validatedArgs)));
                 }
 
                 case "search_emails": {
                     const validatedArgs = SearchEmailsSchema.parse(args);
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: formatSearchEmailsText(await searchEmails(gmail, validatedArgs)),
-                            },
-                        ],
-                    };
+                    return textResult(formatSearchEmailsText(await searchEmails(gmail, validatedArgs)));
                 }
 
                 case "download_email": {
                     const validatedArgs = DownloadEmailSchema.parse(args);
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: JSON.stringify(await downloadEmail(gmail, validatedArgs), null, 2),
-                            },
-                        ],
-                    };
+                    return textResult(JSON.stringify(await downloadEmail(gmail, validatedArgs), null, 2));
                 }
 
                 case "modify_email": {
@@ -274,14 +239,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         requestBody: requestBody,
                     });
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Email ${validatedArgs.messageId} labels updated successfully`,
-                            },
-                        ],
-                    };
+                    return textResult(`Email ${validatedArgs.messageId} labels updated successfully`);
                 }
 
                 case "delete_email": {
@@ -291,14 +249,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         id: validatedArgs.messageId,
                     });
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Email ${validatedArgs.messageId} deleted successfully`,
-                            },
-                        ],
-                    };
+                    return textResult(`Email ${validatedArgs.messageId} deleted successfully`);
                 }
 
                 case "send_draft": {
@@ -307,14 +258,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         userId: 'me',
                         requestBody: { id: validatedArgs.draftId },
                     });
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Draft ${validatedArgs.draftId} sent successfully as message ID: ${response.data.id}. The draft has been removed from Drafts.`,
-                            },
-                        ],
-                    };
+                    return textResult(`Draft ${validatedArgs.draftId} sent successfully as message ID: ${response.data.id}. The draft has been removed from Drafts.`);
                 }
 
                 case "delete_draft": {
@@ -323,14 +267,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         userId: 'me',
                         id: validatedArgs.draftId,
                     });
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Draft ${validatedArgs.draftId} deleted successfully.`,
-                            },
-                        ],
-                    };
+                    return textResult(`Draft ${validatedArgs.draftId} deleted successfully.`);
                 }
 
                 case "update_draft": {
@@ -345,14 +282,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         requestBody: { message: messageRequest(encodedMessage, messageArgs) },
                     });
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Draft ${draftId} updated successfully (draft ID unchanged, content replaced).`,
-                            },
-                        ],
-                    };
+                    return textResult(`Draft ${draftId} updated successfully (draft ID unchanged, content replaced).`);
                 }
 
                 case "list_email_labels": {
@@ -360,18 +290,11 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                     const systemLabels = labelResults.system;
                     const userLabels = labelResults.user;
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Found ${labelResults.count.total} labels (${labelResults.count.system} system, ${labelResults.count.user} user):\n\n` +
-                                    "System Labels:\n" +
-                                    systemLabels.map((l: GmailLabel) => `ID: ${l.id}\nName: ${l.name}\n`).join('\n') +
-                                    "\nUser Labels:\n" +
-                                    userLabels.map((l: GmailLabel) => `ID: ${l.id}\nName: ${l.name}\n`).join('\n')
-                            },
-                        ],
-                    };
+                    return textResult(`Found ${labelResults.count.total} labels (${labelResults.count.system} system, ${labelResults.count.user} user):\n\n` +
+                        "System Labels:\n" +
+                        systemLabels.map((l: GmailLabel) => `ID: ${l.id}\nName: ${l.name}\n`).join('\n') +
+                        "\nUser Labels:\n" +
+                        userLabels.map((l: GmailLabel) => `ID: ${l.id}\nName: ${l.name}\n`).join('\n'));
                 }
 
                 case "batch_modify_emails": {
@@ -425,14 +348,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         },
                     });
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Email ${validatedArgs.messageId} was updated with the SPAM label as the closest public Gmail API approximation of reporting phishing. Note: the Gmail API does not expose the full native Report phishing workflow.`,
-                            },
-                        ],
-                    };
+                    return textResult(`Email ${validatedArgs.messageId} was updated with the SPAM label as the closest public Gmail API approximation of reporting phishing. Note: the Gmail API does not expose the full native Report phishing workflow.`);
                 }
 
                 case "batch_report_phishing": {
@@ -499,14 +415,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         labelListVisibility: validatedArgs.labelListVisibility,
                     });
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Label created successfully:\nID: ${result.id}\nName: ${result.name}\nType: ${result.type}`,
-                            },
-                        ],
-                    };
+                    return textResult(`Label created successfully:\nID: ${result.id}\nName: ${result.name}\nType: ${result.type}`);
                 }
 
                 case "update_label": {
@@ -520,28 +429,14 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                     
                     const result = await updateLabel(gmail, validatedArgs.id, updates);
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Label updated successfully:\nID: ${result.id}\nName: ${result.name}\nType: ${result.type}`,
-                            },
-                        ],
-                    };
+                    return textResult(`Label updated successfully:\nID: ${result.id}\nName: ${result.name}\nType: ${result.type}`);
                 }
 
                 case "delete_label": {
                     const validatedArgs = DeleteLabelSchema.parse(args);
                     const result = await deleteLabel(gmail, validatedArgs.id);
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: result.message,
-                            },
-                        ],
-                    };
+                    return textResult(result.message);
                 }
 
                 case "get_or_create_label": {
@@ -553,14 +448,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
 
                     const action = result.type === 'user' && result.name === validatedArgs.name ? 'found existing' : 'created new';
                     
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Successfully ${action} label:\nID: ${result.id}\nName: ${result.name}\nType: ${result.type}`,
-                            },
-                        ],
-                    };
+                    return textResult(`Successfully ${action} label:\nID: ${result.id}\nName: ${result.name}\nType: ${result.type}`);
                 }
 
 
@@ -577,28 +465,14 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                     const filters = result.filters;
 
                     if (filters.length === 0) {
-                        return {
-                            content: [
-                                {
-                                    type: "text",
-                                    text: "No filters found.",
-                                },
-                            ],
-                        };
+                        return textResult("No filters found.");
                     }
 
                     const filtersText = filters.map((filter: any) =>
                         `ID: ${filter.id}\nCriteria: ${formatFilterFields(filter.criteria)}\nActions: ${formatFilterFields(filter.action)}\n`
                     ).join('\n');
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Found ${result.count} filters:\n\n${filtersText}`,
-                            },
-                        ],
-                    };
+                    return textResult(`Found ${result.count} filters:\n\n${filtersText}`);
                 }
 
                 case "get_filter": {
@@ -612,14 +486,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                     const validatedArgs = DeleteFilterSchema.parse(args);
                     const result = await deleteFilter(gmail, validatedArgs.filterId);
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: result.message,
-                            },
-                        ],
-                    };
+                    return textResult(result.message);
                 }
 
                 case "create_filter_from_template": {
@@ -659,25 +526,11 @@ export function createGmailServer(deps: GmailServerDeps): Server {
 
                     const result = await createFilter(gmail, filterConfig.criteria, filterConfig.action);
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Filter created from template '${template}':\nID: ${result.id}\nTemplate used: ${template}`,
-                            },
-                        ],
-                    };
+                    return textResult(`Filter created from template '${template}':\nID: ${result.id}\nTemplate used: ${template}`);
                 }
                 case "download_attachment": {
                     const validatedArgs = DownloadAttachmentSchema.parse(args);
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: formatDownloadAttachmentText(await downloadAttachment(gmail, validatedArgs)),
-                            },
-                        ],
-                    };
+                    return textResult(formatDownloadAttachmentText(await downloadAttachment(gmail, validatedArgs)));
                 }
 
                 case "get_attachment_text": {
@@ -687,17 +540,17 @@ export function createGmailServer(deps: GmailServerDeps): Server {
 
                 case "get_thread": {
                     const validatedArgs = GetThreadSchema.parse(args);
-                    return { content: [{ type: "text", text: JSON.stringify(await getThread(gmail, validatedArgs), null, 2) }] };
+                    return textResult(JSON.stringify(await getThread(gmail, validatedArgs), null, 2));
                 }
 
                 case "list_inbox_threads": {
                     const validatedArgs = ListInboxThreadsSchema.parse(args);
-                    return { content: [{ type: "text", text: JSON.stringify(await listInboxThreads(gmail, validatedArgs), null, 2) }] };
+                    return textResult(JSON.stringify(await listInboxThreads(gmail, validatedArgs), null, 2));
                 }
 
                 case "get_inbox_with_threads": {
                     const validatedArgs = GetInboxWithThreadsSchema.parse(args);
-                    return { content: [{ type: "text", text: JSON.stringify(await getInboxWithThreads(gmail, validatedArgs), null, 2) }] };
+                    return textResult(JSON.stringify(await getInboxWithThreads(gmail, validatedArgs), null, 2));
                 }
 
                 case "reply_all": {
@@ -761,14 +614,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                     const result = await handleEmailAction("send", emailArgs);
 
                     // Enhance the response with reply-all specific info
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Reply-all sent successfully!\nTo: ${replyTo.join(', ')}${replyCc.length > 0 ? `\nCC: ${replyCc.join(', ')}` : ''}\nSubject: ${replySubject}\nThread ID: ${threadId}`,
-                            },
-                        ],
-                    };
+                    return textResult(`Reply-all sent successfully!\nTo: ${replyTo.join(', ')}${replyCc.length > 0 ? `\nCC: ${replyCc.join(', ')}` : ''}\nSubject: ${replySubject}\nThread ID: ${threadId}`);
                 }
 
                 case "modify_thread": {
@@ -791,14 +637,7 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         requestBody: modifyRequestBody,
                     });
 
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Thread ${validatedArgs.threadId} labels updated successfully (all messages in thread modified)`,
-                            },
-                        ],
-                    };
+                    return textResult(`Thread ${validatedArgs.threadId} labels updated successfully (all messages in thread modified)`);
                 }
 
                 default:
