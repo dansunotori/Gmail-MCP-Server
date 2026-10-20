@@ -7,6 +7,7 @@ import type { gmail_v1 } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EXTRACTION_TIMEOUT_MS } from './attachment-text/extract.js';
+import { committedFixture } from './attachment-text/test-fixtures.js';
 import { createGmailServer } from './server.js';
 import { toolDefinitions } from './tools.js';
 
@@ -255,7 +256,7 @@ describe('list_inbox_threads', () => {
 // get the worker's own limit rather than vitest's five-second default.
 describe('get_attachment_text', { timeout: EXTRACTION_TIMEOUT_MS }, () => {
   const pdfGmail = (file: string) => {
-    const bytes = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), 'attachment-text', '__fixtures__', file));
+    const bytes = committedFixture(file);
     return { users: { messages: {
       attachments: { get: async () => ({ data: { data: bytes.toString('base64url') } }) },
       get: async () => ({ data: { payload: { mimeType: 'multipart/mixed', parts: [
@@ -278,6 +279,22 @@ describe('get_attachment_text', { timeout: EXTRACTION_TIMEOUT_MS }, () => {
       isError: true,
       text: 'Failed to get attachment text: protected file: the PDF needs a password to open',
     });
+  });
+});
+
+describe('filter tools', () => {
+  const filter = { id: 'f1', criteria: { from: 'a@example.com', hasAttachment: true }, action: { addLabelIds: ['L1', 'L2'], removeLabelIds: [] } };
+  const gmail = { users: { settings: { filters: {
+    create: async () => ({ data: filter }),
+    get: async () => ({ data: filter }),
+    list: async () => ({ data: { filter: [filter] } }),
+  } } } };
+
+  it('show each set criterion and action as key: value, joining lists and leaving out empty ones', async () => {
+    const shown = 'ID: f1\nCriteria: from: a@example.com, hasAttachment: true\nActions: addLabelIds: L1, L2';
+    expect((await call(gmail, 'create_filter', { criteria: filter.criteria, action: filter.action })).text).toBe(`Filter created successfully:\n${shown}`);
+    expect((await call(gmail, 'get_filter', { filterId: 'f1' })).text).toBe(`Filter details:\n${shown}`);
+    expect((await call(gmail, 'list_filters', {})).text).toBe(`Found 1 filters:\n\n${shown}\n`);
   });
 });
 
@@ -437,8 +454,10 @@ describe('MCP tool failures', () => {
     } } };
     const ids = ['18f2a9c4e1b7d3a0', '18f2a9c4e1b7d3a0-missing'];
     const line = '- 18f2a9c4e1b7d3a0-missing: Requested entity was not found. (code notFound, HTTP 404)';
-    expect((await call(gmail, 'batch_modify_emails', { messageIds: ids, addLabelIds: ['L1'] })).text).toContain(line);
-    expect((await call(gmail, 'batch_delete_emails', { messageIds: ids }, { scopes: ['gmail.full'] })).text).toContain(line);
+    expect((await call(gmail, 'batch_modify_emails', { messageIds: ids, addLabelIds: ['L1'] })).text).toBe('Batch label modification complete.\n' +
+      `Successfully processed: 1 messages\nFailed to process: 1 messages\n\nFailed message IDs:\n${line}`);
+    expect((await call(gmail, 'batch_delete_emails', { messageIds: ids }, { scopes: ['gmail.full'] })).text).toBe('Batch delete operation complete.\n' +
+      `Successfully deleted: 1 messages\nFailed to delete: 1 messages\n\nFailed message IDs:\n${line}`);
     expect((await call(gmail, 'batch_report_phishing', { messageIds: ['18f2a9c4e1b7d3a0'] })).text)
       .toContain('- 18f2a9c4e1b7d3a0: Invalid label (code invalidArgument, HTTP 400)');
   });

@@ -11,12 +11,9 @@ import {
   resolveMessageBody,
   selectBody,
 } from './message-body.js';
+import { httpError } from './gmail-test-fakes.js';
 
 const b64 = (value: string) => Buffer.from(value, 'utf8').toString('base64url');
-
-function httpError(status: number) {
-  return Object.assign(new Error(`HTTP ${status}`), { response: { status, data: {} } });
-}
 
 describe('decodeBase64Url', () => {
   it('decodes base64url and returns empty for missing data', () => {

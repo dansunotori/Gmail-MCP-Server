@@ -36,6 +36,27 @@ export interface GmailServerDeps {
     toolPrefix: string;
 }
 
+function textResult(text: string) {
+    return { content: [{ type: "text" as const, text }] };
+}
+
+// The failure lines of a batch summary: how many messages failed and why each one did, or ''
+// when none failed.
+function batchFailureText(failures: { item: string, error: Error }[], failedTo: string): string {
+    if (failures.length === 0) return '';
+    return `${failedTo}: ${failures.length} messages\n\nFailed message IDs:\n` +
+        failures.map(f => `- ${f.item}: ${failureDetail(f.error)}`).join('\n');
+}
+
+// A filter's criteria or actions as the filter tools show them: each set field as `key: value`,
+// list values joined with commas, empty lists left out.
+function formatFilterFields(fields: object | null | undefined): string {
+    return Object.entries(fields || {})
+        .filter(([_, value]) => value !== undefined && (Array.isArray(value) ? value.length > 0 : true))
+        .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
+        .join(', ');
+}
+
 export function createGmailServer(deps: GmailServerDeps): Server {
     const { gmail, oauth2Client, authorizedScopes, toolPrefix: TOOL_PREFIX } = deps;
 
@@ -388,27 +409,9 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         }
                     );
 
-                    // Generate summary of the operation
-                    const successCount = successes.length;
-                    const failureCount = failures.length;
-                    
-                    let resultText = `Batch label modification complete.\n`;
-                    resultText += `Successfully processed: ${successCount} messages\n`;
-                    
-                    if (failureCount > 0) {
-                        resultText += `Failed to process: ${failureCount} messages\n\n`;
-                        resultText += `Failed message IDs:\n`;
-                        resultText += failures.map(f => `- ${f.item}: ${failureDetail(f.error)}`).join('\n');
-                    }
-
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: resultText,
-                            },
-                        ],
-                    };
+                    return textResult(`Batch label modification complete.\n` +
+                        `Successfully processed: ${successes.length} messages\n` +
+                        batchFailureText(failures, 'Failed to process'));
                 }
 
                 case "report_phishing": {
@@ -453,28 +456,11 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         }
                     );
 
-                    const successCount = successes.length;
-                    const failureCount = failures.length;
-
-                    let resultText = `Batch phishing report complete.\n`;
-                    resultText += `Successfully processed: ${successCount} messages\n`;
-                    resultText += `Behavior: each message was updated with the SPAM label as the closest public Gmail API approximation of reporting phishing.\n`;
-                    resultText += `Limitation: the Gmail API does not expose the full native Report phishing workflow.\n`;
-
-                    if (failureCount > 0) {
-                        resultText += `Failed to process: ${failureCount} messages\n\n`;
-                        resultText += `Failed message IDs:\n`;
-                        resultText += failures.map(f => `- ${f.item}: ${failureDetail(f.error)}`).join('\n');
-                    }
-
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: resultText,
-                            },
-                        ],
-                    };
+                    return textResult(`Batch phishing report complete.\n` +
+                        `Successfully processed: ${successes.length} messages\n` +
+                        `Behavior: each message was updated with the SPAM label as the closest public Gmail API approximation of reporting phishing.\n` +
+                        `Limitation: the Gmail API does not expose the full native Report phishing workflow.\n` +
+                        batchFailureText(failures, 'Failed to process'));
                 }
 
                 case "batch_delete_emails": {
@@ -500,27 +486,9 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         }
                     );
 
-                    // Generate summary of the operation
-                    const successCount = successes.length;
-                    const failureCount = failures.length;
-                    
-                    let resultText = `Batch delete operation complete.\n`;
-                    resultText += `Successfully deleted: ${successCount} messages\n`;
-                    
-                    if (failureCount > 0) {
-                        resultText += `Failed to delete: ${failureCount} messages\n\n`;
-                        resultText += `Failed message IDs:\n`;
-                        resultText += failures.map(f => `- ${f.item}: ${failureDetail(f.error)}`).join('\n');
-                    }
-
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: resultText,
-                            },
-                        ],
-                    };
+                    return textResult(`Batch delete operation complete.\n` +
+                        `Successfully deleted: ${successes.length} messages\n` +
+                        batchFailureText(failures, 'Failed to delete'));
                 }
 
                 // Label management handlers
@@ -600,27 +568,8 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                 case "create_filter": {
                     const validatedArgs = CreateFilterSchema.parse(args);
                     const result = await createFilter(gmail, validatedArgs.criteria, validatedArgs.action);
-
-                    // Format criteria for display
-                    const criteriaText = Object.entries(validatedArgs.criteria)
-                        .filter(([_, value]) => value !== undefined)
-                        .map(([key, value]) => `${key}: ${value}`)
-                        .join(', ');
-
-                    // Format actions for display
-                    const actionText = Object.entries(validatedArgs.action)
-                        .filter(([_, value]) => value !== undefined && (Array.isArray(value) ? value.length > 0 : true))
-                        .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
-                        .join(', ');
-
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Filter created successfully:\nID: ${result.id}\nCriteria: ${criteriaText}\nActions: ${actionText}`,
-                            },
-                        ],
-                    };
+                    return textResult(`Filter created successfully:\nID: ${result.id}\n` +
+                        `Criteria: ${formatFilterFields(validatedArgs.criteria)}\nActions: ${formatFilterFields(validatedArgs.action)}`);
                 }
 
                 case "list_filters": {
@@ -638,19 +587,9 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                         };
                     }
 
-                    const filtersText = filters.map((filter: any) => {
-                        const criteriaEntries = Object.entries(filter.criteria || {})
-                            .filter(([_, value]) => value !== undefined)
-                            .map(([key, value]) => `${key}: ${value}`)
-                            .join(', ');
-                        
-                        const actionEntries = Object.entries(filter.action || {})
-                            .filter(([_, value]) => value !== undefined && (Array.isArray(value) ? value.length > 0 : true))
-                            .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
-                            .join(', ');
-
-                        return `ID: ${filter.id}\nCriteria: ${criteriaEntries}\nActions: ${actionEntries}\n`;
-                    }).join('\n');
+                    const filtersText = filters.map((filter: any) =>
+                        `ID: ${filter.id}\nCriteria: ${formatFilterFields(filter.criteria)}\nActions: ${formatFilterFields(filter.action)}\n`
+                    ).join('\n');
 
                     return {
                         content: [
@@ -665,25 +604,8 @@ export function createGmailServer(deps: GmailServerDeps): Server {
                 case "get_filter": {
                     const validatedArgs = GetFilterSchema.parse(args);
                     const result = await getFilter(gmail, validatedArgs.filterId);
-
-                    const criteriaText = Object.entries(result.criteria || {})
-                        .filter(([_, value]) => value !== undefined)
-                        .map(([key, value]) => `${key}: ${value}`)
-                        .join(', ');
-                    
-                    const actionText = Object.entries(result.action || {})
-                        .filter(([_, value]) => value !== undefined && (Array.isArray(value) ? value.length > 0 : true))
-                        .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
-                        .join(', ');
-
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Filter details:\nID: ${result.id}\nCriteria: ${criteriaText}\nActions: ${actionText}`,
-                            },
-                        ],
-                    };
+                    return textResult(`Filter details:\nID: ${result.id}\n` +
+                        `Criteria: ${formatFilterFields(result.criteria)}\nActions: ${formatFilterFields(result.action)}`);
                 }
 
                 case "delete_filter": {

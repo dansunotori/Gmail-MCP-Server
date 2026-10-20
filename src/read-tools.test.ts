@@ -17,6 +17,7 @@ import {
   readEmail,
   searchEmails,
 } from './read-tools.js';
+import { headerList } from './gmail-test-fakes.js';
 
 const b64 = (value: string) => Buffer.from(value, 'utf8').toString('base64');
 
@@ -46,14 +47,14 @@ const fullMessage = {
   labelIds: ['INBOX', 'UNREAD'],
   payload: {
     mimeType: 'multipart/mixed',
-    headers: [
-      { name: 'Subject', value: 'Invoice' },
-      { name: 'From', value: 'Billing <billing@example.com>' },
-      { name: 'To', value: 'me@example.com' },
-      { name: 'Cc', value: 'boss@example.com' },
-      { name: 'Date', value: 'Mon, 07 Sep 2026 14:00:00 +0000' },
-      { name: 'Message-ID', value: '<abc@example.com>' },
-    ],
+    headers: headerList({
+      Subject: 'Invoice',
+      From: 'Billing <billing@example.com>',
+      To: 'me@example.com',
+      Cc: 'boss@example.com',
+      Date: 'Mon, 07 Sep 2026 14:00:00 +0000',
+      'Message-ID': '<abc@example.com>',
+    }),
     parts: [
       { mimeType: 'text/plain', body: { data: b64('Plain body') } },
       { mimeType: 'text/html', body: { data: b64('<p>HTML body</p>') } },

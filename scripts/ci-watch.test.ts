@@ -3,10 +3,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
 import { ciWatch, parseRepo } from './ci-watch.mjs';
+import { fakeRun, ghUnauthenticated, REPO, SHA, successive } from './ci-test-support.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SHA = '90d1a527230920b4a366bd91a00cacb33ed831eb';
-const REPO = 'owner/repo';
 
 // A fake world: git and gh answer by command line. `runLists` are the successive answers of
 // `gh run list` and each entry of `views` the successive answers of `gh run view` for that
@@ -16,33 +15,21 @@ function world(options: { pushed?: boolean; branch?: string | null; runLists?: u
   const calls: string[] = [];
   const logged: string[] = [];
   const watched: string[] = [];
-  const viewed: Record<string, number> = {};
+  const viewOf: Record<string, () => unknown> = {};
   let sleeps = 0;
-  let listed = 0;
-  const run = (command: string, args: string[]) => {
-    const line = [command, ...args].join(' ');
-    calls.push(line);
-    if (line === 'git rev-parse HEAD') return `${SHA}\n`;
-    if (line === 'git symbolic-ref --quiet --short HEAD') {
-      if (branch === null) throw new Error('git symbolic-ref exited 1');
-      return `${branch}\n`;
-    }
+  const nextRunList = successive(runLists);
+  const run = fakeRun(calls, branch, line => {
     if (line === `git branch -r --contains ${SHA} --list origin/${branch}`) return pushed ? `  origin/${branch}\n` : '';
     if (line === 'git remote get-url origin') return 'https://github.com/owner/repo.git\n';
-    if (line.startsWith(`gh run list --repo ${REPO} --commit ${SHA} --branch ${branch} --event push `)) {
-      const answer = runLists[Math.min(listed, runLists.length - 1)];
-      listed++;
-      return JSON.stringify(answer);
-    }
+    if (line.startsWith(`gh run list --repo ${REPO} --commit ${SHA} --branch ${branch} --event push `)) return JSON.stringify(nextRunList());
     const view = line.match(/^gh run view (\d+) --repo owner\/repo/);
     if (view) {
-      const answers = views[view[1]] ?? [{ status: 'completed', conclusion: 'success', name: 'CI', url: `https://ci/${view[1]}`, jobs: [] }];
-      const index = viewed[view[1]] ?? 0;
-      viewed[view[1]] = index + 1;
-      return JSON.stringify(answers[Math.min(index, answers.length - 1)]);
+      const id = view[1];
+      viewOf[id] ??= successive(views[id] ?? [{ status: 'completed', conclusion: 'success', name: 'CI', url: `https://ci/${id}`, jobs: [] }]);
+      return JSON.stringify(viewOf[id]());
     }
     throw new Error(`unexpected command: ${line}`);
-  };
+  });
   const watch = (id: string, repo: string) => {
     watched.push(`${id} ${repo}`);
     return watchStatus;
@@ -139,11 +126,7 @@ describe('ci-watch.mjs', () => {
 
   it('exits 2, not the CI failure code, when git or gh cannot answer', () => {
     const w = world();
-    const failing = (command: string, args: string[]) => {
-      if (command === 'gh') throw new Error('gh: authentication required');
-      return w.run(command, args);
-    };
-    expect(ciWatch({ ...w, run: failing })).toBe(2);
+    expect(ciWatch({ ...w, run: ghUnauthenticated(w.run) })).toBe(2);
     expect(w.logged).toEqual(['ci:watch: could not read the CI runs of 90d1a52: gh: authentication required']);
   });
 

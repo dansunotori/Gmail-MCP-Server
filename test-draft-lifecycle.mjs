@@ -17,29 +17,11 @@
  *
  * Cleanup: the sent message from step 3, and any inbox copy of it, is moved to the trash at the end.
  */
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { google } from 'googleapis';
-import { OAuth2Client } from 'google-auth-library';
-
-const CONFIG_DIR = path.join(os.homedir(), '.gmail-mcp');
-const OAUTH_PATH = path.join(CONFIG_DIR, 'gcp-oauth.keys.json');
-const CREDENTIALS_PATH = path.join(CONFIG_DIR, 'credentials.json');
+import { encodeRaw, liveGmail } from './test/live-gmail.mjs';
 
 // Marker for easy identification + manual cleanup if something goes sideways
 const STAMP = new Date().toISOString().replace(/[:.]/g, '-');
 const MARKER = `[MCP-DRAFT-LIFECYCLE-TEST-${STAMP}]`;
-
-function loadAuth() {
-    const keysFile = JSON.parse(fs.readFileSync(OAUTH_PATH, 'utf8'));
-    const keys = keysFile.installed || keysFile.web;
-    const credFile = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf8'));
-    const tokens = credFile.tokens || credFile;
-    const client = new OAuth2Client(keys.client_id, keys.client_secret, 'http://localhost:3000/oauth2callback');
-    client.setCredentials(tokens);
-    return client;
-}
 
 function buildRaw({ to, subject, body, from }) {
     const lines = [
@@ -51,8 +33,7 @@ function buildRaw({ to, subject, body, from }) {
         '',
         body,
     ];
-    return Buffer.from(lines.join('\r\n')).toString('base64')
-        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return encodeRaw(lines.join('\r\n'));
 }
 
 const results = [];
@@ -63,8 +44,7 @@ function record(name, ok, detail = '') {
 }
 
 async function main() {
-    const auth = loadAuth();
-    const gmail = google.gmail({ version: 'v1', auth });
+    const gmail = liveGmail();
     const SELF = process.env.GMAIL_TEST_ADDRESS || (await gmail.users.getProfile({ userId: 'me' })).data.emailAddress;
     if (!SELF) throw new Error('Gmail reported no address for the authenticated mailbox; set GMAIL_TEST_ADDRESS');
 

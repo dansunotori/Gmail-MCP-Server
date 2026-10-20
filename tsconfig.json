@@ -20,6 +20,7 @@
     "node_modules",
     "dist",
     "src/**/*.test.ts",
-    "src/**/test-fixtures.ts"
+    "src/**/test-fixtures.ts",
+    "src/gmail-test-fakes.ts"
   ]
 }

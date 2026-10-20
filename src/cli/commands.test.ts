@@ -5,8 +5,10 @@ import type { gmail_v1 } from 'googleapis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { EXTRACTION_TIMEOUT_MS } from '../attachment-text/extract.js';
+import { committedFixture as fixtureFile } from '../attachment-text/test-fixtures.js';
 import { CredentialsError } from '../auth.js';
 import { GmailRequestError } from '../gmail-sync.js';
+import { headerList, httpError } from '../gmail-test-fakes.js';
 import {
   COMMANDS,
   batchFetchWindowCommand,
@@ -32,26 +34,20 @@ import { HELP_WIDTH, ScopeError, UsageError, mapErrorToExitCode, parseCliArgs, r
 
 const b64 = (value: string) => Buffer.from(value, 'utf8').toString('base64');
 
-function httpError(status: number, reason?: string) {
-  return Object.assign(new Error(`HTTP ${status}`), {
-    response: { status, data: reason ? { error: { errors: [{ reason }] } } : {} },
-  });
-}
-
 const message = {
   id: 'm1',
   threadId: 't1',
   labelIds: ['INBOX'],
   payload: {
     mimeType: 'multipart/mixed',
-    headers: [
-      { name: 'Subject', value: 'Invoice' },
-      { name: 'From', value: 'Billing <billing@example.com>' },
-      { name: 'To', value: 'me@example.com' },
-      { name: 'Cc', value: 'boss@example.com' },
-      { name: 'Bcc', value: 'hidden@example.com' },
-      { name: 'Date', value: 'Mon, 07 Sep 2026 14:00:00 +0000' },
-    ],
+    headers: headerList({
+      Subject: 'Invoice',
+      From: 'Billing <billing@example.com>',
+      To: 'me@example.com',
+      Cc: 'boss@example.com',
+      Bcc: 'hidden@example.com',
+      Date: 'Mon, 07 Sep 2026 14:00:00 +0000',
+    }),
     parts: [
       { mimeType: 'text/plain', body: { data: b64('Plain body') } },
       { mimeType: 'text/html', body: { data: b64('<style>p{}</style><p>See <a href="https://x.test">this</a></p>') } },
@@ -172,15 +168,18 @@ describe('--output never overwrites a file the command writes or relies on', () 
     else process.env.GMAIL_CREDENTIALS_PATH = saved;
   });
 
-  it('refuses the saved credentials file for every command, including --auth, before signing in or calling Gmail', async () => {
-    const credentials = path.join(dir, 'credentials.json');
-    fs.writeFileSync(credentials, 'keep');
-    process.env.GMAIL_CREDENTIALS_PATH = credentials;
-    for (const argv of [
-      ['--auth', '-o', credentials],
-      ['in:inbox', '-o', credentials],
-      ['m1', '--output', credentials],
-    ]) {
+  // Saved credentials at file, by default credentials.json in the test directory; the tests
+  // check that they still read "keep".
+  const saveCredentials = (file = path.join(dir, 'credentials.json')) => {
+    fs.writeFileSync(file, 'keep');
+    process.env.GMAIL_CREDENTIALS_PATH = file;
+    return file;
+  };
+
+  // Each command line is refused for writing over the saved credentials, before it signs in,
+  // calls Gmail or prints anything.
+  const expectCredentialsRefused = async (argvs: string[][]) => {
+    for (const argv of argvs) {
       const { deps, out } = harness();
       const run = argv[0] === 'm1' ? getMessageCommand : searchCommand;
       await expect(run(argv, deps)).rejects.toThrow(/would overwrite the saved credentials/);
@@ -188,6 +187,23 @@ describe('--output never overwrites a file the command writes or relies on', () 
       expect(deps.gmail).not.toHaveBeenCalled();
       expect(out).toEqual([]);
     }
+  };
+
+  // gmail-batch-fetch-window into outputDir refuses --output link as a usage error before it calls Gmail.
+  const expectBatchOutputRefused = async (outputDir: string, link: string, name: string) => {
+    const { deps } = harness();
+    const failed = await batchFetchWindowCommand(['--watermark', WATERMARK, '--output-dir', outputDir, '-o', link], deps).catch(error => error);
+    expect(failed, name).toBeInstanceOf(UsageError);
+    expect(deps.gmail).not.toHaveBeenCalled();
+  };
+
+  it('refuses the saved credentials file for every command, including --auth, before signing in or calling Gmail', async () => {
+    const credentials = saveCredentials();
+    await expectCredentialsRefused([
+      ['--auth', '-o', credentials],
+      ['in:inbox', '-o', credentials],
+      ['m1', '--output', credentials],
+    ]);
     expect(fs.readFileSync(credentials, 'utf8')).toBe('keep');
   });
 
@@ -216,10 +232,7 @@ describe('--output never overwrites a file the command writes or relies on', () 
     ]) {
       const link = path.join(dir, name);
       fs.symlinkSync(reserved, link);
-      const { deps } = harness();
-      const failed = await batchFetchWindowCommand(['--watermark', WATERMARK, '--output-dir', outputDir, '-o', link], deps).catch(error => error);
-      expect(failed, name).toBeInstanceOf(UsageError);
-      expect(deps.gmail).not.toHaveBeenCalled();
+      await expectBatchOutputRefused(outputDir, link, name);
     }
   });
 
@@ -234,20 +247,12 @@ describe('--output never overwrites a file the command writes or relies on', () 
   it('follows a symlink before a later .. as the OS does, so link/../credentials.json is refused', async () => {
     const config = path.join(dir, 'config');
     fs.mkdirSync(path.join(config, 'subdir'), { recursive: true });
-    const credentials = path.join(config, 'credentials.json');
-    fs.writeFileSync(credentials, 'keep');
-    process.env.GMAIL_CREDENTIALS_PATH = credentials;
+    const credentials = saveCredentials(path.join(config, 'credentials.json'));
     const alias = path.join(dir, 'alias');
     fs.symlinkSync(path.join(config, 'subdir'), alias);
     // Lexically this is <dir>/credentials.json; the OS writes <dir>/config/credentials.json.
     const output = alias + path.sep + '..' + path.sep + 'credentials.json';
-    for (const argv of [['--auth', '-o', output], ['in:inbox', '-o', output]]) {
-      const { deps, out } = harness();
-      await expect(searchCommand(argv, deps)).rejects.toThrow(/would overwrite the saved credentials/);
-      expect(deps.signIn).not.toHaveBeenCalled();
-      expect(deps.gmail).not.toHaveBeenCalled();
-      expect(out).toEqual([]);
-    }
+    await expectCredentialsRefused([['--auth', '-o', output], ['in:inbox', '-o', output]]);
     expect(fs.readFileSync(credentials, 'utf8')).toBe('keep');
   });
 
@@ -269,9 +274,7 @@ describe('--output never overwrites a file the command writes or relies on', () 
 
   it.runIf(process.platform === 'darwin' || process.platform === 'win32')(
     'refuses a reserved file spelt with different capitals, which a case-insensitive disk treats as the same file', async () => {
-      const credentials = path.join(dir, 'credentials.json');
-      fs.writeFileSync(credentials, 'keep');
-      process.env.GMAIL_CREDENTIALS_PATH = credentials;
+      const credentials = saveCredentials();
       const { deps } = harness();
       await expect(searchCommand(['in:inbox', '-o', path.join(dir, 'CREDENTIALS.JSON')], deps))
         .rejects.toThrow(/would overwrite the saved credentials/);
@@ -280,16 +283,10 @@ describe('--output never overwrites a file the command writes or relies on', () 
   );
 
   it('refuses a hard link to a reserved file, which names the same file under another path', async () => {
-    const credentials = path.join(dir, 'credentials.json');
-    fs.writeFileSync(credentials, 'keep');
-    process.env.GMAIL_CREDENTIALS_PATH = credentials;
+    const credentials = saveCredentials();
     const credentialsLink = path.join(dir, 'innocent.json');
     fs.linkSync(credentials, credentialsLink);
-    for (const argv of [['--auth', '-o', credentialsLink], ['in:inbox', '-o', credentialsLink]]) {
-      const { deps } = harness();
-      await expect(searchCommand(argv, deps)).rejects.toThrow(/would overwrite the saved credentials/);
-      expect(deps.signIn).not.toHaveBeenCalled();
-    }
+    await expectCredentialsRefused([['--auth', '-o', credentialsLink], ['in:inbox', '-o', credentialsLink]]);
     expect(fs.readFileSync(credentials, 'utf8')).toBe('keep');
 
     const outputDir = path.join(dir, 'window');
@@ -301,10 +298,7 @@ describe('--output never overwrites a file the command writes or relies on', () 
       fs.writeFileSync(reserved, 'keep');
       const link = path.join(dir, `${name}-link.json`);
       fs.linkSync(reserved, link);
-      const { deps } = harness();
-      const failed = await batchFetchWindowCommand(['--watermark', WATERMARK, '--output-dir', outputDir, '-o', link], deps).catch(error => error);
-      expect(failed, name).toBeInstanceOf(UsageError);
-      expect(deps.gmail).not.toHaveBeenCalled();
+      await expectBatchOutputRefused(outputDir, link, name);
     }
   });
 
@@ -435,6 +429,15 @@ describe('gmail-search', () => {
 });
 
 describe('gmail-get-message', () => {
+  // A Gmail whose messages.get returns data.
+  const gmailReturning = (data: unknown) => ({ users: { messages: { get: async () => ({ data }) } } }) as unknown as gmail_v1.Gmail;
+
+  // The message with a plain part that only stands in for the HTML part.
+  const stubbed = { ...message, payload: { ...message.payload, parts: [
+    { mimeType: 'text/plain', body: { data: b64('Plain text version not available.') } },
+    { mimeType: 'text/html', body: { data: b64('<p>Real <b>content</b></p>') } },
+  ] } };
+
   it('prints the message fields with the plain-text body by default', async () => {
     const { deps, json } = harness();
     await getMessageCommand(['m1'], deps);
@@ -458,7 +461,7 @@ describe('gmail-get-message', () => {
 
   it('prints htmlBody null for a text-only message, whatever the format', async () => {
     const textOnly = { ...message, payload: { mimeType: 'text/plain', body: { data: b64('Just text') } } };
-    const gmail = { users: { messages: { get: async () => ({ data: textOnly }) } } } as unknown as gmail_v1.Gmail;
+    const gmail = gmailReturning(textOnly);
     for (const format of ['text', 'markdown']) {
       const { deps, json } = harness(gmail);
       await getMessageCommand(['m1', '--format', format], deps);
@@ -493,19 +496,14 @@ describe('gmail-get-message', () => {
   });
 
   it('prints the converted HTML part and bodySource html-over-stub when the plain part is a stub', async () => {
-    const stubbed = { ...message, payload: { ...message.payload, parts: [
-      { mimeType: 'text/plain', body: { data: b64('Plain text version not available.') } },
-      { mimeType: 'text/html', body: { data: b64('<p>Real <b>content</b></p>') } },
-    ] } };
-    const gmail = { users: { messages: { get: async () => ({ data: stubbed }) } } } as unknown as gmail_v1.Gmail;
-    const { deps, json } = harness(gmail);
+    const { deps, json } = harness(gmailReturning(stubbed));
     await getMessageCommand(['m1'], deps);
     expect(json()).toMatchObject({ body: 'Real content', bodySource: 'html-over-stub' });
   });
 
   it('prints the Message-ID header as messageIdHeader, null when the message has none', async () => {
     const withHeader = { ...message, payload: { ...message.payload, headers: [...message.payload.headers, { name: 'Message-ID', value: '<inv.1@example.com>' }] } };
-    const gmail = { users: { messages: { get: async () => ({ data: withHeader }) } } } as unknown as gmail_v1.Gmail;
+    const gmail = gmailReturning(withHeader);
     const first = harness(gmail);
     await getMessageCommand(['m1'], first.deps);
     expect(first.json().messageIdHeader).toBe('<inv.1@example.com>');
@@ -518,7 +516,7 @@ describe('gmail-get-message', () => {
   it('prints calendarMethod and calendarReply for a calendar reply, and neither for other mail', async () => {
     const reply = ['BEGIN:VCALENDAR', 'METHOD:REPLY', 'BEGIN:VEVENT', 'UID:u1', 'ATTENDEE;PARTSTAT=DECLINED:mailto:bob@example.com', 'END:VEVENT', 'END:VCALENDAR', ''].join('\r\n');
     const withCalendar = { ...message, payload: { ...message.payload, parts: [...message.payload.parts, { mimeType: 'text/calendar', body: { data: b64(reply) } }] } };
-    const gmail = { users: { messages: { get: async () => ({ data: withCalendar }) } } } as unknown as gmail_v1.Gmail;
+    const gmail = gmailReturning(withCalendar);
     const calendar = harness(gmail);
     await getMessageCommand(['m1'], calendar.deps);
     expect(calendar.json()).toMatchObject({ calendarMethod: 'REPLY', calendarReply: { attendee: 'bob@example.com', partstat: 'DECLINED' } });
@@ -536,19 +534,14 @@ describe('gmail-get-message', () => {
   });
 
   it('keeps html-over-stub for markdown when the HTML part is taken over a stub', async () => {
-    const stubbed = { ...message, payload: { ...message.payload, parts: [
-      { mimeType: 'text/plain', body: { data: b64('Plain text version not available.') } },
-      { mimeType: 'text/html', body: { data: b64('<p>Real <b>content</b></p>') } },
-    ] } };
-    const gmail = { users: { messages: { get: async () => ({ data: stubbed }) } } } as unknown as gmail_v1.Gmail;
-    const { deps, json } = harness(gmail);
+    const { deps, json } = harness(gmailReturning(stubbed));
     await getMessageCommand(['m1', '--format', 'markdown'], deps);
     expect(json()).toMatchObject({ body: 'Real **content**', bodySource: 'html-over-stub' });
   });
 
   it('falls back to the text body for markdown when the message has no HTML', async () => {
     const textOnly = { ...message, payload: { mimeType: 'text/plain', body: { data: b64('Just *text*') } } };
-    const gmail = { users: { messages: { get: async () => ({ data: textOnly }) } } } as unknown as gmail_v1.Gmail;
+    const gmail = gmailReturning(textOnly);
     const { deps, json } = harness(gmail);
     await getMessageCommand(['m1', '--format', 'markdown'], deps);
     expect(json()).toMatchObject({ body: 'Just *text*', bodySource: 'text' });
@@ -833,7 +826,6 @@ describe('gmail-create-draft', () => {
 // These tests fork real extraction workers, which take seconds each on a slow CI runner, so they
 // get the worker's own limit rather than vitest's five-second default.
 describe('gmail-get-attachment-text', { timeout: EXTRACTION_TIMEOUT_MS }, () => {
-  const fixtureFile = (name: string) => fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'attachment-text', '__fixtures__', name));
   const attachmentGmail = (filename: string, mimeType: string, bytes: Buffer) => ({ users: { messages: {
     attachments: { get: vi.fn(async () => ({ data: { data: bytes.toString('base64url') } })) },
     get: vi.fn(async () => ({ data: { payload: { mimeType: 'multipart/mixed', parts: [
@@ -970,6 +962,14 @@ function threadGmail() {
   return { gmail: { users: { threads: { get, list } } } as unknown as gmail_v1.Gmail, get, list };
 }
 
+// Each command line is refused as a usage error (exit 2) by command, run against threadGmail.
+async function expectUsageErrors(command: (argv: string[], deps: CliDeps) => Promise<unknown>, argvs: string[][]) {
+  for (const argv of argvs) {
+    const failed = await command(argv, harness(threadGmail().gmail).deps).catch(error => error);
+    expect(mapErrorToExitCode(failed), argv.join(' ')).toBe(2);
+  }
+}
+
 describe('gmail-get-thread', () => {
   it('prints get_thread\'s result, the stubbed message with its HTML part as text and bodySource', async () => {
     const fake = threadGmail();
@@ -988,10 +988,7 @@ describe('gmail-get-thread', () => {
     const fake = threadGmail();
     await getThreadCommand(['th1', '--format', 'minimal'], harness(fake.gmail).deps);
     expect(fake.get).toHaveBeenCalledWith({ userId: 'me', id: 'th1', format: 'minimal' });
-    for (const argv of [[], ['th1', '--format', 'raw'], ['th1', 'extra']]) {
-      const failed = await getThreadCommand(argv, harness(threadGmail().gmail).deps).catch(error => error);
-      expect(mapErrorToExitCode(failed), argv.join(' ')).toBe(2);
-    }
+    await expectUsageErrors(getThreadCommand, [[], ['th1', '--format', 'raw'], ['th1', 'extra']]);
   });
 });
 
@@ -1014,8 +1011,7 @@ describe('gmail-get-inbox-with-threads', () => {
     expect(fake.list).toHaveBeenCalledWith({ userId: 'me', q: 'is:unread', maxResults: 5 });
     expect(json().threads[0]).toMatchObject({ threadId: 'th1', messageCount: 2 });
     expect(json().threads[0]).not.toHaveProperty('messages');
-    const failed = await getInboxWithThreadsCommand(['--max-results', '0'], harness(threadGmail().gmail).deps).catch(error => error);
-    expect(mapErrorToExitCode(failed)).toBe(2);
+    await expectUsageErrors(getInboxWithThreadsCommand, [['--max-results', '0']]);
   });
 });
 
@@ -1037,10 +1033,7 @@ describe('gmail-list-inbox-threads', () => {
     const fake = threadGmail();
     await listInboxThreadsCommand(['--query', 'is:unread', '--max-results', '5'], harness(fake.gmail).deps);
     expect(fake.list).toHaveBeenCalledWith({ userId: 'me', q: 'is:unread', maxResults: 5 });
-    for (const argv of [['--max-results', '0'], ['extra']]) {
-      const failed = await listInboxThreadsCommand(argv, harness(threadGmail().gmail).deps).catch(error => error);
-      expect(mapErrorToExitCode(failed), argv.join(' ')).toBe(2);
-    }
+    await expectUsageErrors(listInboxThreadsCommand, [['--max-results', '0'], ['extra']]);
   });
 });
 

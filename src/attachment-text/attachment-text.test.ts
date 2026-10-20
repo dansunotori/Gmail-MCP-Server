@@ -1,15 +1,10 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { gmail_v1 } from 'googleapis';
 import { describe, expect, it, vi } from 'vitest';
 import * as XLSX from 'xlsx';
 import { getAttachmentText } from './attachment-text.js';
 import { EXTRACTION_TIMEOUT_MS } from './extract.js';
 import { AttachmentFileError, MAX_TEXT_LENGTH } from './formats.js';
-
-const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '__fixtures__');
-const fixture = (name: string) => readFileSync(path.join(fixtures, name));
+import { committedFixture as fixture } from './test-fixtures.js';
 
 type Part = { filename: string; mimeType: string; attachmentId: string; bytes: Buffer };
 

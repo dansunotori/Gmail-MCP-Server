@@ -1,13 +1,7 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
 import { extractSpreadsheet } from './spreadsheet.js';
-import { cyrillicBiff5 } from './test-fixtures.js';
-
-const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '__fixtures__');
-const fixture = (name: string) => readFileSync(path.join(fixtures, name));
+import { committedFixture as fixture, cyrillicBiff5 } from './test-fixtures.js';
 
 describe('extractSpreadsheet', () => {
   describe('two-sheet .xlsx', () => {

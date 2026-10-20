@@ -1,10 +1,10 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // @ts-expect-error -- plain ESM script without type declarations; its exports are typed by their use here.
 import { everInRoadmapHistory, importPrompts } from './import-prompts.mjs';
+import { fixtureRepo, gitIn } from './git-fixture.js';
 
 const ROADMAP = '# Roadmap\n\nWork to implement, in order.\n\n## 7. Script to import prompts\n\nBody.\n\n## 12. Another item\n\nBody.\n';
 
@@ -91,17 +91,10 @@ describe('importPrompts', () => {
 
 describe('everInRoadmapHistory', () => {
   let repo: string;
-  // The fixture repository is set up without any repository location the test run inherits
-  // (git sets GIT_DIR and others when it runs a hook).
-  const isolated = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, env: isolated, stdio: 'pipe' });
+  const git = (...args: string[]) => gitIn(repo)(...args);
 
   beforeEach(() => {
-    repo = fs.mkdtempSync(path.join(os.tmpdir(), 'import-prompts-repo-'));
-    git('init', '-q');
-    git('config', 'user.email', 'test@example.com');
-    git('config', 'user.name', 'Test');
-    git('config', 'commit.gpgsign', 'false');
+    repo = fixtureRepo('import-prompts-repo-');
   });
 
   afterEach(() => {

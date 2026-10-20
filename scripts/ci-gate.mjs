@@ -18,8 +18,8 @@
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { failedSteps, parseRepo } from './ci-watch.mjs';
+import { runDirectly, sleep } from './script-support.mjs';
 
 export const STOP_WAIT_SECONDS = 420;
 export const COMMAND_TIMEOUT_SECONDS = 30;
@@ -144,11 +144,7 @@ export function hookMain(mode, input, { runIn, sleep, now, projectDir }) {
 
 const runIn = cwd => (command, args) => execFileSync(command, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: COMMAND_TIMEOUT_SECONDS * 1000 });
 
-const sleep = seconds => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, seconds * 1000);
-
-// Run directly (not imported by the tests). Node reports the module by its real path, so the
-// script path is resolved the same way.
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (runDirectly(import.meta.url)) {
   let input = {};
   try {
     input = JSON.parse(fs.readFileSync(0, 'utf8'));

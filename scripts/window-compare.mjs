@@ -9,8 +9,8 @@
 import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { isDeepStrictEqual, promisify } from 'util';
+import { runDirectly } from './script-support.mjs';
 
 const USAGE = 'usage: npm run window:compare -- <output-dir> [--limit N]';
 
@@ -106,8 +106,7 @@ async function getMessage(id) {
   }
 }
 
-// Run directly (not imported by the tests).
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (runDirectly(import.meta.url)) {
   try {
     const { outputDir, limit } = parseArgs(process.argv.slice(2));
     const report = await compareWindow({ outputDir, limit, readMessage: getMessage });

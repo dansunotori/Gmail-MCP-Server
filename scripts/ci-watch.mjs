@@ -5,8 +5,7 @@
 // passes, 1 when one does not (naming the run and its failed jobs and steps), 2 when HEAD is
 // detached or not pushed to origin, no run appears in time, or git or gh fails.
 import { execFileSync, spawnSync } from 'child_process';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
+import { runDirectly, sleep } from './script-support.mjs';
 
 // owner/name of a GitHub remote URL (https, ssh or scp-like), or null for any other host.
 export function parseRepo(url) {
@@ -105,10 +104,6 @@ const watch = (id, repo) => {
   if (result.error) throw result.error;
 };
 
-const sleep = seconds => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, seconds * 1000);
-
-// Run directly (not imported by the tests). Node reports the module by its real path, so the
-// script path is resolved the same way.
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (runDirectly(import.meta.url)) {
   process.exitCode = ciWatch({ run, watch, sleep, log: line => process.stderr.write(`${line}\n`) });
 }

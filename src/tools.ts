@@ -26,7 +26,8 @@ export const InlineImageSchema = strictInput({
 const MimeTypeSchema = z.enum(['text/plain', 'text/html', 'multipart/alternative']).optional()
   .describe("Email content type. Leave it out to follow the bodies given: text/html for htmlBody alone, multipart/alternative for body and htmlBody, text/plain for body alone. text/plain beside htmlBody is refused, since it would drop the HTML.");
 
-export const SendEmailSchema = strictInput({
+// The message fields send_email, draft_email and update_draft share.
+const EmailFields = {
   to: z.array(z.string()).describe("List of recipient email addresses"),
   subject: z.string().describe("Email subject"),
   body: z.string().describe("Email body content (used for text/plain or when htmlBody not provided)"),
@@ -39,7 +40,9 @@ export const SendEmailSchema = strictInput({
   inReplyTo: z.string().optional().describe("Message ID being replied to"),
   attachments: z.array(z.string()).optional().describe("List of file paths to attach to the email"),
   inlineImages: z.array(InlineImageSchema).optional().describe("Images embedded inline in the HTML body, each referenced from htmlBody as <img src=\"cid:CID\">. Requires htmlBody to be set."),
-});
+};
+
+export const SendEmailSchema = strictInput(EmailFields);
 
 export const ReadEmailSchema = strictInput({
   messageId: z.string().describe("ID of the email message to retrieve"),
@@ -72,18 +75,7 @@ export const DeleteDraftSchema = strictInput({
 
 export const UpdateDraftSchema = strictInput({
   draftId: z.string().describe("ID of the draft to update"),
-  to: z.array(z.string()).describe("List of recipient email addresses"),
-  subject: z.string().describe("Email subject"),
-  body: z.string().describe("Email body content (used for text/plain or when htmlBody not provided)"),
-  from: z.string().optional().describe("Sender email address (must be a configured send-as alias in Gmail settings). Defaults to account's default send-as address if not specified."),
-  htmlBody: z.string().optional().describe("HTML version of the email body"),
-  mimeType: MimeTypeSchema,
-  cc: z.array(z.string()).optional().describe("List of CC recipients"),
-  bcc: z.array(z.string()).optional().describe("List of BCC recipients"),
-  threadId: z.string().optional().describe("Thread ID to reply to"),
-  inReplyTo: z.string().optional().describe("Message ID being replied to"),
-  attachments: z.array(z.string()).optional().describe("List of file paths to attach to the email"),
-  inlineImages: z.array(InlineImageSchema).optional().describe("Images embedded inline in the HTML body, each referenced from htmlBody as <img src=\"cid:CID\">. Requires htmlBody to be set."),
+  ...EmailFields,
 });
 
 export const ListEmailLabelsSchema = strictInput({}).describe("Retrieves all available Gmail labels");
@@ -379,10 +371,7 @@ const CrossCheckRanSchema = z.object({
   errors: z.array(CrossCheckErrorSchema),
   counts: CrossCheckCountsSchema,
   // The same four counts, also at the top level of crossCheck.
-  window: z.number().int().min(0),
-  spam: z.number().int().min(0),
-  trash: z.number().int().min(0),
-  anywhere: z.number().int().min(0),
+  ...CrossCheckCountsSchema.shape,
 }).strict();
 
 // The shape when no cross-check listing ran (`cross_check: false`, or a truncated window).

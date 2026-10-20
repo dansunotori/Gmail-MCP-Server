@@ -1,8 +1,16 @@
-// Fixtures built in code for the attachment-text tests, where a committed file would hide what
-// the bytes are.
+// Fixtures for the attachment-text tests: the committed files in __fixtures__, and those built
+// in code, where a committed file would hide what the bytes are.
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as XLSX from 'xlsx';
 import './spreadsheet.js';
+
+const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '__fixtures__');
+
+// The bytes of a committed fixture file, by its name in __fixtures__.
+export const committedFixture = (name: string): Buffer => readFileSync(path.join(FIXTURES, name));
 
 // A BIFF5 workbook whose text is Windows-1251, as an old Russian Excel saves it. SheetJS cannot
 // write one (its BIFF5 writer replaces Cyrillic with "_"), so it writes a Latin placeholder of

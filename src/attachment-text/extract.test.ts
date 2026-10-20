@@ -1,16 +1,10 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
 import { EXTRACTION_TIMEOUT_MS, extractInWorker, sanitisedEnv } from './extract.js';
 import { AttachmentFileError } from './formats.js';
-import { cyrillicBiff5, pdfWithDanglingPage } from './test-fixtures.js';
-
-const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '__fixtures__');
-const fixture = (name: string) => readFileSync(path.join(fixtures, name));
+import { committedFixture as fixture, cyrillicBiff5, pdfWithDanglingPage } from './test-fixtures.js';
 
 // Each test forks a real extraction worker, which takes seconds on a slow CI runner, so the
 // block gets the worker's own limit rather than vitest's five-second default.

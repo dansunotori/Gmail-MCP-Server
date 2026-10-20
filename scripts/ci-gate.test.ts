@@ -3,11 +3,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
 import { ciGate, COMMAND_TIMEOUT_SECONDS, hookMain, STOP_WAIT_SECONDS } from './ci-gate.mjs';
+import { exited, fakeRun, ghUnauthenticated, REPO, SHA, successive } from './ci-test-support.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-const SHA = '90d1a527230920b4a366bd91a00cacb33ed831eb';
-const REPO = 'owner/repo';
 const RUN_LIST = `gh run list --repo ${REPO} --commit ${SHA} --branch main --json databaseId,workflowName,event,status,conclusion,url`;
 
 type Run = { databaseId: number; workflowName: string; event: string; status: string; conclusion: string; url: string };
@@ -16,9 +15,6 @@ const passed = (id: number, extra: Partial<Run> = {}): Run => ({ databaseId: id,
 const failed = (id: number, extra: Partial<Run> = {}): Run => passed(id, { conclusion: 'failure', ...extra });
 const running = (id: number): Run => passed(id, { status: 'in_progress', conclusion: '' });
 
-// A failed command as execFileSync reports it: `status` is the exit code, null when killed.
-const exited = (status: number | null, message: string) => Object.assign(new Error(message), { status });
-
 // A fake world: git and gh answer by command line. `runLists` are the successive answers of
 // `gh run list`, the last one repeating; `jobs` is what `gh run view --json jobs` answers per run.
 // The clock advances by each sleep and by `listSeconds` per `gh run list`.
@@ -26,16 +22,9 @@ function world(options: { branch?: string | null; originBranch?: boolean; ahead?
   const { branch = 'main', originBranch = true, ahead = 0, origin = 'https://github.com/owner/repo.git', runLists = [[passed(7)]], jobs = {}, listSeconds = 0 } = options;
   const calls: string[] = [];
   let sleeps = 0;
-  let listed = 0;
   let clock = 0;
-  const run = (command: string, args: string[]) => {
-    const line = [command, ...args].join(' ');
-    calls.push(line);
-    if (line === 'git rev-parse HEAD') return `${SHA}\n`;
-    if (line === 'git symbolic-ref --quiet --short HEAD') {
-      if (branch === null) throw exited(1, 'git symbolic-ref exited 1');
-      return `${branch}\n`;
-    }
+  const nextRunList = successive(runLists);
+  const run = fakeRun(calls, branch, line => {
     if (line === `git rev-parse --verify --quiet refs/remotes/origin/${branch}`) {
       if (!originBranch) throw exited(1, 'git rev-parse exited 1');
       return 'abc\n';
@@ -43,15 +32,13 @@ function world(options: { branch?: string | null; originBranch?: boolean; ahead?
     if (line === `git rev-list --count refs/remotes/origin/${branch}..HEAD`) return `${ahead}\n`;
     if (line === 'git remote get-url origin') return `${origin}\n`;
     if (line === RUN_LIST) {
-      const answer = runLists[Math.min(listed, runLists.length - 1)];
-      listed++;
       clock += listSeconds * 1000;
-      return JSON.stringify(answer);
+      return JSON.stringify(nextRunList());
     }
     const view = line.match(/^gh run view (\d+) --repo owner\/repo --json jobs$/);
     if (view) return JSON.stringify({ jobs: jobs[view[1]] ?? [] });
     throw new Error(`unexpected command: ${line}`);
-  };
+  });
   const sleep = (seconds: number) => {
     sleeps++;
     clock += seconds * 1000;
@@ -148,11 +135,7 @@ describe('ci-gate.mjs', () => {
 
   it('blocks when git or gh cannot answer, telling the agent to repair the access', () => {
     const w = world();
-    const failing = (command: string, args: string[]) => {
-      if (command === 'gh') throw new Error('gh: authentication required');
-      return w.run(command, args);
-    };
-    const result = ciGate({ ...w, run: failing });
+    const result = ciGate({ ...w, run: ghUnauthenticated(w.run) });
     expect(result.block).toBe(true);
     expect(result.message).toContain('gh: authentication required');
     expect(result.message).toContain('gh auth status');

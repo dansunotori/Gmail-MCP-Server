@@ -3,7 +3,7 @@
  */
 
 import emailAddresses from "email-addresses";
-import { selectBody, type BodySource } from "./message-body.js";
+import { headerValue, selectBody, type BodySource } from "./message-body.js";
 
 // Types
 export interface ParsedAddress {
@@ -90,9 +90,7 @@ export function gmailMessageToJson(
     emailContent: { text: string; html: string },
     attachments: EmailAttachment[]
 ): EmailJson {
-    const headers = message.payload?.headers || [];
-    const getHeader = (name: string) =>
-        headers.find((h: any) => h.name?.toLowerCase() === name.toLowerCase())?.value || "";
+    const getHeader = (name: string) => headerValue(message.payload?.headers, name);
 
     const dateStr = getHeader("date");
     let isoDate = "";
@@ -151,9 +149,7 @@ export function emailToTxt(
     emailContent: { text: string; html: string },
     attachments: EmailAttachment[]
 ): string {
-    const headers = message.payload?.headers || [];
-    const getHeader = (name: string) =>
-        headers.find((h: any) => h.name?.toLowerCase() === name.toLowerCase())?.value || "";
+    const getHeader = (name: string) => headerValue(message.payload?.headers, name);
 
     const from = getHeader("from");
     const to = getHeader("to");

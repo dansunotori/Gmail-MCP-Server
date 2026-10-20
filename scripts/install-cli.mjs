@@ -6,6 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { runDirectly } from './script-support.mjs';
 
 // Links each bin into binDir and returns true when every one was linked. A link is replaced
 // only when it already points into this checkout; a link to another checkout or installation,
@@ -43,9 +44,7 @@ export function linkBins({ root, bin, binDir, log = console.log, error = console
   return ok;
 }
 
-// Run directly (not imported by the tests). Node reports the module by its real path, so the
-// script path is resolved the same way; a symlinked checkout would otherwise do nothing.
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (runDirectly(import.meta.url)) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const { bin } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'));
   process.exit(linkBins({ root, bin, binDir: path.join(os.homedir(), '.local', 'bin') }) ? 0 : 1);

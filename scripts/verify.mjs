@@ -3,8 +3,7 @@
 // npm script in order, stopping at the first that fails with its exit code. The CLI rebuild
 // comes last, since the CLIs are links into dist and a change not rebuilt is not what they run.
 import { spawnSync } from 'child_process';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
+import { runDirectly } from './script-support.mjs';
 
 export const STEPS = ['test', 'typecheck', 'lockfile:lint', 'roadmap:check', 'install-cli'];
 
@@ -29,8 +28,6 @@ const npmRun = step => {
   return result.status;
 };
 
-// Run directly (not imported by the tests). Node reports the module by its real path, so the
-// script path is resolved the same way.
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (runDirectly(import.meta.url)) {
   process.exitCode = runSteps(STEPS, npmRun, line => process.stderr.write(`${line}\n`));
 }

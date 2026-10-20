@@ -18,6 +18,7 @@ import {
   toGmailRequestError,
   withGmailRetry,
 } from './gmail-sync.js';
+import { httpError } from './gmail-test-fakes.js';
 import { hasScope } from './scopes.js';
 import {
   BatchGetGmailIndexMetadataSchema,
@@ -300,15 +301,6 @@ describe('Gmail sync server wiring', () => {
     expect(source).toContain('ListGmailMessageIdsSchema.parse(args ?? {})');
   });
 });
-
-function httpError(status: number, reason?: string) {
-  return Object.assign(new Error(`HTTP ${status}`), {
-    response: {
-      status,
-      data: reason ? { error: { errors: [{ reason }] } } : {},
-    },
-  });
-}
 
 describe('GmailRequestError helpers', () => {
   it('extracts status and reason from a googleapis-shaped error', () => {

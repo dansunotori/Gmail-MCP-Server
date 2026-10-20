@@ -11,6 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { fromMarkdown } from 'mdast-util-from-markdown';
+import { runDirectly } from './script-support.mjs';
 
 const PROMPT_FILE = /^gmail-.+\.md$/;
 
@@ -82,8 +83,7 @@ export function everInRoadmapHistory(repoRoot, line) {
   return out.trim() !== '';
 }
 
-// Run directly (not imported by the tests).
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (runDirectly(import.meta.url)) {
   const promptsDir = process.argv[2];
   if (!promptsDir || process.argv.length > 3) {
     console.error('usage: node scripts/import-prompts.mjs <prompts-dir>');

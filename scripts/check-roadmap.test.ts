@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 // @ts-expect-error -- plain ESM script without type declarations; its exports are typed by their use here.
 import { applyToolEdit, findCompletionLanguage } from './check-roadmap.mjs';
+import { fixtureRepo, gitIn, isolatedEnv as isolated } from './git-fixture.js';
 
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-roadmap.mjs');
 const phrases = (markdown: string) => findCompletionLanguage(markdown).map((finding: { phrase: string }) => finding.phrase);
@@ -159,9 +160,7 @@ describe('check-roadmap.mjs', () => {
 
 describe('check-roadmap.mjs --staged', () => {
   let repo: string;
-  // The fixture repository is driven without any repository location the run inherits.
-  const isolated = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, env: isolated, stdio: 'pipe' });
+  const git = (...args: string[]) => gitIn(repo)(...args);
   const staged = (cwd = repo) => {
     try {
       execFileSync('node', [script, '--staged'], { cwd, env: isolated, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
@@ -173,8 +172,7 @@ describe('check-roadmap.mjs --staged', () => {
   };
 
   beforeEach(() => {
-    repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'check-roadmap-repo-')));
-    git('init', '-q');
+    repo = fixtureRepo('check-roadmap-repo-');
   });
   afterEach(() => {
     fs.rmSync(repo, { recursive: true, force: true });

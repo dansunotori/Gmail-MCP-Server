@@ -1,3 +1,23 @@
+# Gmail MCP Server
+
+## Branch Workflow
+Single branch: work lands on `main` directly, and CI must pass after every push: `npm run ci:watch` watches the CI runs of the pushed `HEAD` to the end and exits with their result. `scripts/ci-gate.mjs` holds agents to it as this project's Stop hook: a turn cannot end while `HEAD`'s branch has commits not pushed to origin, pushed `HEAD` has no CI run, its runs are still going after seven minutes, any of them failed, or `git` or `gh` cannot answer; the message names the failed steps and the commands that read, rerun or fix them, and the gate keeps blocking until that is resolved. As the SessionStart hook it puts the same findings in a new session's context. Before each commit run `npm run verify`: it runs `npm test`, `npm run typecheck`, `npm run lockfile:lint`, `npm run roadmap:check` and `npm run install-cli` in that order and stops at the first failure, naming it. See `.claude/skills/pr-review-sop/SKILL.md` for full SOP.
+
+## PR & Issue Review
+Mandatory security audit on every PR before presenting. See `.claude/skills/pr-review-sop/SKILL.md`.
+
+## Roadmap
+`ROADMAP.md` lists work still to do; an item leaves it when its work is done. `scripts/check-roadmap.mjs` refuses wording that reports finished work there, in CI (`npm run roadmap:check`), as this project's PreToolUse hook on edits to the file, and on every `git commit` run through Claude Code against the target repository's staged and working copies, refusing a commit that is not one plain `git [-c name=value] [-C dir] commit` command (both hooks in `.claude/settings.json`; `npm run roadmap:check:staged` runs the staged check by hand). Prompts written for this server elsewhere (`gmail-*.md`) are added with `node scripts/import-prompts.mjs <prompts-dir>`, which skips any prompt imported before.
+
+## No Changelogs, History, Reports or Self-Praise in the Repository
+Every file and code comment describes the code as it is now. Git history records how it got there; chat and PR comments carry reports.
+- No changelogs: no "added", "fixed", "new", "now", "updated" or version notes, and no CHANGELOG file.
+- No history: no "previously", "used to", "no longer", "originally", "ported from", "kept for compatibility", dates of changes, or issue, PR or commit references describing past work. A comment never names a past bug; it states the constraint the code keeps.
+- No reports: no live-check results, test counts, audit findings or "verified" or "done" notes. A finished roadmap item is deleted, never marked done. Results go to the user in chat, or to a PR comment.
+- No self-praise: no "powerful", "robust", "comprehensive", "seamless", "enhanced" or similar.
+- When behaviour changes, rewrite the passage that describes it so it states the new behaviour; never append a note about the change. A roadmap item or prompt that asks for a "changed" note is satisfied by describing the current behaviour.
+- Commit messages are the place for what changed and why.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
@@ -44,14 +64,3 @@ This project is indexed by GitNexus as **Gmail-MCP-Server**.
 <!-- gitnexus:end -->
 
 GitNexus generates `.claude/skills/gitnexus/` locally. The directory is intentionally untracked; when it is absent, use installed user-level GitNexus skills or the CLI and MCP commands above.
-
-## No Changelogs, History, Reports or Self-Praise in the Repository
-
-Every file and code comment describes the code as it is now. Git history records how it got there; chat and PR comments carry reports.
-
-- No changelogs: no "added", "fixed", "new", "now", "updated" or version notes, and no CHANGELOG file.
-- No history: no "previously", "used to", "no longer", "originally", "ported from", "kept for compatibility", dates of changes, or issue, PR or commit references describing past work. A comment never names a past bug; it states the constraint the code keeps.
-- No reports: no live-check results, test counts, audit findings or "verified" or "done" notes. A finished roadmap item is deleted, never marked done. Results go to the user in chat, or to a PR comment.
-- No self-praise: no "powerful", "robust", "comprehensive", "seamless", "enhanced" or similar.
-- When behaviour changes, rewrite the passage that describes it so it states the new behaviour; never append a note about the change. A roadmap item or prompt that asks for a "changed" note is satisfied by describing the current behaviour.
-- Commit messages are the place for what changed and why.

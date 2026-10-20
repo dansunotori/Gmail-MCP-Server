@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Refuses text reporting finished work in ROADMAP.md, which holds open items only (CLAUDE.md:
+// Refuses text reporting finished work in ROADMAP.md, which holds open items only (AGENTS.md:
 // no changelogs, history or reports in the repository). A word list over the file's prose;
 // code blocks and inline code spans are not checked.
 //
@@ -15,8 +15,8 @@
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { fromMarkdown } from 'mdast-util-from-markdown';
+import { runDirectly } from './script-support.mjs';
 
 const ROADMAP = 'ROADMAP.md';
 
@@ -279,8 +279,6 @@ function main(args) {
   return 1;
 }
 
-// Run directly (not imported by the tests). Node reports the module by its real path, so the
-// script path is resolved the same way.
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (runDirectly(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }
