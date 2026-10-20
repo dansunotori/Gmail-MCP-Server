@@ -193,6 +193,25 @@ describe('readEmail', () => {
     expect(formatReadEmailText(failed).endsWith('\n\nHTML part not read: body-part-fetch: 404')).toBe(true);
   });
 
+  it('fetches a deferred plain part once and delivers it as the body, as the window fetch does', async () => {
+    const deferredPlain = { id: 'dp', threadId: 't', payload: {
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/plain', body: { attachmentId: 'plain-1', size: 700000 } },
+        { mimeType: 'text/html', body: { attachmentId: 'html-1', size: 900000 } },
+      ],
+    } };
+    const fake = fakeGmail({ messages: { dp: deferredPlain }, attachments: {
+      'plain-1': Buffer.from('Long plain body').toString('base64url'),
+      'html-1': Buffer.from('<p>Long HTML body</p>').toString('base64url'),
+    } });
+    const result = await readEmail(fake.gmail, { messageId: 'dp' });
+    expect(result).toMatchObject({
+      text: 'Long plain body', html: '<p>Long HTML body</p>', body: 'Long plain body', bodySource: 'text', htmlBody: '<p>Long HTML body</p>',
+    });
+    expect(fake.attachmentsGet.mock.calls.map(([params]) => params.id).sort()).toEqual(['html-1', 'plain-1']);
+  });
+
   it('delivers the HTML part converted to text when the plain part is a stub', async () => {
     const stubbed = { id: 's', threadId: 't', payload: {
       mimeType: 'multipart/alternative',

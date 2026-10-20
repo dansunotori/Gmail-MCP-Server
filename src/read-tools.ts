@@ -212,10 +212,11 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
     const { subject, from, to, cc, bcc, date } = extractHeaders(response.data.payload);
     const messageIdHeader = optionalHeader(response.data.payload?.headers, 'Message-ID');
     const threadId = response.data.threadId || '';
-    const { text, html } = extractEmailContent(response.data.payload as GmailMessagePart || {});
     const attachments = extractAttachments(response.data.payload as GmailMessagePart);
+    // The window fetch's own reader, so a part Gmail defers is fetched once and serves both
+    // body and htmlBody.
+    const { text, html, htmlBody, htmlBodyError } = await resolveMessageBody(gmail, response.data.id || args.messageId, response.data.payload as MessagePart);
     const { body, bodySource } = selectBody(text, html, 'keep-html');
-    const { htmlBody, htmlBodyError } = await resolveMessageBody(gmail, response.data.id || args.messageId, response.data.payload as MessagePart);
     const calendar = await calendarFields(gmail, response.data.id || args.messageId, response.data.payload);
 
     return {

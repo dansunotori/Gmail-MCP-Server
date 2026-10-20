@@ -2,10 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 2. read_email reads deferred body parts for body, not only for htmlBody
-
-`readEmail` takes `body` from `extractEmailContent`, which skips body parts that Gmail delivers as an `attachmentId`. So a message whose only plain part is deferred gets an empty plain text, and `body` falls back to the HTML or comes out empty, while `batch_fetch_window` fetches that part and uses it. Take `text` and `html` for `body` from `resolveMessageBody` as well, keep `selectBody`'s keep-HTML rule for an HTML-only message, and drop the separate `extractEmailContent` read in `readEmail`. Then the deferred parts are fetched once and used for both `body` and `htmlBody`. Test a message whose plain part is deferred.
-
 ## 3. read_email lists deferred body parts as attachments
 
 `extractAttachments` treats every part with an `attachmentId` as an attachment. So `read_email` and `gmail-get-message` list a deferred, unnamed `text/plain` or `text/html` body part as an attachment called `attachment-<id>`, while `batch_fetch_window`'s `walk` treats the same part as body. List as attachments only the parts that `walk` lists (a part with a filename, or one that is not an unnamed text/plain or text/html part), in `read_email`, `get_thread`, `get_inbox_with_threads` and `download_email`. Test this with the deferred-HTML fixture in `src/read-tools.test.ts`.

@@ -118,7 +118,8 @@ Exposes `read_email` (`messages.get` with `format: 'full'`). Prints:
 
 `body` is the tool's body: the plain-text part; the HTML part as it is, markup included, when
 there is no plain part (`bodySource` `html`); or the HTML part converted to text when the plain
-part is only a stub (`bodySource` `html-over-stub`). `htmlBody` is the `text/html` part as
+part is only a stub (`bodySource` `html-over-stub`), each part fetched when Gmail defers it, as
+`gmail-batch-fetch-window` fetches it. `htmlBody` is the `text/html` part as
 delivered, markup included, whatever `body` is, fetched when Gmail defers it, and `null` when the
 message has no HTML part; when that fetch fails, `htmlBody` is `null` and `htmlBodyError` gives the
 reason. It is the `htmlBody` that `gmail-batch-fetch-window` writes for the same message, and it
