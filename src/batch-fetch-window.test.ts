@@ -271,22 +271,33 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     expect(files.map(file => file.htmlBody)).toEqual(['<p>Real content</p>', null, '<p>Only HTML</p>']);
   });
 
-  it('writes htmlBody null with the reason in htmlBodyError when the HTML part cannot be fetched', async () => {
+  it.each([
+    {
+      failing: 'HTML',
+      parts: [{ mimeType: 'text/plain', body: { data: b64('Stale reminder') } }, { mimeType: 'text/html', body: { attachmentId: 'part-a' } }],
+      written: { body: 'Stale reminder', bodySource: 'text', htmlBody: null, htmlBodyError: 'body-part-fetch: 404' },
+      absent: 'plainBodyError',
+    },
+    {
+      failing: 'plain',
+      parts: [{ mimeType: 'text/plain', body: { attachmentId: 'part-a' } }, { mimeType: 'text/html', body: { data: b64('<p>Here</p>') } }],
+      written: { htmlBody: '<p>Here</p>', plainBodyError: 'body-part-fetch: 404' },
+      absent: 'htmlBodyError',
+    },
+  ])('writes the reason in the message file and in failures when the $failing part cannot be fetched', async ({ parts, written, absent }) => {
     const gmail = fakeGmail({
       lists: windowOnly(['a']),
       messages: { a: message('a', BOUNDARY + 1000, { payload: {
         mimeType: 'multipart/alternative',
         headers: [{ name: 'From', value: 'a@example.com' }],
-        parts: [
-          { mimeType: 'text/plain', body: { data: b64('Stale reminder') } },
-          { mimeType: 'text/html', body: { attachmentId: 'html-a' } },
-        ],
+        parts,
       } }) },
-      attachments: { 'html-a': httpError(404) },
+      attachments: { 'part-a': httpError(404) },
     });
     const result = await run(gmail, dir);
     const file = readJson(path.join(dir, 'messages', '001.json'));
-    expect(file).toMatchObject({ body: 'Stale reminder', bodySource: 'text', htmlBody: null, htmlBodyError: 'body-part-fetch: 404' });
+    expect(file).toMatchObject(written);
+    expect(file).not.toHaveProperty(absent);
     expect(result.failures).toEqual([{ id: 'a', error: 'body-part-fetch: 404', operation: 'body-part-fetch', status: 404, attempts: 1 }]);
   });
 

@@ -255,7 +255,7 @@ const BATCH_FETCH_WINDOW: CommandSpec = {
         "and prints the tool's result unchanged. Deletes and recreates <dir>/messages/ and rewrites",
         '<dir>/manifest.json and <dir>/window-metadata.json, but only when messages/ is absent, empty',
         'or carries the marker a previous run wrote; a window larger than --max-messages writes nothing.',
-        'Each messages/NNN.json carries body and bodySource as read_email chooses them, with HTML alone converted to text, and htmlBody: the text/html part as delivered, also when body is the plain part, or null when the message has no HTML part. When the HTML part cannot be fetched, htmlBody is null and htmlBodyError gives the reason. A message with a text/calendar part also carries calendarMethod and, for a reply, calendarReply {attendee, partstat}.',
+        'Each messages/NNN.json carries body and bodySource as read_email chooses them, with HTML alone converted to text, and htmlBody: the text/html part as delivered, also when body is the plain part, or null when the message has no HTML part. When the HTML part cannot be fetched, htmlBody is null and htmlBodyError gives the reason; when the text/plain part cannot be fetched or decoded, plainBodyError gives the reason. A message with a text/calendar part also carries calendarMethod and, for a reply, calendarReply {attendee, partstat}.',
     ].join('\n'),
     arguments: [],
     example: 'gmail-batch-fetch-window --watermark 2026-09-01T00:00:00Z --output-dir /tmp/inbox-window',

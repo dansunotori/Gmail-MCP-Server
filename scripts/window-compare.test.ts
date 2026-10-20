@@ -22,9 +22,9 @@ describe('compareMessage', () => {
 
   it('names every field that differs, and a side without htmlBody', () => {
     expect(compareMessage(
-      readFor('a', { bodySource: 'html-over-stub', htmlBody: '<p>other</p>', htmlBodyError: 'body-part-fetch: 404', calendarMethod: 'REQUEST', body: 'Else' }),
+      readFor('a', { bodySource: 'html-over-stub', htmlBody: '<p>other</p>', htmlBodyError: 'body-part-fetch: 404', plainBodyError: 'body-part-fetch: 404', calendarMethod: 'REQUEST', body: 'Else' }),
       fileFor('a'),
-    )).toEqual(['bodySource', 'htmlBody', 'htmlBodyError', 'calendarMethod', 'body']);
+    )).toEqual(['bodySource', 'htmlBody', 'htmlBodyError', 'plainBodyError', 'calendarMethod', 'body']);
     const { htmlBody: _dropped, ...withoutHtml } = fileFor('a');
     expect(compareMessage(readFor('a'), withoutHtml)).toEqual(['htmlBody', 'htmlBody missing']);
   });

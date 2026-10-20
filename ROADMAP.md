@@ -2,10 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 4. plainBodyError in the batch_fetch_window message files
-
-`read_email`, the thread reads and the `download_email` json carry `plainBodyError` when a deferred plain part cannot be fetched or decoded, but a `batch_fetch_window` message file records it only as a `failures` entry, so the file read alone looks complete. Write `plainBodyError` into the message file as `htmlBodyError` is written, add it to the `FIELDS` that `scripts/window-compare.mjs` compares, and document it in `docs/gmail-batch-fetch-spec.md` and the README. Test a window whose message has a plain part that cannot be fetched.
-
 ## 5. download_email txt refuses a stub whose HTML part cannot be fetched
 
 The txt format refuses a message whose plain part cannot be fetched, but when the plain part is only a stub and the HTML part it points at cannot be fetched, the txt file is saved holding the stub, with nothing saying the real content is missing. Refuse the txt format in that case too, with the HTML failure's own `GmailRequestError` wrapped by `withContext` so the exit code follows Gmail's status, and test it in `src/read-tools.test.ts` and `src/cli/commands.test.ts`.

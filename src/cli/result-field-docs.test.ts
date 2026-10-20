@@ -22,7 +22,7 @@ const EMITTED: Record<string, string[]> = {
   'gmail-get-thread': MESSAGE_FIELDS,
   'gmail-get-inbox-with-threads': MESSAGE_FIELDS,
   'gmail-download-email': MESSAGE_FIELDS,
-  'gmail-batch-fetch-window': ['htmlBody', 'htmlBodyError', 'calendarMethod', 'calendarReply'],
+  'gmail-batch-fetch-window': ['htmlBody', 'htmlBodyError', 'plainBodyError', 'calendarMethod', 'calendarReply'],
 };
 
 // The README row of the command, the line of its command table that opens with the command.

@@ -339,6 +339,8 @@ export async function batchFetchWindow(
         htmlBody: resolved.htmlBody,
         // Only a message whose HTML part could not be fetched carries this.
         ...(resolved.htmlBodyError === undefined ? {} : { htmlBodyError: resolved.htmlBodyError }),
+        // Only a message whose plain part could not be fetched or decoded carries this.
+        ...(resolved.plainBodyError === undefined ? {} : { plainBodyError: resolved.plainBodyError }),
         // Only a message with a text/calendar part carries these.
         ...(calendar === undefined ? {} : { calendarMethod: calendar.method }),
         ...(calendar?.reply === undefined ? {} : { calendarReply: calendar.reply }),

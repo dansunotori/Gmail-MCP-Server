@@ -301,7 +301,8 @@ deleted, and a truncated run writing nothing. Prints the tool's result JSON unch
 attempts}]`, `crossCheck` `{status, consistent, unexplainedIds, errors, …}`, `truncated` and the
 rest of the tool's result, and leaves `manifest.json`, `window-metadata.json` and `messages/` under
 the output directory exactly as the tool writes them. Each message file carries `htmlBody`,
-`htmlBodyError` when the HTML part cannot be fetched, and `calendarMethod` and `calendarReply` for
+`htmlBodyError` when the HTML part cannot be fetched, `plainBodyError` when the plain part cannot
+be fetched or decoded, and `calendarMethod` and `calendarReply` for
 a message with a `text/calendar` part. See `README.md` for the full result contract.
 
 ## Shared code
@@ -360,7 +361,7 @@ Never print tokens or full request headers to stderr.
   `gmail-get-message` for each message file a `gmail-batch-fetch-window` run wrote under
   `<output-dir>` (or the first N), and prints one JSON report: counts per `bodySource`, of messages
   with and without `htmlBody` and with `htmlBodyError`, every message whose `bodySource`,
-  `htmlBody`, `htmlBodyError`, `messageIdHeader`, `calendarMethod`, `calendarReply` or `body`
+  `htmlBody`, `htmlBodyError`, `plainBodyError`, `messageIdHeader`, `calendarMethod`, `calendarReply` or `body`
   differs (`body` with surrounding whitespace ignored, and not for an HTML-only message, which the
   two tools deliver differently), and every read that failed. It exits 0 when every compared
   message agrees, 1 when one differs, and 2 on a usage error or a failed read.

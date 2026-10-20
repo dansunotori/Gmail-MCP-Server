@@ -15,7 +15,7 @@ import { runDirectly } from './script-support.mjs';
 const USAGE = 'usage: npm run window:compare -- <output-dir> [--limit N]';
 
 // The fields both tools give each message by the same rule.
-const FIELDS = ['bodySource', 'htmlBody', 'htmlBodyError', 'messageIdHeader', 'calendarMethod', 'calendarReply'];
+const FIELDS = ['bodySource', 'htmlBody', 'htmlBodyError', 'plainBodyError', 'messageIdHeader', 'calendarMethod', 'calendarReply'];
 
 // The numbered files batch_fetch_window writes; its marker and publish temporaries are not messages.
 const MESSAGE_FILE = /^\d{3,}\.json$/;
