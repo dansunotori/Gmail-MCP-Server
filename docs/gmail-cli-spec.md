@@ -341,3 +341,12 @@ Never print tokens or full request headers to stderr.
 - `scripts/install-cli.test.ts`: links are created, own links replaced, and a foreign link, a
   regular file or a missing build left alone and reported.
 - The full vitest suite must pass.
+- Live: `npm run window:compare -- <output-dir> [--limit N]` (`scripts/window-compare.mjs`) runs
+  `gmail-get-message` for each message file a `gmail-batch-fetch-window` run wrote under
+  `<output-dir>` (or the first N), and prints one JSON report: counts per `bodySource`, of messages
+  with and without `htmlBody` and with `htmlBodyError`, every message whose `bodySource`,
+  `htmlBody`, `htmlBodyError`, `messageIdHeader`, `calendarMethod`, `calendarReply` or `body`
+  differs (`body` with surrounding whitespace ignored, and not for an HTML-only message, which the
+  two tools deliver differently), and every read that failed. It exits 0 when every compared
+  message agrees, 1 when one differs, and 2 on a usage error or a failed read.
+  `scripts/window-compare.test.ts` tests it against fixture windows.

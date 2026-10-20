@@ -2,10 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 1. A live cross-check of the window files against gmail-get-message
-
-Checking live that `batch_fetch_window` and `read_email` agree on a message takes hand-written `jq` filters per message and field, and a tally over a whole window does not fit in one shell command. Add `npm run window:compare -- <output-dir> [--limit N]`, a script that reads every `messages/NNN.json` under the directory and runs `gmail-get-message` for each message (or the first N). For each message it compares `bodySource`, `htmlBody`, `htmlBodyError`, `messageIdHeader` and the calendar fields, and prints one JSON report. The report gives counts per `bodySource`, the number of messages with and without an HTML part, the number with `htmlBodyError`, and every message whose fields differ, naming the fields. `body` is compared too, except for HTML-only messages, where the two tools differ by design. Exit 0 when nothing differs, 1 when something does, and 2 on usage or Gmail errors. Test it against a fake `gmail-get-message` and a fixture window.
-
 ## 2. read_email reads deferred body parts for body, not only for htmlBody
 
 `readEmail` takes `body` from `extractEmailContent`, which skips body parts that Gmail delivers as an `attachmentId`. So a message whose only plain part is deferred gets an empty plain text, and `body` falls back to the HTML or comes out empty, while `batch_fetch_window` fetches that part and uses it. Take `text` and `html` for `body` from `resolveMessageBody` as well, keep `selectBody`'s keep-HTML rule for an HTML-only message, and drop the separate `extractEmailContent` read in `readEmail`. Then the deferred parts are fetched once and used for both `body` and `htmlBody`. Test a message whose plain part is deferred.
