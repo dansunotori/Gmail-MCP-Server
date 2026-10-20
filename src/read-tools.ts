@@ -13,7 +13,7 @@ import { EmailAttachment, emailToHtml, emailToTxt, gmailMessageToJson } from './
 import { attachmentParts, findAttachmentPart } from './attachment-part.js';
 import { resolveCalendarPart } from './calendar-part.js';
 import { withContext } from './error-text.js';
-import { optionalHeader, resolveMessageBody, selectBody, type BodySource, type HtmlBodyFields, type MessagePart } from './message-body.js';
+import { isPlainTextStub, optionalHeader, resolveMessageBody, selectBody, type BodySource, type HtmlBodyFields, type MessagePart } from './message-body.js';
 
 // Type definitions for Gmail API responses
 export interface GmailMessagePart {
@@ -447,6 +447,10 @@ export async function downloadEmail(
         const plainFailure = failures.find(failure => failure.mimeType === 'text/plain');
         if (format === 'txt' && plainFailure !== undefined) {
             throw withContext(`The plain-text part could not be fetched: ${plainBodyError}`, plainFailure.error);
+        }
+        // A missing or stub plain part leaves the txt body to the HTML part.
+        if (format === 'txt' && htmlFailure !== undefined && (text.trim() === '' || isPlainTextStub(text))) {
+            throw withContext(`The HTML part the text is made from could not be fetched: ${htmlBodyError}`, htmlFailure.error);
         }
         content = format === 'json'
             ? JSON.stringify({

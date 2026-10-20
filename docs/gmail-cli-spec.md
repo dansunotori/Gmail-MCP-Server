@@ -208,8 +208,9 @@ txt and html files read the parts as `gmail-get-message` does, a part Gmail defe
 json file carries `gmail-get-message`'s `htmlBody` and, when the HTML part cannot be fetched,
 `htmlBodyError`, `plainBodyError` when the plain part cannot be fetched, and the
 `calendarMethod`, `calendarReply` and `calendarFailures` `gmail-get-message` prints, for a message
-with a `text/calendar` part. The txt format is an error
-when the plain part cannot be fetched, and the html format when the message has no HTML part or
+with a `text/calendar` part. The txt format is an error when the plain part cannot be fetched, or
+when the plain part is missing or only a stub and the HTML part it would be made from cannot be
+fetched, and the html format when the message has no HTML part or
 that part cannot be fetched, each carrying Gmail's status for the exit code. An `--output` naming the file it saves is refused before any Gmail call.
 
 ### gmail-list-inbox-threads

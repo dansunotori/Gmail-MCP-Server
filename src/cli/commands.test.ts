@@ -1218,15 +1218,18 @@ describe('gmail-download-email', () => {
     }
   });
 
-  it("exits with Gmail's not-found code when --format html cannot fetch the HTML part", async () => {
+  it.each([
+    { format: 'html', plain: 'Plain body' },
+    { format: 'txt', plain: 'Plain text version not available.' },
+  ])("exits with Gmail's not-found code when --format $format needs an HTML part it cannot fetch", async ({ format, plain }) => {
     const deferred = { ...message, payload: { ...message.payload, parts: [
-      { mimeType: 'text/plain', body: { data: b64('Plain body') } },
+      { mimeType: 'text/plain', body: { data: b64(plain) } },
       { mimeType: 'text/html', body: { attachmentId: 'html-1' } },
     ] } };
     const attachmentsGet = async () => { throw Object.assign(new Error('gone'), { response: { status: 404 } }); };
     const gmail = { users: { messages: { get: async () => ({ data: deferred }), attachments: { get: attachmentsGet } } } } as unknown as gmail_v1.Gmail;
-    const failed = await downloadEmailCommand(['m1', '--save-path', dir, '--format', 'html'], harness(gmail).deps).catch(error => error);
+    const failed = await downloadEmailCommand(['m1', '--save-path', dir, '--format', format], harness(gmail).deps).catch(error => error);
     expect(mapErrorToExitCode(failed)).toBe(5);
-    expect(fs.existsSync(path.join(dir, 'm1.html'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, `m1.${format}`))).toBe(false);
   });
 });

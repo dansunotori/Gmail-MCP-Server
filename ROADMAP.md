@@ -2,10 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 5. download_email txt refuses a stub whose HTML part cannot be fetched
-
-The txt format refuses a message whose plain part cannot be fetched, but when the plain part is only a stub and the HTML part it points at cannot be fetched, the txt file is saved holding the stub, with nothing saying the real content is missing. Refuse the txt format in that case too, with the HTML failure's own `GmailRequestError` wrapped by `withContext` so the exit code follows Gmail's status, and test it in `src/read-tools.test.ts` and `src/cli/commands.test.ts`.
-
 ## 6. npm run land: one command from a worktree branch to green CI on main
 
 Landing a worktree branch takes the same sequence every time, run by hand: in the main checkout, check the tree is clean and on `main`, fetch, refuse a branch that is not a fast-forward of `origin/main` (naming the `git rebase origin/main` to run in the worktree), fast-forward `main` to it, run `npm ci` when `package-lock.json` differs between the old and new `HEAD`, run `npm run verify`, push, and run `npm run ci:watch`. Add `scripts/land.mjs` as `npm run land -- <branch>`, run from the main checkout, which does exactly that and stops at the first failing step, naming it and exiting with its code; a tree with uncommitted changes, another session's included, is refused before anything moves. Test it on fixture repositories from `scripts/git-fixture.ts` with npm and gh stubbed, and describe it in the Branch Workflow section of `AGENTS.md`.

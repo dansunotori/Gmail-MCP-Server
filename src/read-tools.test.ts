@@ -600,6 +600,26 @@ describe('htmlBody in thread reads and the json download', () => {
     }
   });
 
+  // The txt file's body comes from the HTML part when the plain part is a stub or missing, so a
+  // failed HTML part leaves nothing true to save; over a full plain part it does not matter.
+  it.each([
+    { kind: 'a stub plain part', message: alternative('st', 'th', { data: b64('Plain text version not available.') }, { attachmentId: 'html-1' }), refused: true },
+    { kind: 'no plain part', message: { id: 'st', threadId: 'th', payload: { mimeType: 'text/html', body: { attachmentId: 'html-1' } } }, refused: true },
+    { kind: 'a full plain part', message: alternative('st', 'th', { data: b64('Stale reminder') }, { attachmentId: 'html-1' }), refused: false },
+  ])("downloadEmail's txt format, for $kind whose HTML part cannot be fetched, is refused: $refused", async ({ message, refused }) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'read-tools-'));
+    try {
+      const outcome = await downloadEmail(gmailFor([message], true).gmail, { messageId: 'st', savePath: dir, format: 'txt' }).catch(error => error);
+      if (refused) {
+        expect(outcome).toBeInstanceOf(GmailRequestError);
+        expect(outcome).toMatchObject({ message: 'The HTML part the text is made from could not be fetched: body-part-fetch: 404', status: 404 });
+      }
+      expect(fs.existsSync(path.join(dir, 'st.txt'))).toBe(!refused);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('getInboxWithThreads gives each expanded message the same htmlBody', async () => {
     const inbox = await getInboxWithThreads(gmailFor([stalePlain]).gmail, { expandThreads: true });
     expect((inbox.threads[0] as { messages: Array<Record<string, unknown>> }).messages[0]).toMatchObject({ htmlBody: '<p>Real content</p>' });
