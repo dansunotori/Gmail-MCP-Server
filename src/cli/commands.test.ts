@@ -933,6 +933,9 @@ describe('the htmlBody fields in --help', () => {
   it.each([
     ['gmail-get-message', getMessageCommand],
     ['gmail-batch-fetch-window', batchFetchWindowCommand],
+    ['gmail-get-thread', getThreadCommand],
+    ['gmail-get-inbox-with-threads', getInboxWithThreadsCommand],
+    ['gmail-download-email', downloadEmailCommand],
   ] as const)('%s documents htmlBody and htmlBodyError', async (_name, command) => {
     const { deps, out } = harness();
     await command(['--help'], deps);
@@ -963,8 +966,9 @@ describe('gmail-get-thread', () => {
     expect(fake.get).toHaveBeenCalledWith({ userId: 'me', id: 'th1', format: 'full' });
     const result = json();
     expect(result).toMatchObject({ threadId: 'th1', messageCount: 2 });
-    expect(result.messages[0]).toMatchObject({ messageId: 's1', body: 'The real notice', bodySource: 'html-over-stub' });
+    expect(result.messages[0]).toMatchObject({ messageId: 's1', body: 'The real notice', bodySource: 'html-over-stub', htmlBody: '<p>The real notice</p>' });
     expect(result.messages[1]).toMatchObject({ messageId: 'm1', body: 'Plain body', bodySource: 'text' });
+    expect(result.messages[1].htmlBody).toContain('<p>See ');
   });
 
   it('passes --format through and refuses a missing thread id or an unknown format', async () => {
@@ -1206,5 +1210,17 @@ describe('gmail-download-email', () => {
       const failed = await downloadEmailCommand(argv, harness().deps).catch(error => error);
       expect(mapErrorToExitCode(failed), argv.join(' ')).toBe(2);
     }
+  });
+
+  it("exits with Gmail's not-found code when --format html cannot fetch the HTML part", async () => {
+    const deferred = { ...message, payload: { ...message.payload, parts: [
+      { mimeType: 'text/plain', body: { data: b64('Plain body') } },
+      { mimeType: 'text/html', body: { attachmentId: 'html-1' } },
+    ] } };
+    const attachmentsGet = async () => { throw Object.assign(new Error('gone'), { response: { status: 404 } }); };
+    const gmail = { users: { messages: { get: async () => ({ data: deferred }), attachments: { get: attachmentsGet } } } } as unknown as gmail_v1.Gmail;
+    const failed = await downloadEmailCommand(['m1', '--save-path', dir, '--format', 'html'], harness(gmail).deps).catch(error => error);
+    expect(mapErrorToExitCode(failed)).toBe(5);
+    expect(fs.existsSync(path.join(dir, 'm1.html'))).toBe(false);
   });
 });

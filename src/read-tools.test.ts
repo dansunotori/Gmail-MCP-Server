@@ -3,11 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import type { gmail_v1 } from 'googleapis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GmailRequestError } from './gmail-sync.js';
 import {
   downloadAttachment,
   downloadEmail,
   extractAttachments,
-  extractEmailContent,
   extractHeaders,
   formatDownloadAttachmentText,
   formatReadEmailText,
@@ -83,9 +83,8 @@ describe('extractHeaders', () => {
   });
 });
 
-describe('extractEmailContent and extractAttachments', () => {
-  it('collects nested text and HTML and lists attachments with their exact byte size', () => {
-    expect(extractEmailContent(fullMessage.payload)).toEqual({ text: 'Plain body', html: '<p>HTML body</p>' });
+describe('extractAttachments', () => {
+  it('lists nested attachments with their exact byte size', () => {
     expect(extractAttachments(fullMessage.payload)).toEqual([
       { id: 'att-1', filename: 'invoice.pdf', mimeType: 'application/pdf', size: 2048 },
     ]);
@@ -516,6 +515,94 @@ describe('deferred body parts in thread reads and downloads', () => {
       const saved = await downloadEmail(gmail, { messageId: 'dh', savePath: dir, format: 'json' });
       expect(saved.attachments).toEqual([{ id: 'att-1', ...pdfOnly[0] }]);
       expect(JSON.parse(fs.readFileSync(saved.path, 'utf8')).attachments).toEqual([{ id: 'att-1', ...pdfOnly[0] }]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// get_thread, expanded get_inbox_with_threads and download_email read each message's parts
+// with read_email's reader, so they carry its body and htmlBody for the same message.
+describe('htmlBody in thread reads and the json download', () => {
+  const stalePlain = { id: 'sp', threadId: 'th', payload: {
+    mimeType: 'multipart/alternative',
+    parts: [
+      { mimeType: 'text/plain', body: { data: b64('Stale reminder') } },
+      { mimeType: 'text/html', body: { attachmentId: 'html-1', size: 900000 } },
+    ],
+  } };
+  const deferredPlain = { id: 'dp', threadId: 'th', payload: {
+    mimeType: 'multipart/alternative',
+    parts: [{ mimeType: 'text/plain', body: { attachmentId: 'plain-1', size: 700000 } }],
+  } };
+  const parts: Record<string, string | Error> = {
+    'html-1': Buffer.from('<p>Real content</p>').toString('base64url'),
+    'plain-1': Buffer.from('Long plain body').toString('base64url'),
+  };
+  const gmailFor = (messages: Array<Record<string, unknown>>, failing = false) => {
+    const threadsGet = vi.fn(async (_params: { format?: string }) => ({ data: { messages } }));
+    const gmail = { users: {
+      threads: { get: threadsGet, list: vi.fn(async () => ({ data: { threads: [{ id: 'th' }] } })) },
+      messages: {
+        get: vi.fn(async ({ id }: { id: string }) => ({ data: messages.find(message => message.id === id) })),
+        attachments: { get: vi.fn(async ({ id }: { id: string }) => {
+          if (failing) throw Object.assign(new Error('gone'), { response: { status: 404 } });
+          return { data: { data: parts[id] } };
+        }) },
+      },
+    } } as unknown as gmail_v1.Gmail;
+    return { gmail, threadsGet };
+  };
+
+  it("getThread gives each message read in full read_email's body and htmlBody, and htmlBodyError for a part it cannot fetch", async () => {
+    const thread = await getThread(gmailFor([stalePlain, deferredPlain, fullMessage]).gmail, { threadId: 'th' });
+    expect(thread.messages[0]).toMatchObject({ body: 'Stale reminder', bodySource: 'text', htmlBody: '<p>Real content</p>' });
+    expect(thread.messages[1]).toMatchObject({ body: 'Long plain body', bodySource: 'text', htmlBody: null });
+    expect(thread.messages[2]).toMatchObject({ body: 'Plain body', htmlBody: '<p>HTML body</p>' });
+    for (const message of thread.messages) expect(message).not.toHaveProperty('htmlBodyError');
+
+    const failed = await getThread(gmailFor([stalePlain], true).gmail, { threadId: 'th' });
+    expect(failed.messages[0]).toMatchObject({ body: 'Stale reminder', htmlBody: null, htmlBodyError: 'body-part-fetch: 404' });
+  });
+
+  it('getThread in metadata or minimal format carries no htmlBody, having no parts to read it from', async () => {
+    const headersOnly = { id: 'h', threadId: 'th', payload: { mimeType: 'multipart/alternative', headers: [{ name: 'Subject', value: 's' }] } };
+    for (const format of ['metadata', 'minimal'] as const) {
+      const thread = await getThread(gmailFor([headersOnly]).gmail, { threadId: 'th', format });
+      expect(thread.messages[0], format).not.toHaveProperty('htmlBody');
+      expect(thread.messages[0], format).not.toHaveProperty('htmlBodyError');
+    }
+  });
+
+  it('getInboxWithThreads gives each expanded message the same htmlBody', async () => {
+    const inbox = await getInboxWithThreads(gmailFor([stalePlain]).gmail, { expandThreads: true });
+    expect((inbox.threads[0] as { messages: Array<Record<string, unknown>> }).messages[0]).toMatchObject({ htmlBody: '<p>Real content</p>' });
+  });
+
+  it("downloadEmail's json carries htmlBody and htmlBodyError, and every format reads a deferred part", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'read-tools-'));
+    const read = (file: string) => fs.readFileSync(path.join(dir, file), 'utf8');
+    try {
+      const { gmail } = gmailFor([stalePlain, deferredPlain, fullMessage]);
+      await downloadEmail(gmail, { messageId: 'sp', savePath: dir, format: 'json' });
+      expect(JSON.parse(read('sp.json'))).toMatchObject({ body: { text: 'Stale reminder', html: '<p>Real content</p>' }, htmlBody: '<p>Real content</p>' });
+      await downloadEmail(gmail, { messageId: 'dp', savePath: dir, format: 'json' });
+      const plainOnly = JSON.parse(read('dp.json'));
+      expect(plainOnly).toMatchObject({ body: { text: 'Long plain body' }, htmlBody: null });
+      expect(plainOnly).not.toHaveProperty('htmlBodyError');
+      await downloadEmail(gmail, { messageId: 'dp', savePath: dir, format: 'txt' });
+      expect(read('dp.txt')).toContain('\n\nLong plain body');
+      await downloadEmail(gmail, { messageId: 'sp', savePath: dir, format: 'html' });
+      expect(read('sp.html')).toBe('<p>Real content</p>');
+
+      const failing = gmailFor([stalePlain], true).gmail;
+      await downloadEmail(failing, { messageId: 'sp', savePath: dir, format: 'json' });
+      expect(JSON.parse(read('sp.json'))).toMatchObject({ htmlBody: null, htmlBodyError: 'body-part-fetch: 404' });
+      fs.rmSync(path.join(dir, 'sp.html'));
+      const refused = await downloadEmail(failing, { messageId: 'sp', savePath: dir, format: 'html' }).catch(error => error);
+      expect(refused).toBeInstanceOf(GmailRequestError);
+      expect(refused).toMatchObject({ message: 'The HTML part could not be fetched: body-part-fetch: 404', status: 404 });
+      expect(fs.existsSync(path.join(dir, 'sp.html'))).toBe(false);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

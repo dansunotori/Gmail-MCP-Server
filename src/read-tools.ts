@@ -12,7 +12,8 @@ import type { gmail_v1 } from 'googleapis';
 import { EmailAttachment, emailToHtml, emailToTxt, gmailMessageToJson } from './email-export.js';
 import { attachmentParts, findAttachmentPart } from './attachment-part.js';
 import { resolveCalendarPart } from './calendar-part.js';
-import { optionalHeader, resolveMessageBody, selectBody, type BodySource, type MessagePart } from './message-body.js';
+import { withContext } from './error-text.js';
+import { optionalHeader, resolveMessageBody, selectBody, type BodySource, type HtmlBodyFields, type MessagePart } from './message-body.js';
 
 // Type definitions for Gmail API responses
 export interface GmailMessagePart {
@@ -29,45 +30,6 @@ export interface GmailMessagePart {
         data?: string;
     };
     parts?: GmailMessagePart[];
-}
-
-export interface EmailContent {
-    text: string;
-    html: string;
-}
-
-/**
- * Recursively extract email body content from MIME message parts
- * Handles complex email structures with nested parts
- */
-export function extractEmailContent(messagePart: GmailMessagePart): EmailContent {
-    // Initialize containers for different content types
-    let textContent = '';
-    let htmlContent = '';
-
-    // If the part has a body with data, process it based on MIME type
-    if (messagePart.body && messagePart.body.data) {
-        const content = Buffer.from(messagePart.body.data, 'base64').toString('utf8');
-
-        // Store content based on its MIME type
-        if (messagePart.mimeType === 'text/plain') {
-            textContent = content;
-        } else if (messagePart.mimeType === 'text/html') {
-            htmlContent = content;
-        }
-    }
-
-    // If the part has nested parts, recursively process them
-    if (messagePart.parts && messagePart.parts.length > 0) {
-        for (const part of messagePart.parts) {
-            const { text, html } = extractEmailContent(part);
-            if (text) textContent += text;
-            if (html) htmlContent += html;
-        }
-    }
-
-    // Return both plain text and HTML content
-    return { text: textContent, html: htmlContent };
 }
 
 /**
@@ -353,16 +315,21 @@ export function formatDownloadAttachmentText(result: DownloadAttachmentResult): 
 }
 
 // One message of a thread as get_thread and get_inbox_with_threads return it, with
-// read_email's calendar fields. A minimal-format message carries no body, and a message
-// fetched without its parts (metadata, minimal) no calendar part to read.
-async function threadMessage(gmail: gmail_v1.Gmail, message: gmail_v1.Schema$Message, withBody: boolean) {
+// read_email's body, htmlBody and calendar fields, read by read_email's own readers. A
+// minimal-format message carries no body, and a message fetched without its parts (metadata,
+// minimal) neither htmlBody nor a calendar part to read.
+async function threadMessage(gmail: gmail_v1.Gmail, message: gmail_v1.Schema$Message, format: 'full' | 'metadata' | 'minimal') {
     const headers = message.payload?.headers || [];
     const header = (name: string) => headers.find(h => h.name?.toLowerCase() === name)?.value || '';
     let body = '';
     let bodySource: BodySource = 'text';
-    if (withBody) {
-        const { text, html } = extractEmailContent(message.payload as GmailMessagePart || {});
+    let htmlFields: HtmlBodyFields | undefined;
+    if (format !== 'minimal') {
+        const { text, html, htmlBody, htmlBodyError } = await resolveMessageBody(gmail, message.id || '', message.payload as MessagePart);
         ({ body, bodySource } = selectBody(text, html, 'keep-html'));
+        if (format === 'full') {
+            htmlFields = { htmlBody, ...(htmlBodyError === undefined ? {} : { htmlBodyError }) };
+        }
     }
     const attachments = message.payload ? extractAttachments(message.payload as GmailMessagePart) : [];
     return {
@@ -376,6 +343,7 @@ async function threadMessage(gmail: gmail_v1.Gmail, message: gmail_v1.Schema$Mes
         date: header('date'),
         body,
         bodySource,
+        ...htmlFields,
         labelIds: message.labelIds || [],
         attachments: attachments.map(a => ({ filename: a.filename, mimeType: a.mimeType, size: a.size })),
         ...await calendarFields(gmail, message.id || '', message.payload),
@@ -385,7 +353,7 @@ async function threadMessage(gmail: gmail_v1.Gmail, message: gmail_v1.Schema$Mes
 // get_thread: every message of a thread, oldest first, as the Gmail API returns them.
 export async function getThread(gmail: gmail_v1.Gmail, args: { threadId: string; format?: 'full' | 'metadata' | 'minimal' }) {
     const response = await gmail.users.threads.get({ userId: 'me', id: args.threadId, format: args.format || 'full' });
-    const messages = await Promise.all((response.data.messages || []).map(message => threadMessage(gmail, message, args.format !== 'minimal')));
+    const messages = await Promise.all((response.data.messages || []).map(message => threadMessage(gmail, message, args.format || 'full')));
     return { threadId: args.threadId, messageCount: messages.length, messages };
 }
 
@@ -415,7 +383,7 @@ export async function getInboxWithThreads(gmail: gmail_v1.Gmail, args: { query?:
     }
     const expanded = await Promise.all(threads.map(async thread => {
         const detail = await gmail.users.threads.get({ userId: 'me', id: thread.id!, format: 'full' });
-        const messages = await Promise.all((detail.data.messages || []).map(message => threadMessage(gmail, message, true)));
+        const messages = await Promise.all((detail.data.messages || []).map(message => threadMessage(gmail, message, 'full')));
         return { threadId: thread.id || '', messageCount: messages.length, messages };
     }));
     return { resultCount: expanded.length, threads: expanded };
@@ -455,10 +423,20 @@ export async function downloadEmail(
         const rawResponse = await gmail.users.messages.get({ userId: 'me', id: messageId, format: 'raw' });
         content = Buffer.from(rawResponse.data.raw || '', 'base64url').toString('utf-8');
     } else {
-        const emailContent = extractEmailContent(fullResponse.data.payload as GmailMessagePart || {});
+        // read_email's reader, so a part Gmail defers is fetched and the json's htmlBody is
+        // read_email's for the same message.
+        const { text, html, htmlBody, htmlBodyError, failures } = await resolveMessageBody(gmail, messageId, fullResponse.data.payload as MessagePart);
+        const emailContent = { text, html };
+        const htmlFailure = failures.find(failure => failure.mimeType === 'text/html');
+        if (format === 'html' && htmlFailure !== undefined) {
+            // Gmail's own error stays the cause, so its status and reason set the exit code.
+            throw withContext(`The HTML part could not be fetched: ${htmlBodyError}`, htmlFailure.error);
+        }
         content = format === 'json'
             ? JSON.stringify({
                 ...gmailMessageToJson(fullResponse.data, emailContent, attachments),
+                htmlBody,
+                ...(htmlBodyError === undefined ? {} : { htmlBodyError }),
                 ...await calendarFields(gmail, messageId, fullResponse.data.payload),
             }, null, 2)
             : format === 'txt'
