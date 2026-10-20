@@ -144,6 +144,9 @@ export interface ReadEmailResult {
     // the part could not be fetched.
     htmlBody: string | null;
     htmlBodyError?: string;
+    // Only a message whose text/plain part could not be fetched carries this: the reason, so
+    // the body, chosen without that part, never reads as complete.
+    plainBodyError?: string;
     attachments: EmailAttachment[];
     // Only a message with a text/calendar part carries these, read by the window fetch's own
     // reader (resolveCalendarPart): its METHOD and, for a REPLY, the replying attendee.
@@ -180,7 +183,7 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
     const attachments = extractAttachments(response.data.payload as GmailMessagePart);
     // The window fetch's own reader, so a part Gmail defers is fetched once and serves both
     // body and htmlBody.
-    const { text, html, htmlBody, htmlBodyError } = await resolveMessageBody(gmail, response.data.id || args.messageId, response.data.payload as MessagePart);
+    const { text, html, htmlBody, htmlBodyError, plainBodyError } = await resolveMessageBody(gmail, response.data.id || args.messageId, response.data.payload as MessagePart);
     const { body, bodySource } = selectBody(text, html, 'keep-html');
     const calendar = await calendarFields(gmail, response.data.id || args.messageId, response.data.payload);
 
@@ -201,6 +204,7 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
         bodySource,
         htmlBody,
         ...(htmlBodyError === undefined ? {} : { htmlBodyError }),
+        ...(plainBodyError === undefined ? {} : { plainBodyError }),
         attachments,
         ...calendar,
     };
@@ -218,6 +222,9 @@ export function formatReadEmailText(email: ReadEmailResult): string {
         : bodySource === 'html-over-stub'
             ? '[Note: The plain-text part of this email is only a stub; this is its HTML part converted to text.]\n\n'
             : '';
+    const plainPartNote = email.plainBodyError === undefined
+        ? ''
+        : `[Note: The plain-text part of this email could not be fetched (${email.plainBodyError}).]\n\n`;
 
     // Add attachment info to output if any are present
     const attachmentInfo = attachments.length > 0 ?
@@ -229,7 +236,7 @@ export function formatReadEmailText(email: ReadEmailResult): string {
         ? `\n\nHTML part not read: ${email.htmlBodyError}`
         : email.htmlBody === null ? '\n\nHTML part: none' : `\n\nHTML part:\n${email.htmlBody}`;
 
-    return `Thread ID: ${threadId}\nMessage-ID: ${messageIdHeader ?? '(none)'}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}${cc ? `\nCC: ${cc}` : ''}${bcc ? `\nBCC: ${bcc}` : ''}\nDate: ${date}${calendarLines}\n\n${contentTypeNote}${body}${attachmentInfo}${htmlPart}`;
+    return `Thread ID: ${threadId}\nMessage-ID: ${messageIdHeader ?? '(none)'}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}${cc ? `\nCC: ${cc}` : ''}${bcc ? `\nBCC: ${bcc}` : ''}\nDate: ${date}${calendarLines}\n\n${plainPartNote}${contentTypeNote}${body}${attachmentInfo}${htmlPart}`;
 }
 
 export interface DownloadAttachmentResult {
@@ -315,18 +322,20 @@ export function formatDownloadAttachmentText(result: DownloadAttachmentResult): 
 }
 
 // One message of a thread as get_thread and get_inbox_with_threads return it, with
-// read_email's body, htmlBody and calendar fields, read by read_email's own readers. A
-// minimal-format message carries no body, and a message fetched without its parts (metadata,
-// minimal) neither htmlBody nor a calendar part to read.
+// read_email's body, plainBodyError, htmlBody and calendar fields, read by read_email's own
+// readers. A minimal-format message carries no body, and a message fetched without its parts
+// (metadata, minimal) neither htmlBody nor a calendar part to read.
 async function threadMessage(gmail: gmail_v1.Gmail, message: gmail_v1.Schema$Message, format: 'full' | 'metadata' | 'minimal') {
     const headers = message.payload?.headers || [];
     const header = (name: string) => headers.find(h => h.name?.toLowerCase() === name)?.value || '';
     let body = '';
     let bodySource: BodySource = 'text';
+    let plainFields: { plainBodyError?: string } = {};
     let htmlFields: HtmlBodyFields | undefined;
     if (format !== 'minimal') {
-        const { text, html, htmlBody, htmlBodyError } = await resolveMessageBody(gmail, message.id || '', message.payload as MessagePart);
+        const { text, html, htmlBody, htmlBodyError, plainBodyError } = await resolveMessageBody(gmail, message.id || '', message.payload as MessagePart);
         ({ body, bodySource } = selectBody(text, html, 'keep-html'));
+        plainFields = plainBodyError === undefined ? {} : { plainBodyError };
         if (format === 'full') {
             htmlFields = { htmlBody, ...(htmlBodyError === undefined ? {} : { htmlBodyError }) };
         }
@@ -343,6 +352,7 @@ async function threadMessage(gmail: gmail_v1.Gmail, message: gmail_v1.Schema$Mes
         date: header('date'),
         body,
         bodySource,
+        ...plainFields,
         ...htmlFields,
         labelIds: message.labelIds || [],
         attachments: attachments.map(a => ({ filename: a.filename, mimeType: a.mimeType, size: a.size })),
@@ -425,18 +435,25 @@ export async function downloadEmail(
     } else {
         // read_email's reader, so a part Gmail defers is fetched and the json's htmlBody is
         // read_email's for the same message.
-        const { text, html, htmlBody, htmlBodyError, failures } = await resolveMessageBody(gmail, messageId, fullResponse.data.payload as MessagePart);
+        const { text, html, htmlBody, htmlBodyError, plainBodyError, failures } = await resolveMessageBody(gmail, messageId, fullResponse.data.payload as MessagePart);
         const emailContent = { text, html };
+        // A txt or html file is only its body, so one missing the part it is made from is
+        // refused rather than saved incomplete. Gmail's own error stays the cause, so its
+        // status and reason set the exit code.
         const htmlFailure = failures.find(failure => failure.mimeType === 'text/html');
         if (format === 'html' && htmlFailure !== undefined) {
-            // Gmail's own error stays the cause, so its status and reason set the exit code.
             throw withContext(`The HTML part could not be fetched: ${htmlBodyError}`, htmlFailure.error);
+        }
+        const plainFailure = failures.find(failure => failure.mimeType === 'text/plain');
+        if (format === 'txt' && plainFailure !== undefined) {
+            throw withContext(`The plain-text part could not be fetched: ${plainBodyError}`, plainFailure.error);
         }
         content = format === 'json'
             ? JSON.stringify({
                 ...gmailMessageToJson(fullResponse.data, emailContent, attachments),
                 htmlBody,
                 ...(htmlBodyError === undefined ? {} : { htmlBodyError }),
+                ...(plainBodyError === undefined ? {} : { plainBodyError }),
                 ...await calendarFields(gmail, messageId, fullResponse.data.payload),
             }, null, 2)
             : format === 'txt'

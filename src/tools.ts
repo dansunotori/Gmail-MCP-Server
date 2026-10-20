@@ -485,7 +485,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "read_email",
-    description: "Retrieves the content of a specific email. After the body and attachments it prints the message's text/html part as delivered, also when the body is the plain part, under 'HTML part:'; 'HTML part: none' when the message has none, and 'HTML part not read: <reason>' when it cannot be fetched",
+    description: "Retrieves the content of a specific email. After the body and attachments it prints the message's text/html part as delivered, also when the body is the plain part, under 'HTML part:'; 'HTML part: none' when the message has none, and 'HTML part not read: <reason>' when it cannot be fetched. When the text/plain part cannot be fetched, a note before the body gives the reason",
     schema: ReadEmailSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Read Email", readOnlyHint: true },
@@ -516,7 +516,7 @@ export const toolDefinitions: ToolDefinition[] = [
   // Thread-level operations
   {
     name: "get_thread",
-    description: "Retrieves all messages in an email thread in one call. Returns messages ordered chronologically (oldest first) with full content, headers, labels, and attachment metadata. Each message's body follows read_email: the plain part, the HTML part converted to text when the plain part is only a stub, or the HTML as it is when there is no plain part; bodySource (text, html-over-stub or html) says which. In full format each message also carries read_email's htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched); metadata and minimal carry no htmlBody.",
+    description: "Retrieves all messages in an email thread in one call. Returns messages ordered chronologically (oldest first) with full content, headers, labels, and attachment metadata. Each message's body follows read_email: the plain part, the HTML part converted to text when the plain part is only a stub, or the HTML as it is when there is no plain part; bodySource (text, html-over-stub or html) says which, and plainBodyError gives the reason when the text/plain part cannot be fetched. In full format each message also carries read_email's htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched); metadata and minimal carry no htmlBody.",
     schema: GetThreadSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Get Thread", readOnlyHint: true },
@@ -544,7 +544,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "download_email",
-    description: "Downloads an email to a file in various formats (json, eml, txt, html). Returns metadata only - useful for saving emails without consuming context. The txt file's body, and json's body.text with bodySource, are the plain part, or the HTML part converted to text when there is no plain part or the plain part is only a stub; json also keeps both parts as body.plain and body.html, and carries read_email's htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched). The html format is the HTML part, and an error when the message has none or it cannot be fetched.",
+    description: "Downloads an email to a file in various formats (json, eml, txt, html). Returns metadata only - useful for saving emails without consuming context. The txt file's body, and json's body.text with bodySource, are the plain part, or the HTML part converted to text when there is no plain part or the plain part is only a stub; json also keeps both parts as body.plain and body.html, and carries read_email's htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched), and plainBodyError when the text/plain part cannot be fetched. The txt format is an error when the text/plain part cannot be fetched, and the html format is the HTML part, and an error when the message has none or it cannot be fetched.",
     schema: DownloadEmailSchema,
     scopes: ["gmail.readonly", "gmail.modify"],
     annotations: { title: "Download Email", readOnlyHint: true },

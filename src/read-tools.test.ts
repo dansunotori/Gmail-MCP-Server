@@ -224,6 +224,24 @@ describe('readEmail', () => {
     expect(fake.attachmentsGet.mock.calls.map(([params]) => params.id).sort()).toEqual(['html-1', 'plain-1']);
   });
 
+  it('gives the reason in plainBodyError, and says so before the body, when the plain part cannot be fetched', async () => {
+    const deferredPlain = { id: 'dp', threadId: 't', payload: {
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/plain', body: { attachmentId: 'plain-1', size: 700000 } },
+        { mimeType: 'text/html', body: { data: b64('<p>HTML body</p>') } },
+      ],
+    } };
+    const fake = fakeGmail({ messages: { dp: deferredPlain }, attachments: { 'plain-1': Object.assign(new Error('gone'), { response: { status: 404 } }) } });
+    const result = await readEmail(fake.gmail, { messageId: 'dp' });
+    expect(result).toMatchObject({ plainBodyError: 'body-part-fetch: 404', htmlBody: '<p>HTML body</p>' });
+    expect(formatReadEmailText(result)).toContain('\n\n[Note: The plain-text part of this email could not be fetched (body-part-fetch: 404).]\n\n');
+
+    const fine = await readEmail(fakeGmail({ messages: { m1: fullMessage } }).gmail, { messageId: 'm1' });
+    expect(fine).not.toHaveProperty('plainBodyError');
+    expect(formatReadEmailText(fine)).not.toContain('could not be fetched');
+  });
+
   it('delivers the HTML part converted to text when the plain part is a stub', async () => {
     const stubbed = { id: 's', threadId: 't', payload: {
       mimeType: 'multipart/alternative',
@@ -571,6 +589,31 @@ describe('htmlBody in thread reads and the json download', () => {
       const thread = await getThread(gmailFor([headersOnly]).gmail, { threadId: 'th', format });
       expect(thread.messages[0], format).not.toHaveProperty('htmlBody');
       expect(thread.messages[0], format).not.toHaveProperty('htmlBodyError');
+    }
+  });
+
+  it('getThread and getInboxWithThreads give the reason in plainBodyError when a plain part cannot be fetched', async () => {
+    const thread = await getThread(gmailFor([deferredPlain, fullMessage], true).gmail, { threadId: 'th' });
+    expect(thread.messages[0]).toMatchObject({ body: '', plainBodyError: 'body-part-fetch: 404' });
+    expect(thread.messages[1]).not.toHaveProperty('plainBodyError');
+    const inbox = await getInboxWithThreads(gmailFor([deferredPlain], true).gmail, { expandThreads: true });
+    expect((inbox.threads[0] as { messages: Array<Record<string, unknown>> }).messages[0]).toMatchObject({ plainBodyError: 'body-part-fetch: 404' });
+  });
+
+  it("downloadEmail's json carries plainBodyError, and the txt format refuses a plain part it cannot fetch with Gmail's status", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'read-tools-'));
+    try {
+      const failing = gmailFor([deferredPlain], true).gmail;
+      await downloadEmail(failing, { messageId: 'dp', savePath: dir, format: 'json' });
+      expect(JSON.parse(fs.readFileSync(path.join(dir, 'dp.json'), 'utf8'))).toMatchObject({ plainBodyError: 'body-part-fetch: 404' });
+      const refused = await downloadEmail(failing, { messageId: 'dp', savePath: dir, format: 'txt' }).catch(error => error);
+      expect(refused).toBeInstanceOf(GmailRequestError);
+      expect(refused).toMatchObject({ message: 'The plain-text part could not be fetched: body-part-fetch: 404', status: 404 });
+      expect(fs.existsSync(path.join(dir, 'dp.txt'))).toBe(false);
+      await downloadEmail(gmailFor([fullMessage]).gmail, { messageId: 'm1', savePath: dir, format: 'json' });
+      expect(JSON.parse(fs.readFileSync(path.join(dir, 'm1.json'), 'utf8'))).not.toHaveProperty('plainBodyError');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 

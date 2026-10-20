@@ -365,6 +365,25 @@ describe('resolveMessageBody', () => {
     expect(plain).not.toHaveProperty('htmlBodyError');
   });
 
+  it('gives the reason in plainBodyError when a plain part cannot be fetched, and not for a failed HTML part', async () => {
+    const gmail = gmailWithAttachments(async () => { throw httpError(404); });
+    const plain = await resolveMessageBody(gmail as never, 'm1', {
+      parts: [
+        { mimeType: 'text/plain', body: { attachmentId: 'gone' } },
+        { mimeType: 'text/html', body: { data: b64('<p>Here</p>') } },
+      ],
+    }, { sleep: async () => {} });
+    expect(plain.plainBodyError).toBe('body-part-fetch: 404');
+
+    const html = await resolveMessageBody(gmail as never, 'm1', {
+      parts: [
+        { mimeType: 'text/plain', body: { data: b64('Plain') } },
+        { mimeType: 'text/html', body: { attachmentId: 'gone' } },
+      ],
+    }, { sleep: async () => {} });
+    expect(html).not.toHaveProperty('plainBodyError');
+  });
+
   it('rethrows an auth failure', async () => {
     const unauthorised = httpError(401);
     const gmail = gmailWithAttachments(async () => { throw unauthorised; });

@@ -119,7 +119,9 @@ Exposes `read_email` (`messages.get` with `format: 'full'`). Prints:
 `body` is the tool's body: the plain-text part; the HTML part as it is, markup included, when
 there is no plain part (`bodySource` `html`); or the HTML part converted to text when the plain
 part is only a stub (`bodySource` `html-over-stub`), each part fetched when Gmail defers it, as
-`gmail-batch-fetch-window` fetches it. `htmlBody` is the `text/html` part as
+`gmail-batch-fetch-window` fetches it; when the plain part's fetch fails, the body is chosen
+without it and `plainBodyError` gives the reason, which no other message carries. `htmlBody` is
+the `text/html` part as
 delivered, markup included, whatever `body` is, fetched when Gmail defers it, and `null` when the
 message has no HTML part; when that fetch fails, `htmlBody` is `null` and `htmlBodyError` gives the
 reason. It is the `htmlBody` that `gmail-batch-fetch-window` writes for the same message, and it
@@ -174,8 +176,8 @@ gmail-get-thread <thread_id> [--format full|metadata|minimal] [-o <file>]
 
 Exposes `get_thread` (`threads.get`, format `full` by default) and prints its result:
 `{threadId, messageCount, messages}`, each message with `body` and `bodySource` read and chosen
-as `gmail-get-message` reads and chooses them, a part Gmail defers fetched, and no body for
-`minimal`. A message read in `full` also carries `gmail-get-message`'s `htmlBody`: the
+as `gmail-get-message` reads and chooses them, a part Gmail defers fetched, with its
+`plainBodyError` when the plain part cannot be fetched, and no body for `minimal`. A message read in `full` also carries `gmail-get-message`'s `htmlBody`: the
 `text/html` part as delivered, `null` when the message has no HTML part, and `null` with
 `htmlBodyError` giving the reason when the part cannot be fetched; `metadata` and `minimal` carry
 no `htmlBody`. A message read in `full` with a `text/calendar` part also carries
@@ -203,9 +205,10 @@ Exposes `download_email`: saves `<dir>/<message_id>.<format>` (json by default) 
 tool's result, `{status, path, size, messageId, subject, from, date, attachments}`. The json,
 txt and html files read the parts as `gmail-get-message` does, a part Gmail defers fetched. The
 json file carries `gmail-get-message`'s `htmlBody` and, when the HTML part cannot be fetched,
-`htmlBodyError`, and the calendar fields `gmail-get-message` prints, for a message with a
-`text/calendar` part. The html format is an error when the message has no HTML part or that part
-cannot be fetched. An `--output` naming the file it saves is refused before any Gmail call.
+`htmlBodyError`, `plainBodyError` when the plain part cannot be fetched, and the calendar fields
+`gmail-get-message` prints, for a message with a `text/calendar` part. The txt format is an error
+when the plain part cannot be fetched, and the html format when the message has no HTML part or
+that part cannot be fetched, each carrying Gmail's status for the exit code. An `--output` naming the file it saves is refused before any Gmail call.
 
 ### gmail-list-inbox-threads
 

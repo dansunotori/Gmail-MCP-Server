@@ -477,6 +477,19 @@ describe('gmail-get-message', () => {
     const { deps, json } = harness(gmail);
     await getMessageCommand(['m1'], deps);
     expect(json()).toMatchObject({ body: 'Plain body', bodySource: 'text', htmlBody: null, htmlBodyError: 'body-part-fetch: 404' });
+    expect(json()).not.toHaveProperty('plainBodyError');
+  });
+
+  it('prints plainBodyError when the plain part cannot be fetched', async () => {
+    const deferred = { ...message, payload: { ...message.payload, parts: [
+      { mimeType: 'text/plain', body: { attachmentId: 'plain-1' } },
+      { mimeType: 'text/html', body: { data: b64('<p>Here</p>') } },
+    ] } };
+    const attachmentsGet = async () => { throw Object.assign(new Error('gone'), { response: { status: 404 } }); };
+    const gmail = { users: { messages: { get: async () => ({ data: deferred }), attachments: { get: attachmentsGet } } } } as unknown as gmail_v1.Gmail;
+    const { deps, json } = harness(gmail);
+    await getMessageCommand(['m1'], deps);
+    expect(json()).toMatchObject({ htmlBody: '<p>Here</p>', plainBodyError: 'body-part-fetch: 404' });
   });
 
   it('prints the converted HTML part and bodySource html-over-stub when the plain part is a stub', async () => {

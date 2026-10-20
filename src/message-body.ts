@@ -71,6 +71,9 @@ export interface ResolvedBody extends ExtractedParts, HtmlBodyFields {
   body: string;
   bodySource: BodySource;
   failures: BodyFailure[];
+  // The reason a text/plain part could not be fetched, present only then, so a body chosen
+  // without that part never reads as complete.
+  plainBodyError?: string;
 }
 
 // A plain part longer than this is a real body even if it uses stub wording.
@@ -289,5 +292,13 @@ export async function resolveMessageBody(
 
   const bodySource = bodySourceOf(parts.text, parts.html);
   const body = bodySource === 'text' ? parts.text.trim() : htmlToText(parts.html);
-  return { ...parts, body, bodySource, failures, ...htmlBodyFields(payload, parts.html, failures) };
+  const plainFailures = failures.filter(failure => failure.mimeType === 'text/plain');
+  return {
+    ...parts,
+    body,
+    bodySource,
+    failures,
+    ...htmlBodyFields(payload, parts.html, failures),
+    ...(plainFailures.length === 0 ? {} : { plainBodyError: plainFailures.map(failure => failure.code).join('; ') }),
+  };
 }
