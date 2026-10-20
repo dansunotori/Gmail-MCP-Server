@@ -130,6 +130,78 @@ describe('check-duplicates.mjs on a repository', () => {
     expect(commitHook('git commit -m x').stdout).toBe('');
   });
 
+  // The hook reads what the commit records, the staged blobs; npm run duplicates:check reads the
+  // working copy. A file staged in part tells the two apart.
+  it.each([
+    { staged: 'a clone', working: 'none', hookDenies: true, checkFails: false },
+    { staged: 'none', working: 'a clone', hookDenies: false, checkFails: true },
+  ])('as a commit hook reads the staged copy ($staged staged, $working in the working copy), while the check reads the working copy', ({ hookDenies, checkFails }) => {
+    write('src/a.ts', BLOCK);
+    write('src/b.ts', hookDenies ? BLOCK : 'export const other = 2;\n');
+    git('add', '.');
+    write('src/b.ts', hookDenies ? 'export const other = 2;\n' : BLOCK);
+    const hook = commitHook('git commit -m x').stdout;
+    if (hookDenies) {
+      const reason = JSON.parse(hook).hookSpecificOutput.permissionDecisionReason;
+      expect(reason).toContain('src/a.ts:1-8 duplicates src/b.ts:1-8');
+      expect(reason).toContain(path.join(repo, REPORT));
+    } else {
+      expect(hook).toBe('');
+    }
+    expect(run([]).code).toBe(checkFails ? 1 : 0);
+    expect(fs.readFileSync(path.join(repo, 'src/b.ts'), 'utf8')).toBe(hookDenies ? 'export const other = 2;\n' : BLOCK);
+  });
+
+  // commit -a records the working copy of every tracked file, so the hook checks that copy then.
+  it.each([
+    { command: 'git commit -a -m x', stagedClone: false, denies: true },
+    { command: 'git commit -am x', stagedClone: false, denies: true },
+    { command: 'git commit --all -m "a -- b"', stagedClone: false, denies: true },
+    { command: 'git commit -a -m x', stagedClone: true, denies: false },
+    // An optional value attached to -u or -S is that option's, not more flags: these commit the index.
+    { command: 'git commit -uall -m x', stagedClone: true, denies: true },
+    { command: 'git commit -Salice@example.com -m x', stagedClone: true, denies: true },
+    { command: 'git commit -uall -m x', stagedClone: false, denies: false },
+    // --no-all undoes an earlier -a, so the index is committed.
+    { command: 'git commit -a --no-all -m x', stagedClone: true, denies: true },
+  ])('as a commit hook, checks what $command records (a clone staged: $stagedClone)',({ command, stagedClone, denies }) => {
+    write('src/a.ts', BLOCK);
+    write('src/b.ts', stagedClone ? BLOCK : 'export const other = 2;\n');
+    git('add', '.');
+    write('src/b.ts', stagedClone ? 'export const other = 2;\n' : BLOCK);
+    const hook = commitHook(command).stdout;
+    expect(hook === '' ? '' : JSON.parse(hook).hookSpecificOutput.permissionDecisionReason).toEqual(
+      denies ? expect.stringContaining('src/a.ts:1-8 duplicates src/b.ts:1-8') : '',
+    );
+  });
+
+  // A commit naming paths or picking hunks records a mix the hook cannot read, so it is refused.
+  it.each([
+    'git commit -m x -- src/b.ts',
+    'git commit -m x src/b.ts',
+    'git commit -o -m x src/b.ts',
+    'git commit --only -m x src/b.ts',
+    'git commit -i -m x src/b.ts',
+    'git commit --include -m x src/b.ts',
+    'git commit -p -m x',
+    'git commit --interactive',
+    'git commit --pathspec-from-file=list -m x',
+    // An abbreviation git expands, a reword fixup (an implicit --only) and an option the hook
+    // does not know are refused rather than guessed at.
+    'git commit --pathspec-from-fil=list -m x',
+    'git commit --fixup=reword:HEAD',
+    'git commit --fixup reword:HEAD',
+    'git commit --frobnicate -m x',
+  ])('as a commit hook, refuses %s, which selects what it records or is not read, asking for staging instead',command => {
+    expect(denial(command).permissionDecisionReason).toContain('stage the change with git add, then run git commit without paths');
+  });
+
+  it('as a commit hook, reads a value that looks like a path or option as the value it is', () => {
+    for (const command of ['git commit -m src/b.ts', 'git commit -m -- ', 'git commit --author "A <a@b>" -m x', 'git commit -F msg.txt', 'git commit --amend --no-edit']) {
+      expect(commitHook(command).stdout, command).toBe('');
+    }
+  });
+
   it('as a commit hook, refuses a commit whose target it cannot read, and one it cannot check', () => {
     expect(denial('git status && git commit -m x').permissionDecisionReason).toContain('single plain git command');
     write(CONFIG, JSON.stringify({ ...projectConfig, format: ['typescript'] }));

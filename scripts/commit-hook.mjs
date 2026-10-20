@@ -69,7 +69,60 @@ function commitTarget(command) {
       return refuse;
     }
   }
-  return words[index] === 'commit' ? { commit: dirs } : null;
+  return words[index] === 'commit' ? { commit: dirs, args: words.slice(index + 1) } : null;
+}
+
+// The git commit options read here, by their exact names: each of the others (a path, an
+// abbreviation git would expand, --include, --only, --patch, --interactive, --pathspec-from-file,
+// an option that skips git's own hooks, any option not listed) makes the commit 'select', since
+// what it records is not read here. Options that take the next word as their value (or one after
+// =, or attached when short):
+const VALUE_SHORT = new Set(['m', 'F', 'c', 'C', 't']);
+const VALUE_LONG = new Set(['--message', '--file', '--reuse-message', '--reedit-message', '--template', '--author', '--date', '--cleanup', '--fixup', '--squash', '--trailer']);
+// Short options whose value is optional and only ever attached (-uall, -Skeyid).
+const OPTIONAL_VALUE_SHORT = new Set(['u', 'S']);
+// Options without a value that leave what the commit records alone. --gpg-sign and
+// --untracked-files take an optional value only after =.
+const PLAIN_SHORT = new Set(['s', 'e', 'q', 'v', 'z']);
+const PLAIN_LONG = new Set([
+  '--amend', '--no-edit', '--edit', '--signoff', '--no-signoff', '--verify', '--allow-empty', '--allow-empty-message',
+  '--reset-author', '--quiet', '--verbose', '--no-gpg-sign', '--gpg-sign', '--untracked-files', '--no-post-rewrite',
+  '--status', '--no-status', '--dry-run', '--null',
+]);
+
+// What a git commit with these arguments records: 'index' for git's index as staged,
+// 'working' for -a / --all (the working copy of every tracked file; a later --no-all undoes it),
+// or 'select' for a commit that names paths, picks hunks, rewords a fixup (an implicit --only) or
+// uses an option not read here, which may record a mix of the index, the working copy and HEAD.
+export function commitContents(args) {
+  let all = false;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === '--') return index + 1 < args.length ? 'select' : all ? 'working' : 'index';
+    if (arg.startsWith('--')) {
+      const [name] = arg.split('=');
+      if (name === '--all') all = true;
+      else if (name === '--no-all') all = false;
+      else if (VALUE_LONG.has(name)) {
+        const value = arg.includes('=') ? arg.slice(name.length + 1) : args[++index];
+        if (name === '--fixup' && value?.startsWith('reword:')) return 'select';
+      } else if (!PLAIN_LONG.has(name)) return 'select';
+    } else if (arg.startsWith('-') && arg.length > 1) {
+      for (const [position, flag] of [...arg.slice(1)].entries()) {
+        if (flag === 'a') all = true;
+        // Whatever follows an optional-value flag in the word is its value, not more flags.
+        else if (OPTIONAL_VALUE_SHORT.has(flag)) break;
+        // A value-taking flag ends the cluster: its value is the rest of the word, or the next.
+        else if (VALUE_SHORT.has(flag)) {
+          if (position === arg.length - 2) index++;
+          break;
+        } else if (!PLAIN_SHORT.has(flag)) return 'select';
+      }
+    } else {
+      return 'select';
+    }
+  }
+  return all ? 'working' : 'index';
 }
 
 // The root of the work tree a git command with these -C options acts on, from the session's
@@ -85,15 +138,15 @@ function workTreeRoot(cwd, dirs) {
   }
 }
 
-// The hook input on stdin: { root } for a git commit into the work tree at root, 'refuse' for a
-// commit whose target repository cannot be read from the command's text, which a hook refuses
-// rather than guesses at, or null for anything else.
+// The hook input on stdin: { root, args } for a git commit into the work tree at root with
+// those arguments, 'refuse' for a commit whose target repository cannot be read from the
+// command's text, which a hook refuses rather than guesses at, or null for anything else.
 export function readCommit() {
   const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
   const target = commitTarget(payload.tool_input?.command ?? '');
   if (target === null || target === 'refuse') return target;
   const root = workTreeRoot(payload.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd(), target.commit);
-  return root === null ? null : { root };
+  return root === null ? null : { root, args: target.args };
 }
 
 // The deny for a commit 'refuse' stands for, naming what the hook checks.
