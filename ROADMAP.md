@@ -2,10 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 7. npm run verify passes in a linked worktree
-
-Two steps of `npm run verify` fail in a linked worktree after every check before them has passed, so the failure has to be read to tell it from a real one. `npm run graph:check` stops because `.gitnexus/run.cjs` is untracked and exists only in the main checkout, and `npm run install-cli` refuses to relink the CLIs, since the links in `~/.local/bin` point into the main checkout. Detect a linked worktree in both scripts (`git rev-parse --git-dir` differs from `--git-common-dir`): `scripts/graph-check.mjs` runs the main checkout's `.gitnexus/run.cjs` (the parent of the git common dir) against the worktree, and `scripts/install-cli.mjs` builds as before, leaves the links alone and exits 0 with one line saying the CLIs stay linked from the main checkout. A link pointing outside both checkouts still fails. Test each case.
-
 ## 8. The verify steps in AGENTS.md kept in step with STEPS by a test
 
 The Branch Workflow section of `AGENTS.md` names each `npm run verify` step in order, and the list is edited by hand whenever `STEPS` in `scripts/verify.mjs` changes. Add a test in `scripts/verify.test.ts` that reads `AGENTS.md` and asserts it names `npm run <step>` for every entry of `STEPS`, in the same order, and no other step, so a step added to verify without the sentence, or the other way round, fails with the step named.

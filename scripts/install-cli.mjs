@@ -6,14 +6,17 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { runDirectly } from './script-support.mjs';
+import { mainCheckoutOf, runDirectly } from './script-support.mjs';
 
 // Links each bin into binDir and returns true when every one was linked. A link is replaced
 // only when it already points into this checkout; a link to another checkout or installation,
-// or a file that is not a link, is left alone and reported.
-export function linkBins({ root, bin, binDir, log = console.log, error = console.error }) {
+// or a file that is not a link, is left alone and reported. From a linked worktree (mainRoot
+// set) the links stay with the main checkout: each is checked, none is made or replaced, and
+// one line says so.
+export function linkBins({ root, bin, binDir, mainRoot, log = console.log, error = console.error }) {
   fs.mkdirSync(binDir, { recursive: true });
   let ok = true;
+  const within = (dir, file) => file.startsWith(dir + path.sep);
   for (const [name, rel] of Object.entries(bin)) {
     const target = path.join(root, rel);
     const link = path.join(binDir, name);
@@ -31,21 +34,25 @@ export function linkBins({ root, bin, binDir, log = console.log, error = console
     }
     if (existing) {
       const current = path.resolve(binDir, fs.readlinkSync(link));
-      if (!current.startsWith(root + path.sep)) {
+      if (!within(root, current) && !(mainRoot && within(mainRoot, current))) {
         error(`${name}: ${link} points to ${current}, outside this checkout; left alone`);
         ok = false;
         continue;
       }
+      if (mainRoot) continue;
       fs.unlinkSync(link);
     }
+    if (mainRoot) continue;
     fs.symlinkSync(target, link);
     log(`${name} -> ${target}`);
   }
+  if (mainRoot && ok) log(`the CLIs stay linked from the main checkout ${mainRoot}`);
   return ok;
 }
 
 if (runDirectly(import.meta.url)) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const { bin } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'));
-  process.exit(linkBins({ root, bin, binDir: path.join(os.homedir(), '.local', 'bin') }) ? 0 : 1);
+  const mainRoot = mainCheckoutOf(root) ?? undefined;
+  process.exit(linkBins({ root, bin, binDir: path.join(os.homedir(), '.local', 'bin'), mainRoot }) ? 0 : 1);
 }

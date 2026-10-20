@@ -6,9 +6,14 @@
 // as does output this script does not recognise, so a changed tool can never pass silently.
 import { spawnSync } from 'child_process';
 import fs from 'fs';
-import { runDirectly } from './script-support.mjs';
+import path from 'path';
+import { mainCheckoutOf, runDirectly } from './script-support.mjs';
 
 export const RUNNER = '.gitnexus/run.cjs';
+
+// The runner to use: this checkout's, or from a linked worktree the main checkout's, since the
+// runner is untracked and only the main checkout has one. It runs against the current directory.
+export const runnerFor = mainCheckout => (mainCheckout ? path.join(mainCheckout, RUNNER) : RUNNER);
 
 // The opening of each complete answer detect-changes gives, and the marker of each incomplete one.
 const COMPLETE = ['No changes detected.', 'Changes:', 'Diff touched'];
@@ -27,10 +32,10 @@ export function judgeDetectChanges(output) {
 }
 
 // run(args) runs the GitNexus runner with args and returns { status, stdout }; log prints a line;
-// runnerExists tells whether the local runner is there. Returns the exit code.
-export function runGraphCheck(run, log, runnerExists) {
+// runnerExists tells whether the runner at runner is there. Returns the exit code.
+export function runGraphCheck(run, log, runnerExists, runner = RUNNER) {
   if (!runnerExists()) {
-    log(`graph:check: ${RUNNER} is missing; create it with npx gitnexus@latest analyze, then run npm run graph:check again`);
+    log(`graph:check: ${runner} is missing; create it with npx gitnexus@latest analyze, then run npm run graph:check again`);
     return 1;
   }
   for (const args of [['analyze', '--index-only'], ['detect-changes', '--scope', 'all', '--repo', '.']]) {
@@ -51,12 +56,12 @@ export function runGraphCheck(run, log, runnerExists) {
   return 0;
 }
 
-const runRunner = args => {
-  const result = spawnSync('node', [RUNNER, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
-  if (result.error) throw result.error;
-  return { status: result.status, stdout: result.stdout };
-};
-
 if (runDirectly(import.meta.url)) {
-  process.exitCode = runGraphCheck(runRunner, line => process.stdout.write(`${line}\n`), () => fs.existsSync(RUNNER));
+  const runner = runnerFor(mainCheckoutOf(process.cwd()));
+  const runRunner = args => {
+    const result = spawnSync('node', [runner, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+    if (result.error) throw result.error;
+    return { status: result.status, stdout: result.stdout };
+  };
+  process.exitCode = runGraphCheck(runRunner, line => process.stdout.write(`${line}\n`), () => fs.existsSync(runner), runner);
 }

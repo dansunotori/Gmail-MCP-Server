@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
-import { RUNNER, judgeDetectChanges, runGraphCheck } from './graph-check.mjs';
+import { RUNNER, judgeDetectChanges, runGraphCheck, runnerFor } from './graph-check.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -19,9 +19,9 @@ function runner(detect: { status: number | null; stdout: string }, analyze = { s
   return { run, calls };
 }
 
-const check = (run: Run, runnerExists = true) => {
+const check = (run: Run, runnerExists = true, runnerPath?: string) => {
   const logged: string[] = [];
-  const code = runGraphCheck(run, (line: string) => logged.push(line), () => runnerExists);
+  const code = runGraphCheck(run, (line: string) => logged.push(line), () => runnerExists, runnerPath);
   return { code, logged };
 };
 
@@ -74,6 +74,13 @@ describe('runGraphCheck', () => {
     expect(code).toBe(1);
     expect(calls).toEqual([]);
     expect(logged).toEqual([`graph:check: ${RUNNER} is missing; create it with npx gitnexus@latest analyze, then run npm run graph:check again`]);
+  });
+
+  it("from a linked worktree, uses the main checkout's runner, which is what it names when missing", () => {
+    expect(runnerFor(null)).toBe(RUNNER);
+    expect(runnerFor('/repos/main')).toBe(path.join('/repos/main', RUNNER));
+    const { logged } = check(runner({ status: 0, stdout: CHANGED }).run, false, runnerFor('/repos/main'));
+    expect(logged[0]).toContain(`graph:check: ${path.join('/repos/main', RUNNER)} is missing`);
   });
 
   it('is the graph:check npm script', () => {
