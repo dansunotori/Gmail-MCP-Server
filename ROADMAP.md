@@ -2,10 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 6. npm run land: one command from a worktree branch to green CI on main
-
-Landing a worktree branch takes the same sequence every time, run by hand: in the main checkout, check the tree is clean and on `main`, fetch, refuse a branch that is not a fast-forward of `origin/main` (naming the `git rebase origin/main` to run in the worktree), fast-forward `main` to it, run `npm ci` when `package-lock.json` differs between the old and new `HEAD`, run `npm run verify`, push, and run `npm run ci:watch`. Add `scripts/land.mjs` as `npm run land -- <branch>`, run from the main checkout, which does exactly that and stops at the first failing step, naming it and exiting with its code; a tree with uncommitted changes, another session's included, is refused before anything moves. Test it on fixture repositories from `scripts/git-fixture.ts` with npm and gh stubbed, and describe it in the Branch Workflow section of `AGENTS.md`.
-
 ## 7. npm run verify passes in a linked worktree
 
 Two steps of `npm run verify` fail in a linked worktree after every check before them has passed, so the failure has to be read to tell it from a real one. `npm run graph:check` stops because `.gitnexus/run.cjs` is untracked and exists only in the main checkout, and `npm run install-cli` refuses to relink the CLIs, since the links in `~/.local/bin` point into the main checkout. Detect a linked worktree in both scripts (`git rev-parse --git-dir` differs from `--git-common-dir`): `scripts/graph-check.mjs` runs the main checkout's `.gitnexus/run.cjs` (the parent of the git common dir) against the worktree, and `scripts/install-cli.mjs` builds as before, leaves the links alone and exits 0 with one line saying the CLIs stay linked from the main checkout. A link pointing outside both checkouts still fails. Test each case.
