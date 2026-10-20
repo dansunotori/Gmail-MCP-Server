@@ -42,6 +42,7 @@
     "verify": "node scripts/verify.mjs",
     "graph:check": "node scripts/graph-check.mjs",
     "land": "node scripts/land.mjs",
+    "push": "node scripts/push.mjs",
     "live:charset-check": "npm run build && node scripts/live-charset-check.mjs",
     "ci:watch": "node scripts/ci-watch.mjs",
     "window:compare": "node scripts/window-compare.mjs"

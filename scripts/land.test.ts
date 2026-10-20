@@ -1,62 +1,35 @@
-import { spawnSync } from 'child_process';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fixtureRepo, gitIn, isolatedEnv } from './git-fixture.js';
+import { checkoutWithOrigin, gitIn, npmStubbed } from './git-fixture.js';
 import { land } from './land.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // A main checkout on main with a bare origin, and a branch "feature" one commit ahead of it.
+let fixture: ReturnType<typeof checkoutWithOrigin>;
 let checkout: string;
 let origin: string;
 let git: (...args: string[]) => Buffer;
+let commitFile: (file: string, content: string) => void;
 
-const commitFile = (file: string, content: string) => {
-  fs.writeFileSync(path.join(checkout, file), content);
-  git('add', file);
-  git('commit', '-q', '-m', `write ${file}`);
-};
 const head = (ref: string) => git('rev-parse', ref).toString().trim();
 
 beforeEach(() => {
-  origin = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'land-origin-')));
-  gitIn(origin)('init', '-q', '--bare', '-b', 'main');
-  checkout = fixtureRepo('land-checkout-');
-  git = gitIn(checkout);
-  git('checkout', '-q', '-b', 'main');
-  commitFile('package-lock.json', '{}');
-  git('remote', 'add', 'origin', origin);
-  git('push', '-q', '-u', 'origin', 'main');
+  fixture = checkoutWithOrigin();
+  ({ checkout, origin, git, commitFile } = fixture);
   git('checkout', '-q', '-b', 'feature');
   commitFile('a.txt', 'a');
   git('checkout', '-q', 'main');
 });
 
 afterEach(() => {
-  for (const dir of [checkout, origin]) fs.rmSync(dir, { recursive: true, force: true });
+  fixture.remove();
 });
 
-// Real git in the checkout; npm stubbed, answering each script with the given exit code. npm
-// lists each script run with its arguments.
-function runner(npmStatus: Record<string, number> = {}) {
-  const npm: string[] = [];
-  const run = (command: string, args: string[]) => {
-    if (command === 'npm') {
-      const script = args[0] === 'ci' ? 'ci' : args[1];
-      npm.push(args[0] === 'ci' ? 'ci' : args.slice(1).join(' '));
-      return { status: npmStatus[script] ?? 0, stdout: '' };
-    }
-    const result = spawnSync(command, args, { cwd: checkout, env: isolatedEnv, encoding: 'utf8' });
-    return { status: result.status, stdout: result.stdout };
-  };
-  return { run, npm };
-}
-
 const landing = (branch: string | undefined, npmStatus?: Record<string, number>) => {
-  const { run, npm } = runner(npmStatus);
+  const { run, npm } = npmStubbed(checkout, npmStatus);
   const logged: string[] = [];
   const code = land(branch, run, (line: string) => logged.push(line));
   return { code, npm, logged };
