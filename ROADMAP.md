@@ -2,10 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 1. One command for the pre-commit graph check
-
-`detect_changes` maps diff hunks against the last GitNexus index, so after several commits it names the wrong symbols (unrelated functions at shifted line numbers) until `node .gitnexus/run.cjs analyze --index-only` runs first. Add `npm run graph:check` (a script in `scripts/`) that runs the index refresh, then `node .gitnexus/run.cjs detect-changes --scope all --repo .`, and exits non-zero when the result carries `partial: true` or `truncated: true`, printing the changed symbols and the risk level. Add it to `npm run verify` after `install-cli`, so the check that CLAUDE.md requires before each commit always runs against a fresh index. Test the exit codes with a stubbed runner in `scripts/`.
-
 ## 2. A repeatable live check of charset decoding
 
 Whether Gmail converts a part to UTF-8 depends on how it delivers it: an inline `format=full` part arrives in UTF-8, a part served by `attachments.get` in the charset it names. That was settled with throwaway scripts. Add `npm run live:charset-check`: a script that inserts one unsent, unlabelled message (gmail.modify, `users.messages.insert`) with a 4 MB windows-1251 plain part and HTML part, plus a small KOI8-R one delivered inline, reads each through `readEmail` from `dist/`, prints only counts (length, replacement characters, Cyrillic letters, whether the text equals what was sent), moves the messages to Bin in a `finally`, and exits 1 when any text differs from what was sent. Document it in `docs/gmail-cli-spec.md` beside `window:compare`, and test its report and exit code with a stubbed Gmail client.
