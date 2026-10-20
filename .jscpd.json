@@ -1,0 +1,26 @@
+{
+  "minTokens": 50,
+  "minLines": 5,
+  "maxLines": 1000,
+  "maxSize": "1mb",
+  "mode": "mild",
+  "format": ["typescript", "javascript", "python", "yaml", "json", "bash", "docker"],
+  "formatsExts": {
+    "typescript": ["ts", "mts", "cts"],
+    "javascript": ["js", "mjs", "cjs"],
+    "python": ["py"],
+    "yaml": ["yml", "yaml"],
+    "json": ["json"],
+    "bash": ["sh", "bash"]
+  },
+  "formatsNames": { "docker": ["Dockerfile"] },
+  "ignore": ["**/package-lock.json"],
+  "noGitignore": true,
+  "followSymlinks": false,
+  "absolute": false,
+  "silent": true,
+  "noTips": true,
+  "noColors": true,
+  "reporters": ["json"],
+  "output": "tmp/jscpd"
+}

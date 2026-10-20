@@ -37,6 +37,7 @@
     "prepare": "npm run build",
     "roadmap:check": "node scripts/check-roadmap.mjs",
     "roadmap:check:staged": "node scripts/check-roadmap.mjs --staged",
+    "duplicates:check": "node scripts/check-duplicates.mjs",
     "verify": "node scripts/verify.mjs",
     "ci:watch": "node scripts/ci-watch.mjs",
     "window:compare": "node scripts/window-compare.mjs"
@@ -94,6 +95,7 @@
     "@types/node": "^24.19.2",
     "@types/nodemailer": "^8.0.2",
     "@types/turndown": "^5.0.6",
+    "jscpd": "5.4.0",
     "lockfile-lint": "^5.0.0",
     "mdast-util-from-markdown": "^2.1.0",
     "tsx": "^4.23.15",

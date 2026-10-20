@@ -8,7 +8,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 describe('verify.mjs', () => {
   it('runs the checks every change needs, in order, ending with the CLI rebuild', () => {
-    expect(STEPS).toEqual(['test', 'typecheck', 'lockfile:lint', 'roadmap:check', 'install-cli']);
+    expect(STEPS).toEqual(['test', 'typecheck', 'lockfile:lint', 'roadmap:check', 'duplicates:check', 'install-cli']);
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     expect(packageJson.scripts.verify).toBe('node scripts/verify.mjs');
     for (const step of STEPS) expect(packageJson.scripts[step], step).toBeDefined();

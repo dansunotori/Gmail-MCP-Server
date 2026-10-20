@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 // @ts-expect-error -- plain ESM script without type declarations; its exports are typed by their use here.
 import { applyToolEdit, findCompletionLanguage } from './check-roadmap.mjs';
-import { fixtureRepo, gitIn, isolatedEnv as isolated } from './git-fixture.js';
+import { fixtureRepo, gitIn, isolatedEnv as isolated, runScript } from './git-fixture.js';
 
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-roadmap.mjs');
 const phrases = (markdown: string) => findCompletionLanguage(markdown).map((finding: { phrase: string }) => finding.phrase);
@@ -108,15 +108,7 @@ describe('check-roadmap.mjs', () => {
 
   // The fixture directory is the project the hook sees, whatever CLAUDE_PROJECT_DIR the test
   // run itself inherits.
-  const run = (args: string[], input?: string) => {
-    const env = { ...process.env, CLAUDE_PROJECT_DIR: dir };
-    try {
-      return { code: 0, stdout: execFileSync('node', [script, ...args], { cwd: dir, env, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }), stderr: '' };
-    } catch (error) {
-      const failed = error as { status: number; stdout: string; stderr: string };
-      return { code: failed.status, stdout: failed.stdout, stderr: failed.stderr };
-    }
-  };
+  const run = (args: string[], input?: string) => runScript(script, args, { cwd: dir, env: { ...process.env, CLAUDE_PROJECT_DIR: dir }, input });
   const hook = (toolName: string, toolInput: Record<string, unknown>) =>
     run(['--hook'], JSON.stringify({ cwd: dir, tool_name: toolName, tool_input: toolInput }));
 
@@ -323,12 +315,15 @@ describe('check-roadmap.mjs --staged', () => {
 });
 
 describe('the project hook configuration', () => {
-  it('runs the commit hook for every git command, so git -C and git -c commits reach it, and only for git', () => {
+  it('runs the roadmap and duplicate-code commit hooks for every git command, so git -C and git -c commits reach them, and only for git', () => {
     const settings = JSON.parse(fs.readFileSync(path.join(path.dirname(script), '..', '.claude', 'settings.json'), 'utf8'));
     const bash = settings.hooks.PreToolUse.filter((entry: { matcher: string }) => entry.matcher === 'Bash')
       .flatMap((entry: { hooks: Array<{ if?: string; command: string }> }) => entry.hooks)
       .filter((hook: { command: string }) => hook.command.includes('--commit-hook'));
-    expect(bash).toEqual([expect.objectContaining({ if: 'Bash(git *)' })]);
+    expect(bash.map((hook: { if?: string; command: string }) => [hook.if, hook.command])).toEqual([
+      ['Bash(git *)', 'node "$CLAUDE_PROJECT_DIR/scripts/check-roadmap.mjs" --commit-hook'],
+      ['Bash(git *)', 'node "$CLAUDE_PROJECT_DIR/scripts/check-duplicates.mjs" --commit-hook'],
+    ]);
   });
 });
 

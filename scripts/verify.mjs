@@ -5,7 +5,7 @@
 import { spawnSync } from 'child_process';
 import { runDirectly } from './script-support.mjs';
 
-export const STEPS = ['test', 'typecheck', 'lockfile:lint', 'roadmap:check', 'install-cli'];
+export const STEPS = ['test', 'typecheck', 'lockfile:lint', 'roadmap:check', 'duplicates:check', 'install-cli'];
 
 // Runs each step through run(step), which returns its exit code (null when it ended without
 // one, as when a signal stops it). Returns 0 when every step passes, else the failing step's

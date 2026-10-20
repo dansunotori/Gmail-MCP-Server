@@ -32,6 +32,9 @@ jobs:
       - name: Check the roadmap lists open work only
         run: npm run roadmap:check
 
+      - name: Check for duplicated code
+        run: npm run duplicates:check
+
       - name: Audit dependencies
         run: npm audit --audit-level=high
 
