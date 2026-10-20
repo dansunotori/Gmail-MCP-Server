@@ -2,10 +2,6 @@
 
 Work to implement, in order. Every change applies to the MCP tools and to the CLIs alike, the CLIs being required, not optional. An item leaves this file when its work is done.
 
-## 8. The verify steps in AGENTS.md kept in step with STEPS by a test
-
-The Branch Workflow section of `AGENTS.md` names each `npm run verify` step in order, and the list is edited by hand whenever `STEPS` in `scripts/verify.mjs` changes. Add a test in `scripts/verify.test.ts` that reads `AGENTS.md` and asserts it names `npm run <step>` for every entry of `STEPS`, in the same order, and no other step, so a step added to verify without the sentence, or the other way round, fails with the step named.
-
 ## 9. The duplicate-code commit hook checks what the commit records
 
 `scripts/check-duplicates.mjs --commit-hook` reads the working copy of each path git's index lists, so a file staged in part is checked as the working tree holds it, not as the commit records it; CI catches the difference only after the push. Write each in-scope staged blob (`git ls-files -s` with `git cat-file --batch`) under its own path in a temporary directory, run jscpd there, and report the clones by their repository paths. Keep `npm run duplicates:check` on the working copy. Test a commit whose staged copy holds a clone its working copy does not, and the reverse.
