@@ -6,11 +6,12 @@ import { RUNNER, judgeDetectChanges, runGraphCheck, runnerFor } from './graph-ch
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-type Run = (args: string[]) => { status: number | null; stdout: string };
+type Result = { status: number | null; stdout: string; stderr?: string };
+type Run = (args: string[]) => Result;
 
 // A runner that answers the index refresh and detect-changes with the given results, recording
 // every call.
-function runner(detect: { status: number | null; stdout: string }, analyze = { status: 0 as number | null, stdout: 'indexed' }) {
+function runner(detect: Result, analyze: Result = { status: 0, stdout: 'indexed', stderr: 'analyzer warning' }) {
   const calls: string[][] = [];
   const run: Run = args => {
     calls.push(args);
@@ -52,6 +53,17 @@ describe('runGraphCheck', () => {
     expect(calls).toEqual([['analyze', '--index-only'], ['detect-changes', '--scope', 'all', '--repo', '.']]);
     expect(code).toBe(0);
     expect(logged.join('\n')).toContain('Risk level: low');
+  });
+
+  it("prints only detect-changes' answer when the index refresh succeeds, leaving out the analyzer's output", () => {
+    const { logged } = check(runner({ status: 0, stdout: CHANGED, stderr: 'detect banner' }).run);
+    expect(logged).toEqual(['detect banner', CHANGED.trimEnd()]);
+  });
+
+  it("prints the analyzer's output and stderr when the index refresh fails", () => {
+    const { code, logged } = check(runner({ status: 0, stdout: CHANGED }, { status: 3, stdout: 'progress', stderr: 'boom' }).run);
+    expect(code).toBe(3);
+    expect(logged).toEqual(['boom', 'progress', 'graph:check: analyze failed with exit code 3']);
   });
 
   it('exits 1 naming the reason when the result is partial or capped', () => {
