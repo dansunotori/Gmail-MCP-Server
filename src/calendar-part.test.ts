@@ -143,6 +143,19 @@ describe('resolveCalendarPart', () => {
     expect(result.failures).toEqual([{ code: 'calendar-part: no METHOD property', status: 'unparseable', attempts: 1 }]);
   });
 
+  it('decodes a stored calendar part by the charset its Content-Type names, and records one it cannot decode', async () => {
+    const utf16 = gmailWith(async () => ({ data: { data: Buffer.from(ics('METHOD:CANCEL'), 'utf16le').toString('base64url') } }));
+    const stored = await resolveCalendarPart(utf16 as never, 'm1', {
+      parts: [{ mimeType: 'text/calendar', headers: [{ name: 'Content-Type', value: 'text/calendar; method=CANCEL; charset=UTF-16LE' }], body: { attachmentId: 'ics-1' } }],
+    });
+    expect(stored).toEqual({ calendar: { method: 'CANCEL' }, failures: [] });
+
+    const unknown = await resolveCalendarPart(gmailWith(async () => ({ data: { data: b64(ics('METHOD:CANCEL')) } })) as never, 'm1', {
+      parts: [{ mimeType: 'text/calendar', headers: [{ name: 'Content-Type', value: 'text/calendar; charset=x-no-such-charset' }], body: { attachmentId: 'ics-1' } }],
+    });
+    expect(unknown).toEqual({ failures: [{ code: 'calendar-part-charset: x-no-such-charset', status: 'unknown-charset', attempts: 1 }] });
+  });
+
   it('records a calendar part whose fetch still fails after its retries', async () => {
     const unavailable = Object.assign(new Error('HTTP 503'), { response: { status: 503, data: {} } });
     const gmail = gmailWith(async () => { throw unavailable; });

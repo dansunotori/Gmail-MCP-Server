@@ -13,7 +13,7 @@ import {
   withGmailRetry,
   type GmailRetryOptions,
 } from './gmail-sync.js';
-import { decodeBase64Url, type MessagePart } from './message-body.js';
+import { decodeBase64Url, decodeStoredPart, partCharset, type MessagePart } from './message-body.js';
 
 export interface CalendarFields {
   method: string;
@@ -180,13 +180,14 @@ export async function resolveCalendarPart(
     let text = decodeBase64Url(part.body?.data);
     const attachmentId = part.body?.attachmentId;
     if (text === '' && attachmentId) {
+      let data: string | null | undefined;
       try {
         const response = await withGmailRetry(() => gmail.users.messages.attachments.get({
           userId: 'me',
           messageId,
           id: attachmentId,
         }), retry);
-        text = decodeBase64Url(response.data.data);
+        data = response.data.data;
       } catch (error) {
         if (isAuthError(error)) {
           throw error;
@@ -197,6 +198,14 @@ export async function resolveCalendarPart(
           status: wrapped.status ?? failureCode(error),
           attempts: retryAttempts(error),
         });
+        continue;
+      }
+      // A stored part keeps the charset it names, unlike an inline one.
+      const charset = partCharset(part);
+      try {
+        text = decodeStoredPart(data, charset);
+      } catch {
+        failures.push({ code: `calendar-part-charset: ${charset}`, status: 'unknown-charset', attempts: 1 });
         continue;
       }
     }

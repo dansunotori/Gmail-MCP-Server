@@ -384,6 +384,64 @@ describe('resolveMessageBody', () => {
     expect(html).not.toHaveProperty('plainBodyError');
   });
 
+  // attachments.get serves a deferred part in the charset it was written in, unlike an inline
+  // format=full part, which arrives in UTF-8.
+  const windows1251 = (text: string) => Buffer.from([...text].map(ch => {
+    const code = ch.codePointAt(0)!;
+    return code >= 0x410 && code <= 0x44f ? code - 0x410 + 0xc0 : code;
+  })).toString('base64url');
+  const koi8rHello = Buffer.from([0xf0, 0xd2, 0xc9, 0xd7, 0xc5, 0xd4]).toString('base64url');
+
+  it('decodes a deferred part by the charset its Content-Type names', async () => {
+    const parts: Record<string, string> = { p: windows1251('Привет, мир'), h: koi8rHello };
+    const gmail = gmailWithAttachments(async id => ({ data: { data: parts[id] } }));
+    const result = await resolveMessageBody(gmail as never, 'm1', {
+      parts: [
+        { mimeType: 'text/plain', headers: [{ name: 'Content-Type', value: 'text/plain; charset=windows-1251' }], body: { attachmentId: 'p' } },
+        { mimeType: 'text/html', headers: [{ name: 'content-type', value: 'text/html; CHARSET="KOI8-R"; format=flowed' }], body: { attachmentId: 'h' } },
+      ],
+    });
+    expect(result).toMatchObject({ text: 'Привет, мир', body: 'Привет, мир', htmlBody: 'Привет', failures: [] });
+  });
+
+  it('decodes a deferred part as UTF-8 when it names no charset or UTF-8, and keeps an inline part UTF-8 whatever it names', async () => {
+    const gmail = gmailWithAttachments(async () => ({ data: { data: Buffer.from('Привет').toString('base64url') } }));
+    const result = await resolveMessageBody(gmail as never, 'm1', {
+      parts: [
+        { mimeType: 'text/plain', body: { attachmentId: 'p' } },
+        { mimeType: 'text/html', headers: [{ name: 'Content-Type', value: 'text/html; charset="UTF-8"' }], body: { attachmentId: 'h' } },
+      ],
+    });
+    expect(result).toMatchObject({ text: 'Привет', htmlBody: 'Привет' });
+
+    const inline = await resolveMessageBody(gmail as never, 'm1', {
+      mimeType: 'text/plain',
+      headers: [{ name: 'Content-Type', value: 'text/plain; charset=windows-1251' }],
+      body: { data: Buffer.from('Привет').toString('base64url') },
+    });
+    expect(inline.text).toBe('Привет');
+  });
+
+  it('records a deferred part in a charset it cannot decode as a failure, never a garbled part', async () => {
+    const gmail = gmailWithAttachments(async () => ({ data: { data: windows1251('Привет') } }));
+    const result = await resolveMessageBody(gmail as never, 'm1', {
+      parts: [
+        { mimeType: 'text/plain', headers: [{ name: 'Content-Type', value: 'text/plain; charset=x-no-such-charset' }], body: { attachmentId: 'p' } },
+        { mimeType: 'text/html', headers: [{ name: 'Content-Type', value: 'text/html; charset=x-no-such-charset' }], body: { attachmentId: 'h' } },
+      ],
+    });
+    expect(result).toMatchObject({
+      text: '',
+      htmlBody: null,
+      plainBodyError: 'body-part-charset: x-no-such-charset',
+      htmlBodyError: 'body-part-charset: x-no-such-charset',
+    });
+    expect(result.failures.map(failure => [failure.mimeType, failure.code, failure.error.code])).toEqual([
+      ['text/plain', 'body-part-charset: x-no-such-charset', 'unknown-charset'],
+      ['text/html', 'body-part-charset: x-no-such-charset', 'unknown-charset'],
+    ]);
+  });
+
   it('rethrows an auth failure', async () => {
     const unauthorised = httpError(401);
     const gmail = gmailWithAttachments(async () => { throw unauthorised; });

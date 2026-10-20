@@ -80,11 +80,14 @@ not modify its environment".
    write `messages/NNN.json` for each (zero-padded to three digits; if more than 999 survive,
    widen the padding for the whole run so ordering by filename stays correct).
 7. Body extraction: walk the MIME tree; concatenate `text/plain` parts
-   into `text` and `text/html` parts into `html`, each decoded from base64url as UTF-8, since
-   Gmail delivers a `format: 'full'` text part in UTF-8 whatever charset its `Content-Type`
-   names; when a body part is delivered as an
+   into `text` and `text/html` parts into `html`, each inline part decoded from base64url as
+   UTF-8, since Gmail delivers a text part inline in `format: 'full'` in UTF-8 whatever charset
+   its `Content-Type` names; when a body part is delivered as an
    `attachmentId` with no filename (Gmail does this for large bodies), fetch it with
-   `users.messages.attachments.get` and append it; parts with a filename are attachments and
+   `users.messages.attachments.get`, decode it by the `charset` its `Content-Type` names (UTF-8
+   when it names none), since Gmail serves it in that charset, and append it; a charset the
+   decoder does not know is a failure with the prefix `body-part-charset:`, never a garbled
+   part. Parts with a filename are attachments and
    are listed with `filename`, `mimeType`, `size` and `attachmentId` (or `inlineBase64` when the
    data is inline). `body` is the plain-text part trimmed, or the HTML converted to text when
    there is no plain part or the plain part is a stub (see `bodySource`). The conversion
@@ -101,7 +104,8 @@ not modify its environment".
    0, a surrogate or one beyond U+10FFFF) left as written; runs of spaces and tabs collapse to one
    space; each line's leading and trailing spaces are dropped, so a line of only spaces is blank;
    three or more newlines collapse to two; the result is trimmed. A body-part fetch failure is recorded in `failures` with the prefix
-   `body-part-fetch:` and the message is still written with whatever was recovered.
+   `body-part-fetch:`, a body part in an unknown charset with `body-part-charset: <charset>`
+   (status `"unknown-charset"`), and the message is still written with whatever was recovered.
 8. Cross-check (when enabled): list `after:${epoch - 1} in:spam`, `after:${epoch - 1} in:trash`
    and `after:${epoch - 1} in:anywhere` with the same pagination and retries. `unexplainedIds`
    is every anywhere ID that is in none of window, spam or trash. `complete` is true when all
@@ -130,7 +134,7 @@ not modify its environment".
 
 `bodySource` is `text` (the plain-text part), `html` (no plain part; the HTML part converted to text) or `html-over-stub` (the plain part is only a stub pointing at the HTML part, so the HTML part converted to text is the body).
 
-`htmlBody` is the message's `text/html` part as delivered (the `html` of step 7, decoded from base64url as UTF-8, markup included), whatever `body` is, so a message whose plain part is full but stale still delivers its HTML content. It is `null` when the message has no `text/html` part; a `text/html` part with a filename is an attachment, not the HTML part. When the HTML part is an `attachmentId` whose fetch fails, `htmlBody` is `null` and `htmlBodyError` gives the `body-part-fetch:` code of that failure, which is also a `failures` entry; no other message carries `htmlBodyError`. `read_email` and `gmail-get-message` deliver the same `htmlBody` and `htmlBodyError` for the same message.
+`htmlBody` is the message's `text/html` part as delivered (the `html` of step 7, decoded as step 7 decodes it, markup included), whatever `body` is, so a message whose plain part is full but stale still delivers its HTML content. It is `null` when the message has no `text/html` part; a `text/html` part with a filename is an attachment, not the HTML part. When the HTML part is an `attachmentId` whose fetch fails, `htmlBody` is `null` and `htmlBodyError` gives the `body-part-fetch:` code of that failure (or the `body-part-charset:` code of one in an unknown charset), which is also a `failures` entry; no other message carries `htmlBodyError`. `read_email` and `gmail-get-message` deliver the same `htmlBody` and `htmlBodyError` for the same message.
 
 `messageIdHeader` is the RFC 822 `Message-ID` header exactly as the message holds it, or `null` when it has none. Two message files with different `id` and the same `messageIdHeader` hold one message, for example the sent and received copies of a self-addressed message. The manifest entry carries the same field.
 
@@ -155,8 +159,9 @@ A message with a `text/calendar` part also carries `"calendarMethod": "REQUEST"`
 
 `failures[]`: `id` is the listed message ID or `cross-check:<query>`; `error` is the failure
 string (HTTP status, network code or error name, prefixed `body-part-fetch: ` for a body
-part and `calendar-part-fetch: ` for a calendar part, or `calendar-part: <reason>` for a
-calendar part that could not be parsed); `operation` is `"messages.get"`, `"body-part-fetch"`,
+part and `calendar-part-fetch: ` for a calendar part, `body-part-charset: <charset>` or
+`calendar-part-charset: <charset>` for a stored part in a charset the decoder does not know, or
+`calendar-part: <reason>` for a calendar part that could not be parsed); `operation` is `"messages.get"`, `"body-part-fetch"`,
 `"calendar-part"` or `"cross-check"`; `status` is the numeric HTTP status, the network code /
 error name as a string, or `"unparseable"`; `attempts` is the number of calls made (1 when not
 retryable, otherwise up to 5).

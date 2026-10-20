@@ -37,6 +37,8 @@ export interface MessageAttachment {
 export interface DeferredBody {
   mimeType: string;
   attachmentId: string;
+  // The charset the part's Content-Type names, absent when it names none.
+  charset?: string;
 }
 
 export interface ExtractedParts {
@@ -118,12 +120,35 @@ export function selectBody(text: string, html: string, htmlOnly: HtmlOnlyRule): 
   return { body: htmlToText(html), bodySource };
 }
 
-// A format=full text part arrives in UTF-8 whatever charset its Content-Type names
-// (windows-1251 and KOI8-R parts, 8bit or base64, included), so it is decoded as UTF-8 and
-// never by that charset, which would garble it.
+// A text part inline in a format=full message arrives in UTF-8 whatever charset its
+// Content-Type names (windows-1251 and KOI8-R parts, 8bit or base64, included), so it is
+// decoded as UTF-8 and never by that charset, which would garble it. A part served by
+// attachments.get keeps its own charset instead: decodeStoredPart reads that one.
 export function decodeBase64Url(data: string | null | undefined): string {
   if (!data) return '';
   return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+}
+
+// The charset parameter of the part's Content-Type header, unquoted, or undefined when the
+// part names none.
+export function partCharset(part: MessagePart): string | undefined {
+  const contentType = optionalHeader(part.headers, 'Content-Type') ?? '';
+  return /;\s*charset\s*=\s*"?([^";\s]+)"?/i.exec(contentType)?.[1];
+}
+
+// The data attachments.get returns for a part, which is in the charset the part names: UTF-8
+// when it names none. A charset TextDecoder does not know is an error with code
+// unknown-charset, so the part is reported, never delivered garbled.
+export function decodeStoredPart(data: string | null | undefined, charset: string | undefined): string {
+  if (!data) return '';
+  const bytes = Buffer.from(data, 'base64url');
+  let decoder: TextDecoder;
+  try {
+    decoder = new TextDecoder(charset ?? 'utf-8', { ignoreBOM: true });
+  } catch {
+    throw new GmailRequestError(`unknown charset ${charset}`, { code: 'unknown-charset' });
+  }
+  return decoder.decode(bytes);
 }
 
 export function headerValue(headers: MessageHeader[] | null | undefined, name: string): string {
@@ -143,7 +168,8 @@ function walk(payload: MessagePart | null | undefined, out: ExtractedParts): voi
   if (payload.body?.attachmentId) {
     const isBody = (mime === 'text/plain' || mime === 'text/html') && !payload.filename;
     if (isBody) {
-      out.deferredBodies.push({ mimeType: mime, attachmentId: payload.body.attachmentId });
+      const charset = partCharset(payload);
+      out.deferredBodies.push({ mimeType: mime, attachmentId: payload.body.attachmentId, ...(charset === undefined ? {} : { charset }) });
     } else {
       out.attachments.push({
         filename: payload.filename || '',
@@ -265,18 +291,14 @@ export async function resolveMessageBody(
   const failures: BodyFailure[] = [];
 
   for (const deferred of parts.deferredBodies) {
+    let data: string | null | undefined;
     try {
       const response = await withGmailRetry(() => gmail.users.messages.attachments.get({
         userId: 'me',
         messageId,
         id: deferred.attachmentId,
       }), retry);
-      const decoded = decodeBase64Url(response.data.data);
-      if (deferred.mimeType === 'text/plain') {
-        parts.text += decoded;
-      } else {
-        parts.html += decoded;
-      }
+      data = response.data.data;
     } catch (error) {
       if (isAuthError(error)) {
         throw error;
@@ -287,6 +309,24 @@ export async function resolveMessageBody(
         attempts: retryAttempts(error),
         mimeType: deferred.mimeType,
       });
+      continue;
+    }
+    let decoded: string;
+    try {
+      decoded = decodeStoredPart(data, deferred.charset);
+    } catch (error) {
+      failures.push({
+        code: `body-part-charset: ${deferred.charset}`,
+        error: toGmailRequestError(error),
+        attempts: 1,
+        mimeType: deferred.mimeType,
+      });
+      continue;
+    }
+    if (deferred.mimeType === 'text/plain') {
+      parts.text += decoded;
+    } else {
+      parts.html += decoded;
     }
   }
 
