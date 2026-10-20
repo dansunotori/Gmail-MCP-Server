@@ -80,7 +80,9 @@ not modify its environment".
    write `messages/NNN.json` for each (zero-padded to three digits; if more than 999 survive,
    widen the padding for the whole run so ordering by filename stays correct).
 7. Body extraction: walk the MIME tree; concatenate `text/plain` parts
-   into `text` and `text/html` parts into `html`; when a body part is delivered as an
+   into `text` and `text/html` parts into `html`, each decoded from base64url as UTF-8, since
+   Gmail delivers a `format: 'full'` text part in UTF-8 whatever charset its `Content-Type`
+   names; when a body part is delivered as an
    `attachmentId` with no filename (Gmail does this for large bodies), fetch it with
    `users.messages.attachments.get` and append it; parts with a filename are attachments and
    are listed with `filename`, `mimeType`, `size` and `attachmentId` (or `inlineBase64` when the

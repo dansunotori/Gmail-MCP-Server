@@ -115,6 +115,9 @@ export function selectBody(text: string, html: string, htmlOnly: HtmlOnlyRule): 
   return { body: htmlToText(html), bodySource };
 }
 
+// A format=full text part arrives in UTF-8 whatever charset its Content-Type names
+// (windows-1251 and KOI8-R parts, 8bit or base64, included), so it is decoded as UTF-8 and
+// never by that charset, which would garble it.
 export function decodeBase64Url(data: string | null | undefined): string {
   if (!data) return '';
   return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
