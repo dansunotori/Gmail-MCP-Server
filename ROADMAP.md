@@ -25,6 +25,18 @@ Tests of these scripts build scratch git repositories in the system temp folder 
 - `scripts/check-duplicates.mjs`: export `main(args, io)` returning its exit code and `runCommitHook(payload, run)`, and split the jscpd run from the `git ls-files -s` parsing, so clone detection and the deny decision need no repository.
 - `scripts/check-roadmap.mjs`: export `main(args, io)`, `runHook(payload, env)` and `runCommitHook(payload, run)`.
 - `scripts/roadmap-close.mjs`: export `main(args, { read, write })`, so the usage and refusal cases need no `node` spawn.
-- `scripts/install-cli.mjs`: export the parsing of `git rev-parse` output behind `mainCheckoutOf`.
+- `scripts/script-support.mjs`: export the parsing of `git rev-parse` output behind `mainCheckoutOf`.
 - `scripts/import-prompts.mjs`: let `everInRoadmapHistory` take the `git log` runner.
 Keep a real repository only for behaviour that is git's own: the hook reading the staged blobs and not the working copy, and `git log -S` finding a removed line.
+
+## 6. npm run land refuses a branch name that git would read as an option
+
+`scripts/land.mjs` passes the branch argument straight into `git merge-base --is-ancestor origin/main <branch>` and `git merge --ff-only --quiet <branch>`, so a name starting with `-` is parsed by git as an option. Refuse such a name with the usage line and exit code 2 before any git command runs, and test it with `scriptedRun` from `scripts/git-fixture.ts`: the runner receives no call.
+
+## 7. The staged duplicate-code check keeps paths that contain a tab
+
+`writeStagedFiles` in `scripts/check-duplicates.mjs` reads each `git ls-files -s -z` entry with `line.split('\t')`, so a path holding a tab is cut at its second tab and the staged copy is written under the wrong name. Split each entry at its first tab only, so the path is everything after it.
+
+## 8. import-prompts keeps a second top-level heading from becoming a roadmap item heading
+
+`importPrompts` in `scripts/import-prompts.mjs` moves every heading of depth 5 or less after the title down one level, so a second `# ` heading in a prompt becomes `## `, which `roadmap:close` and the numbered-heading check read as an item boundary. Move headings after the title so that none lands at depth 2, and test it with a prompt holding a second `# ` heading: the imported item holds no `## ` line besides its own.
