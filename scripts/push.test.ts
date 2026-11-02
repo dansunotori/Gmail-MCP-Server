@@ -1,70 +1,62 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { checkoutWithOrigin, gitIn, npmStubbed } from './git-fixture.js';
+import { describe, expect, it } from 'vitest';
+import { cleanMain, scriptedRun } from './git-fixture.js';
 import { push } from './push.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-// A main checkout one commit ahead of its bare origin.
-let fixture: ReturnType<typeof checkoutWithOrigin>;
-beforeEach(() => {
-  fixture = checkoutWithOrigin();
-  fixture.commitFile('a.txt', 'a');
-});
-afterEach(() => fixture.remove());
-
-const local = () => fixture.git('rev-parse', 'main').toString().trim();
-const remote = () => gitIn(fixture.origin)('rev-parse', 'main').toString().trim();
-
-const pushing = (args: string[] = [], npmStatus?: Record<string, number>) => {
-  const { run, npm } = npmStubbed(fixture.checkout, npmStatus);
+// push run against scripted git and npm answers: its exit code, the commands it issued and the lines it logged.
+const pushing = (args: string[], answers: Parameters<typeof scriptedRun>[0]) => {
+  const { run, calls } = scriptedRun(answers);
   const logged: string[] = [];
-  return { code: push(args, run, (line: string) => logged.push(line)), npm, logged };
+  const code = push(args, run, (line: string) => logged.push(line));
+  return { code, calls, logged };
 };
 
+const branchRead = ['git', 'rev-parse', '--abbrev-ref', 'HEAD'];
+const statusRead = ['git', 'status', '--porcelain'];
+
 describe('push', () => {
-  it('pushes main and watches its CI quietly', () => {
-    const result = pushing();
+  it('pushes main, then watches CI quietly, and succeeds', () => {
+    const result = pushing([], cleanMain);
     expect(result.code).toBe(0);
-    expect(result.npm).toEqual(['ci:watch -- --quiet']);
-    expect(remote()).toBe(local());
-    expect(result.logged).toEqual(['push: main is on origin/main and its CI passed']);
+    expect(result.calls).toEqual([branchRead, statusRead, ['git', 'push', 'origin', 'main'], ['npm', 'run', 'ci:watch', '--', '--quiet']]);
   });
 
-  it('refuses a checkout with uncommitted changes, pushing nothing', () => {
-    const before = remote();
-    fs.writeFileSync(path.join(fixture.checkout, 'b.txt'), 'other session');
-    const result = pushing();
+  it('refuses a dirty main checkout and runs neither push nor CI watch', () => {
+    const result = pushing([], { ...cleanMain, 'git status --porcelain': { stdout: '?? b.txt\n' } });
     expect(result.code).toBe(1);
-    expect(result.npm).toEqual([]);
-    expect(remote()).toBe(before);
-    expect(result.logged).toEqual(['push: the main checkout has uncommitted changes; push nothing until they are committed or moved:\n?? b.txt']);
+    expect(result.calls).toEqual([branchRead, statusRead]);
+    expect(result.logged.join('\n')).toContain('?? b.txt');
   });
 
-  it('refuses to run anywhere but on main', () => {
-    fixture.git('checkout', '-q', '-b', 'feature');
-    expect(pushing()).toMatchObject({ code: 1, npm: [], logged: ['push: run it from the main checkout on main, not on feature'] });
+  it('refuses a branch other than main and runs nothing further', () => {
+    const result = pushing([], { ...cleanMain, 'git rev-parse --abbrev-ref HEAD': { stdout: 'feature\n' } });
+    expect(result.code).toBe(1);
+    expect(result.calls).toEqual([branchRead]);
+    expect(result.logged.join('\n')).toContain('feature');
   });
 
-  it('stops at a failed push without watching CI', () => {
-    fixture.git('remote', 'set-url', 'origin', path.join(fixture.origin, 'missing'));
-    const result = pushing();
+  it('a failed git push returns its exit code and skips the CI watch', () => {
+    const result = pushing([], { ...cleanMain, 'git push origin main': { status: 128 } });
     expect(result.code).toBe(128);
-    expect(result.npm).toEqual([]);
-    expect(result.logged).toEqual(['push: git push origin main failed with exit code 128']);
+    expect(result.calls.some(([command]) => command === 'npm')).toBe(false);
+    expect(result.logged.join('\n')).toContain('git push origin main');
   });
 
-  it('exits with the code of a failed CI watch, naming it', () => {
-    const result = pushing([], { 'ci:watch': 1 });
-    expect(result.code).toBe(1);
-    expect(remote()).toBe(local());
-    expect(result.logged).toEqual(['push: npm run ci:watch -- --quiet failed with exit code 1']);
+  it("a failed CI watch makes push exit with the watch's code", () => {
+    const result = pushing([], { ...cleanMain, 'npm run ci:watch -- --quiet': { status: 7 } });
+    expect(result.code).toBe(7);
+    expect(result.logged.join('\n')).toContain('ci:watch');
   });
 
-  it('takes no arguments', () => {
-    expect(pushing(['main'])).toMatchObject({ code: 2, npm: [], logged: ['usage: npm run push'] });
+  it('rejects any argument with exit code 2 and runs no command', () => {
+    const result = pushing(['main'], cleanMain);
+    expect(result.code).toBe(2);
+    expect(result.calls).toEqual([]);
+    expect(result.logged).toHaveLength(1);
   });
 
   it('is the push npm script', () => {

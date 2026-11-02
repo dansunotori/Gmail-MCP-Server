@@ -1,13 +1,28 @@
-// What the script tests share: throwaway git repositories, and running a script as a hook or a
-// command line does. git runs in the repositories without any repository location the test run
-// inherits (git sets GIT_DIR and others when it runs a hook), so a test never reaches the
-// checkout it runs from.
-import { execFileSync, spawnSync } from 'child_process';
+// What the script tests share: throwaway git repositories, running a script as a hook or a
+// command line does, and a scripted command runner for the scripts that take one. git runs in the
+// repositories without any repository location the test run inherits (git sets GIT_DIR and others
+// when it runs a hook), so a test never reaches the checkout it runs from.
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { afterEach, beforeEach } from 'vitest';
 
 export const isolatedEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+
+// For the tests of the enclosing describe, or of the file at top level: removes every GIT_*
+// variable from process.env before each test and puts the removed ones back after it, so a
+// script called in-process runs git in the repository it is given.
+export function withoutInheritedGitEnv() {
+  let removed: [string, string | undefined][] = [];
+  beforeEach(() => {
+    removed = Object.entries(process.env).filter(([key]) => key.startsWith('GIT_'));
+    for (const [key] of removed) delete process.env[key];
+  });
+  afterEach(() => {
+    for (const [key, value] of removed) process.env[key] = value;
+  });
+}
 
 // git in repo, its output returned; a failed command throws.
 export const gitIn = (repo: string) => (...args: string[]) => execFileSync('git', args, { cwd: repo, env: isolatedEnv, stdio: 'pipe' });
@@ -24,43 +39,25 @@ export function fixtureRepo(prefix: string): string {
   return repo;
 }
 
-// A main checkout on main with package-lock.json committed and pushed to a bare origin, for the
-// scripts that run in the main checkout (land, push). remove deletes both repositories.
-export function checkoutWithOrigin() {
-  const origin = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'main-origin-')));
-  gitIn(origin)('init', '-q', '--bare', '-b', 'main');
-  const checkout = fixtureRepo('main-checkout-');
-  const git = gitIn(checkout);
-  const commitFile = (file: string, content: string) => {
-    fs.writeFileSync(path.join(checkout, file), content);
-    git('add', file);
-    git('commit', '-q', '-m', `write ${file}`);
+// A command runner for the scripts that take one (land, push), running nothing. answers maps a
+// full command line ("git status --porcelain") to its status and stdout, each defaulting to
+// 0 and ''; a command line without an answer succeeds with no output. calls lists every command
+// run, as [command, ...args].
+export function scriptedRun(answers: Record<string, { status?: number; stdout?: string }> = {}) {
+  const calls: string[][] = [];
+  const run = (command: string, args: string[]) => {
+    calls.push([command, ...args]);
+    const answer = answers[[command, ...args].join(' ')];
+    return { status: answer?.status ?? 0, stdout: answer?.stdout ?? '' };
   };
-  git('checkout', '-q', '-b', 'main');
-  commitFile('package-lock.json', '{}');
-  git('remote', 'add', 'origin', origin);
-  git('push', '-q', '-u', 'origin', 'main');
-  const remove = () => {
-    for (const dir of [checkout, origin]) fs.rmSync(dir, { recursive: true, force: true });
-  };
-  return { checkout, origin, git, commitFile, remove };
+  return { run, calls };
 }
 
-// A runner for those scripts: real git in the checkout, npm stubbed, answering each script with
-// the given exit code. npm lists each script run with its arguments.
-export function npmStubbed(checkout: string, npmStatus: Record<string, number> = {}) {
-  const npm: string[] = [];
-  const run = (command: string, args: string[]) => {
-    if (command === 'npm') {
-      const script = args[0] === 'ci' ? 'ci' : args[1];
-      npm.push(args[0] === 'ci' ? 'ci' : args.slice(1).join(' '));
-      return { status: npmStatus[script] ?? 0, stdout: '' };
-    }
-    const result = spawnSync(command, args, { cwd: checkout, env: isolatedEnv, encoding: 'utf8' });
-    return { status: result.status, stdout: result.stdout };
-  };
-  return { run, npm };
-}
+// The answers of a clean main checkout: on main, nothing uncommitted.
+export const cleanMain: Record<string, { status?: number; stdout?: string }> = {
+  'git rev-parse --abbrev-ref HEAD': { stdout: 'main\n' },
+  'git status --porcelain': { stdout: '' },
+};
 
 // The script run by node with args, input on stdin: its exit code, stdout and stderr.
 export function runScript(script: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; input?: string }) {

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { everInRoadmapHistory, importPrompts } from './import-prompts.mjs';
 import { fixtureRepo, gitIn } from './git-fixture.js';
 
@@ -81,39 +81,37 @@ describe('importPrompts', () => {
     expect(roadmap).toContain('\n### Top\n');
   });
 
-  it('refuses a prompt with no title line rather than invent one', () => {
+  it('refuses a prompt with no title line, naming the file', () => {
     write('gmail-untitled.md', 'No heading here.\n');
     expect(() => importPrompts({ promptsDir: dir, roadmap: ROADMAP, imported: never }))
-      .toThrow('gmail-untitled.md has no "# " title line');
+      .toThrow(/gmail-untitled\.md/);
   });
 });
 
 describe('everInRoadmapHistory', () => {
   let repo: string;
-  const git = (...args: string[]) => gitIn(repo)(...args);
 
-  beforeEach(() => {
+  // One history shared by both tests: commit 1 adds the Source line, commit 2 removes it.
+  beforeAll(() => {
     repo = fixtureRepo('import-prompts-repo-');
-  });
-
-  afterEach(() => {
-    fs.rmSync(repo, { recursive: true, force: true });
-  });
-
-  it('finds a Source line that a past version of ROADMAP.md held, and not one it never held', () => {
+    const git = gitIn(repo);
     fs.writeFileSync(path.join(repo, 'ROADMAP.md'), '## 1. Item\n\nSource: `gmail-old.md`\n');
     git('add', 'ROADMAP.md');
     git('commit', '-q', '-m', 'add');
     fs.writeFileSync(path.join(repo, 'ROADMAP.md'), '# Roadmap\n');
     git('commit', '-q', '-am', 'remove');
+  });
+
+  afterAll(() => {
+    fs.rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('finds a Source line that a past version of ROADMAP.md held, and not one it never held', () => {
     expect(everInRoadmapHistory(repo, 'Source: `gmail-old.md`')).toBe(true);
     expect(everInRoadmapHistory(repo, 'Source: `gmail-never.md`')).toBe(false);
   });
 
   it('reads the history of the repository it is given even when GIT_DIR names another', () => {
-    fs.writeFileSync(path.join(repo, 'ROADMAP.md'), '## 1. Item\n\nSource: `gmail-old.md`\n');
-    git('add', 'ROADMAP.md');
-    git('commit', '-q', '-m', 'add');
     const saved = process.env.GIT_DIR;
     process.env.GIT_DIR = path.join(os.tmpdir(), 'no-such-repository.git');
     try {

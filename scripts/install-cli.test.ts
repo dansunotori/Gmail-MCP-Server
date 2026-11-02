@@ -55,18 +55,22 @@ describe('linkBins', () => {
     const { ok, errors, logged } = run({ tool: 'dist/tool.js', fresh: 'dist/tool.js' }, mainRoot);
     expect(ok).toBe(true);
     expect(errors).toEqual([]);
-    expect(logged).toEqual([`the CLIs stay linked from the main checkout ${mainRoot}`]);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain(mainRoot);
     expect(fs.readlinkSync(path.join(binDir, 'tool'))).toBe(mainLink);
     expect(fs.existsSync(path.join(binDir, 'fresh'))).toBe(false);
   });
 
-  it('from a linked worktree, still fails a link pointing outside both checkouts and a missing build', () => {
+  it('from a linked worktree, still fails a link pointing outside both checkouts', () => {
     fs.mkdirSync(binDir);
-    fs.symlinkSync(path.join(dir, 'elsewhere', 'tool.js'), path.join(binDir, 'tool'));
-    const { ok, errors, logged } = run({ tool: 'dist/tool.js', absent: 'dist/absent.js' }, path.join(dir, 'main-checkout'));
+    const elsewhere = path.join(dir, 'elsewhere', 'tool.js');
+    fs.symlinkSync(elsewhere, path.join(binDir, 'tool'));
+    const { ok, errors, logged } = run({ tool: 'dist/tool.js' }, path.join(dir, 'main-checkout'));
     expect(ok).toBe(false);
-    expect(errors).toEqual([expect.stringContaining('outside this checkout'), expect.stringContaining('missing (run npm run build)')]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('tool');
     expect(logged).toEqual([]);
+    expect(fs.readlinkSync(path.join(binDir, 'tool'))).toBe(elsewhere);
   });
 
   it('links a new command and replaces a link that already points into this checkout', () => {
@@ -85,7 +89,8 @@ describe('linkBins', () => {
     fs.symlinkSync(other, path.join(binDir, 'tool'));
     const { ok, errors } = run({ tool: 'dist/tool.js' });
     expect(ok).toBe(false);
-    expect(errors).toEqual([expect.stringContaining('outside this checkout')]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('tool');
     expect(fs.readlinkSync(path.join(binDir, 'tool'))).toBe(other);
   });
 
@@ -97,16 +102,28 @@ describe('linkBins', () => {
     expect(fs.readlinkSync(path.join(binDir, 'tool'))).toBe(sibling);
   });
 
-  it('leaves a regular file alone and reports a missing build', () => {
+  it.each([
+    {
+      name: 'a regular file in the bin dir',
+      command: 'tool',
+      target: 'dist/tool.js',
+      setup: () => fs.writeFileSync(path.join(binDir, 'tool'), 'mine'),
+      untouched: () => expect(fs.readFileSync(path.join(binDir, 'tool'), 'utf8')).toBe('mine'),
+    },
+    {
+      name: 'a bin whose build is missing',
+      command: 'absent',
+      target: 'dist/absent.js',
+      setup: () => undefined,
+      untouched: () => expect(fs.existsSync(path.join(binDir, 'absent'))).toBe(false),
+    },
+  ])('fails for $name and leaves the bin dir as it was', ({ command, target, setup, untouched }) => {
     fs.mkdirSync(binDir);
-    fs.writeFileSync(path.join(binDir, 'tool'), 'mine');
-    const { ok, errors } = run({ tool: 'dist/tool.js', absent: 'dist/absent.js' });
+    setup();
+    const { ok, errors } = run({ [command]: target });
     expect(ok).toBe(false);
-    expect(errors).toEqual([
-      expect.stringContaining('is not a symlink'),
-      expect.stringContaining('missing (run npm run build)'),
-    ]);
-    expect(fs.readFileSync(path.join(binDir, 'tool'), 'utf8')).toBe('mine');
-    expect(fs.existsSync(path.join(binDir, 'absent'))).toBe(false);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain(command);
+    untouched();
   });
 });

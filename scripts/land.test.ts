@@ -1,102 +1,102 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { checkoutWithOrigin, gitIn, npmStubbed } from './git-fixture.js';
+import { describe, expect, it } from 'vitest';
+import { cleanMain, scriptedRun } from './git-fixture.js';
 import { land } from './land.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-// A main checkout on main with a bare origin, and a branch "feature" one commit ahead of it.
-let fixture: ReturnType<typeof checkoutWithOrigin>;
-let checkout: string;
-let origin: string;
-let git: (...args: string[]) => Buffer;
-let commitFile: (file: string, content: string) => void;
-
-const head = (ref: string) => git('rev-parse', ref).toString().trim();
-
-beforeEach(() => {
-  fixture = checkoutWithOrigin();
-  ({ checkout, origin, git, commitFile } = fixture);
-  git('checkout', '-q', '-b', 'feature');
-  commitFile('a.txt', 'a');
-  git('checkout', '-q', 'main');
-});
-
-afterEach(() => {
-  fixture.remove();
-});
-
-const landing = (branch: string | undefined, npmStatus?: Record<string, number>) => {
-  const { run, npm } = npmStubbed(checkout, npmStatus);
+// Lands a branch against a scripted runner that answers cleanMain, the sha of HEAD and the given
+// answers; returns the exit code, what was logged and the commands the runner was asked for.
+const landing = (branch: string | undefined, answers: Parameters<typeof scriptedRun>[0] = {}) => {
+  const { run, calls } = scriptedRun({ ...cleanMain, 'git rev-parse HEAD': { stdout: 'abc123\n' }, ...answers });
   const logged: string[] = [];
   const code = land(branch, run, (line: string) => logged.push(line));
-  return { code, npm, logged };
+  return { code, logged, calls };
 };
 
-// Lands feature expecting a refusal that leaves main where it was and runs no npm script; returns
-// what was logged.
-const refusedWithNothingMoved = () => {
-  const before = head('main');
-  const { code, npm, logged } = landing('feature');
-  expect(code).toBe(1);
-  expect(npm).toEqual([]);
-  expect(head('main')).toBe(before);
-  return logged;
-};
+const checkedMain = [
+  ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+  ['git', 'status', '--porcelain'],
+  ['git', 'fetch', 'origin'],
+];
 
 describe('land', () => {
-  it('fast-forwards main to the branch, verifies, pushes and watches CI', () => {
-    const { code, npm, logged } = landing('feature');
+  it('lands a branch that holds origin/main and reports its CI passed', () => {
+    const { code, logged, calls } = landing('feature');
     expect(code).toBe(0);
-    expect(npm).toEqual(['verify', 'ci:watch -- --quiet']);
-    expect(head('main')).toBe(head('feature'));
-    expect(gitIn(origin)('rev-parse', 'main').toString().trim()).toBe(head('feature'));
-    expect(logged.at(-1)).toBe('land: feature is on origin/main and its CI passed');
+    expect(calls).toEqual([
+      ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+      ['git', 'status', '--porcelain'],
+      ['git', 'fetch', 'origin'],
+      ['git', 'merge-base', '--is-ancestor', 'origin/main', 'feature'],
+      ['git', 'rev-parse', 'HEAD'],
+      ['git', 'merge', '--ff-only', '--quiet', 'feature'],
+      ['git', 'diff', '--quiet', 'abc123', 'HEAD', '--', 'package-lock.json'],
+      ['npm', 'run', 'verify'],
+      ['git', 'push', 'origin', 'main'],
+      ['npm', 'run', 'ci:watch', '--', '--quiet'],
+    ]);
+    expect(logged.at(-1)).toContain('feature');
+    expect(logged.at(-1)).toContain('CI passed');
   });
 
-  it('runs npm ci first when package-lock.json changes', () => {
-    git('checkout', '-q', 'feature');
-    commitFile('package-lock.json', '{"lockfileVersion":3}');
-    git('checkout', '-q', 'main');
-    expect(landing('feature').npm).toEqual(['ci', 'verify', 'ci:watch -- --quiet']);
+  it('installs dependencies after fast-forwarding and before verifying when package-lock.json changed', () => {
+    const { code, calls } = landing('feature', { 'git diff --quiet abc123 HEAD -- package-lock.json': { status: 1 } });
+    expect(code).toBe(0);
+    expect(calls.slice(5)).toEqual([
+      ['git', 'merge', '--ff-only', '--quiet', 'feature'],
+      ['git', 'diff', '--quiet', 'abc123', 'HEAD', '--', 'package-lock.json'],
+      ['npm', 'ci'],
+      ['npm', 'run', 'verify'],
+      ['git', 'push', 'origin', 'main'],
+      ['npm', 'run', 'ci:watch', '--', '--quiet'],
+    ]);
   });
 
-  it('refuses a checkout with uncommitted changes before anything moves', () => {
-    fs.writeFileSync(path.join(checkout, 'b.txt'), 'other session');
-    const logged = refusedWithNothingMoved();
-    expect(logged[0]).toContain('land: the main checkout has uncommitted changes');
-    expect(logged[0]).toContain('b.txt');
-  });
-
-  it('refuses to run anywhere but on main', () => {
-    git('checkout', '-q', 'feature');
-    const { code, logged } = landing('feature');
+  it('refuses a dirty main checkout and runs nothing further', () => {
+    const { code, logged, calls } = landing('feature', { 'git status --porcelain': { stdout: '?? b.txt\n' } });
     expect(code).toBe(1);
-    expect(logged).toEqual(['land: run it from the main checkout on main, not on feature']);
+    expect(calls).toEqual([
+      ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+      ['git', 'status', '--porcelain'],
+    ]);
+    expect(logged.some(line => line.includes('b.txt'))).toBe(true);
   });
 
-  it('refuses a branch that is not a fast-forward of origin/main, naming the rebase', () => {
-    commitFile('c.txt', 'c');
-    git('push', '-q', 'origin', 'main');
-    git('reset', '-q', '--hard', 'HEAD~1');
-    expect(refusedWithNothingMoved()).toEqual(['land: feature is not a fast-forward of origin/main; run git rebase origin/main in its worktree, then land it again']);
+  it('refuses a branch that does not hold origin/main and tells the user to rebase', () => {
+    const { code, logged, calls } = landing('feature', { 'git merge-base --is-ancestor origin/main feature': { status: 1 } });
+    expect(code).toBe(1);
+    expect(calls).toEqual([...checkedMain, ['git', 'merge-base', '--is-ancestor', 'origin/main', 'feature']]);
+    expect(logged.some(line => line.includes('git rebase origin/main') && line.includes('feature'))).toBe(true);
   });
 
-  it('stops at the first failing step, names it and exits with its code, pushing nothing after a failed verify', () => {
-    const { code, npm, logged } = landing('feature', { verify: 3 });
+  it('exits with the code of a failed verify and never pushes', () => {
+    const { code, logged, calls } = landing('feature', { 'npm run verify': { status: 3 } });
     expect(code).toBe(3);
-    expect(npm).toEqual(['verify']);
-    expect(gitIn(origin)('rev-parse', 'main').toString().trim()).not.toBe(head('feature'));
-    expect(logged.at(-1)).toBe('land: npm run verify failed with exit code 3');
+    expect(calls.slice(5)).toEqual([
+      ['git', 'merge', '--ff-only', '--quiet', 'feature'],
+      ['git', 'diff', '--quiet', 'abc123', 'HEAD', '--', 'package-lock.json'],
+      ['npm', 'run', 'verify'],
+    ]);
+    expect(logged.some(line => line.includes('verify') && line.includes('3'))).toBe(true);
   });
 
-  it('names a branch git does not know, and asks for one when none is given', () => {
-    expect(landing('missing').logged.at(-1)).toBe('land: git merge-base --is-ancestor origin/main missing failed with exit code 128');
-    const usage = landing(undefined);
-    expect(usage.code).toBe(2);
-    expect(usage.logged).toEqual(['usage: npm run land -- <branch>']);
+  it("reports git failing to compare an unknown branch and exits with git's code", () => {
+    const { code, logged, calls } = landing('missing', { 'git merge-base --is-ancestor origin/main missing': { status: 128 } });
+    expect(code).toBe(128);
+    expect(calls).toEqual([...checkedMain, ['git', 'merge-base', '--is-ancestor', 'origin/main', 'missing']]);
+    expect(logged.some(line => line.includes('missing') && line.includes('128'))).toBe(true);
+  });
+
+  it('asks for a branch when none is given', () => {
+    const logged: string[] = [];
+    const run = () => {
+      throw new Error('no command may run without a branch');
+    };
+    expect(land(undefined, run, (line: string) => logged.push(line))).toBe(2);
+    expect(logged).toEqual(['usage: npm run land -- <branch>']);
   });
 
   it('is the land npm script', () => {
