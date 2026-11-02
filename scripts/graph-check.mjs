@@ -31,31 +31,78 @@ export function judgeDetectChanges(output) {
   return reasons;
 }
 
+// An incremental refresh keeps the rows of unchanged files, and those can hold nodes whose id is
+// empty; impact on any of them walks upstream from all of them at once, so detect-changes rates
+// an unrelated change CRITICAL. Only a forced rebuild without the parse cache clears them.
+const REFRESH = ['analyze', '--index-only'];
+const REBUILD = ['analyze', '--index-only', '--force', '--no-parse-cache'];
+const COUNT_EMPTY_IDS = ['cypher', "MATCH (n) WHERE n.id = '' RETURN count(n)", '--repo', '.'];
+const DETECT = ['detect-changes', '--scope', 'all', '--repo', '.'];
+
+// The count in cypher's answer to COUNT_EMPTY_IDS, or null when it holds none: stdout is JSON
+// whose markdown is a one-column table of header, separator and the count's row.
+function parseCount(output) {
+  try {
+    const rows = JSON.parse(output).markdown.trim().split('\n');
+    const match = /^\|\s*(\d+)\s*\|$/.exec(rows.at(-1).trim());
+    return rows.length === 3 && match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
 // run(args) runs the GitNexus runner with args and returns { status, stdout, stderr }; log prints
 // a line; runnerExists tells whether the runner at runner is there. Returns the exit code. The
-// analyzer's output (banner, index statistics, warnings) is printed only when the refresh fails,
-// so a passing check ends in detect-changes' risk level and changed symbols.
+// output of the index builds and the empty-id counts (banner, index statistics, warnings) is
+// printed only when one fails, so a passing check ends in detect-changes' risk level and changed
+// symbols.
 export function runGraphCheck(run, log, runnerExists, runner = RUNNER) {
   if (!runnerExists()) {
     log(`graph:check: ${runner} is missing; create it with npx gitnexus@latest analyze, then run npm run graph:check again`);
     return 1;
   }
-  for (const args of [['analyze', '--index-only'], ['detect-changes', '--scope', 'all', '--repo', '.']]) {
+  // Runs args, printing its output when shown or failing; returns { code, stdout }, code 0 on success.
+  const step = (args, shown = false) => {
     const { status, stdout, stderr } = run(args);
-    if (args[0] !== 'analyze' || status !== 0) {
+    if (shown || status !== 0) {
       for (const text of [stderr, stdout]) if (text) log(text.trimEnd());
     }
-    if (status !== 0) {
-      log(`graph:check: ${args[0]} failed ${status === null ? 'with no exit code' : `with exit code ${status}`}`);
-      return status ?? 1;
+    if (status === 0) return { code: 0, stdout };
+    log(`graph:check: ${args[0]} failed ${status === null ? 'with no exit code' : `with exit code ${status}`}`);
+    return { code: status ?? 1, stdout };
+  };
+  // Returns { code, count }: the number of nodes with an empty id, code 0 when it was read.
+  const countEmptyIds = () => {
+    const { code, stdout } = step(COUNT_EMPTY_IDS);
+    if (code !== 0) return { code };
+    const count = parseCount(stdout);
+    if (count !== null) return { code: 0, count };
+    log(stdout.trimEnd());
+    log('graph:check: unrecognised cypher output for the count of nodes with an empty id');
+    return { code: 1 };
+  };
+
+  const refresh = step(REFRESH);
+  if (refresh.code !== 0) return refresh.code;
+  let empty = countEmptyIds();
+  if (empty.code !== 0) return empty.code;
+  if (empty.count > 0) {
+    log(`graph:check: ${empty.count} nodes have an empty id; rebuilding the index with ${REBUILD.join(' ')}`);
+    const rebuild = step(REBUILD);
+    if (rebuild.code !== 0) return rebuild.code;
+    empty = countEmptyIds();
+    if (empty.code !== 0) return empty.code;
+    if (empty.count > 0) {
+      log(`graph:check: ${empty.count} nodes still have an empty id after ${REBUILD.join(' ')}`);
+      return 1;
     }
-    if (args[0] === 'detect-changes') {
-      const reasons = judgeDetectChanges(stdout);
-      if (reasons.length > 0) {
-        log(`graph:check: not a complete check: ${reasons.join('; ')}`);
-        return 1;
-      }
-    }
+  }
+  const detect = step(DETECT, true);
+  if (detect.code !== 0) return detect.code;
+  const reasons = judgeDetectChanges(detect.stdout);
+  if (reasons.length > 0) {
+    log(`graph:check: not a complete check: ${reasons.join('; ')}`);
+    return 1;
   }
   return 0;
 }

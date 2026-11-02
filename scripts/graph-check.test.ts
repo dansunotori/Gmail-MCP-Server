@@ -9,12 +9,27 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 type Result = { status: number | null; stdout: string; stderr?: string };
 type Run = (args: string[]) => Result;
 
-// A runner that answers the index refresh and detect-changes with the given results, recording
-// every call.
-function runner(detect: Result, analyze: Result = { status: 0, stdout: 'indexed', stderr: 'analyzer warning' }) {
+// The cypher command's answer to the empty-id count, as it prints it: the banner on stderr, the
+// JSON with its markdown table on stdout.
+const emptyIds = (count: number): Result => ({
+  status: 0,
+  stdout: JSON.stringify({ markdown: `| COUNT(n._ID) |\n| --- |\n| ${count} |`, row_count: 1, staleness: { status: 'current' } }, null, 2),
+  stderr: '\n  GitNexus Cypher (1.6.12)',
+});
+
+const REFRESH = ['analyze', '--index-only'];
+const COUNT = ['cypher', "MATCH (n) WHERE n.id = '' RETURN count(n)", '--repo', '.'];
+const REBUILD = ['analyze', '--index-only', '--force', '--no-parse-cache'];
+const DETECT = ['detect-changes', '--scope', 'all', '--repo', '.'];
+
+// A runner that answers both index builds with analyze, detect-changes with detect, and each
+// cypher count with the next of counts, the last one repeating; it records every call.
+function runner(detect: Result, analyze: Result = { status: 0, stdout: 'indexed', stderr: 'analyzer warning' }, counts: Result[] = [emptyIds(0)]) {
   const calls: string[][] = [];
+  const remaining = [...counts];
   const run: Run = args => {
     calls.push(args);
+    if (args[0] === 'cypher') return remaining.length > 1 ? remaining.shift()! : remaining[0];
     return args[0] === 'analyze' ? analyze : detect;
   };
   return { run, calls };
@@ -47,12 +62,52 @@ describe('judgeDetectChanges', () => {
 });
 
 describe('runGraphCheck', () => {
-  it('refreshes the index, then checks every change against it, and exits 0 on a complete result', () => {
+  it('refreshes the index, finds no node with an empty id, then checks every change against it, and exits 0 on a complete result', () => {
     const { run, calls } = runner({ status: 0, stdout: CHANGED });
     const { code, logged } = check(run);
-    expect(calls).toEqual([['analyze', '--index-only'], ['detect-changes', '--scope', 'all', '--repo', '.']]);
+    expect(calls).toEqual([REFRESH, COUNT, DETECT]);
     expect(code).toBe(0);
     expect(logged.join('\n')).toContain('Risk level: low');
+  });
+
+  it('rebuilds the index once when nodes have an empty id, and passes when the rebuild clears them', () => {
+    const { run, calls } = runner({ status: 0, stdout: CHANGED, stderr: 'detect banner' }, undefined, [emptyIds(837), emptyIds(0)]);
+    const { code, logged } = check(run);
+    expect(calls).toEqual([REFRESH, COUNT, REBUILD, COUNT, DETECT]);
+    expect(code).toBe(0);
+    expect(logged).toEqual([
+      'graph:check: 837 nodes have an empty id; rebuilding the index with analyze --index-only --force --no-parse-cache',
+      'detect banner',
+      CHANGED.trimEnd(),
+    ]);
+  });
+
+  it('fails naming the count when nodes with an empty id survive the rebuild, without running detect-changes', () => {
+    const { run, calls } = runner({ status: 0, stdout: CHANGED }, undefined, [emptyIds(837), emptyIds(12)]);
+    const { code, logged } = check(run);
+    expect(calls).toEqual([REFRESH, COUNT, REBUILD, COUNT]);
+    expect(code).toBe(1);
+    expect(logged.at(-1)).toBe('graph:check: 12 nodes still have an empty id after analyze --index-only --force --no-parse-cache');
+  });
+
+  it("fails with the cypher command's exit code and output when the count query fails", () => {
+    const failed = { status: 5, stdout: '{\n  "error": "Prepare failed"\n}', stderr: 'cypher banner' };
+    const { run, calls } = runner({ status: 0, stdout: CHANGED }, undefined, [failed]);
+    const { code, logged } = check(run);
+    expect(calls).toEqual([REFRESH, COUNT]);
+    expect(code).toBe(5);
+    expect(logged).toEqual(['cypher banner', '{\n  "error": "Prepare failed"\n}', 'graph:check: cypher failed with exit code 5']);
+  });
+
+  it('fails on a count answer it does not recognise rather than reading it as zero', () => {
+    const noRow = { status: 0, stdout: JSON.stringify({ markdown: '| COUNT(n._ID) |\n| --- |', row_count: 0 }) };
+    for (const answer of [noRow, { status: 0, stdout: 'not json' }, { status: 0, stdout: '{"rows": []}' }]) {
+      const { run, calls } = runner({ status: 0, stdout: CHANGED }, undefined, [answer]);
+      const { code, logged } = check(run);
+      expect(calls, answer.stdout).toEqual([REFRESH, COUNT]);
+      expect(code).toBe(1);
+      expect(logged.at(-1)).toBe('graph:check: unrecognised cypher output for the count of nodes with an empty id');
+    }
   });
 
   it("prints only detect-changes' answer when the index refresh succeeds, leaving out the analyzer's output", () => {
