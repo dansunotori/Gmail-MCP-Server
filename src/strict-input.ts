@@ -43,9 +43,7 @@ export function unknownArgumentsMessage(unknown: readonly string[], accepted: re
 /** An object of the given shape that refuses unknown keys with unknownArgumentsMessage. */
 export function strictInput<S extends z.ZodRawShape>(shape: S) {
   const accepted = Object.keys(shape);
-  return z.object(shape, {
-    errorMap: (issue, context) => (issue.code === 'unrecognized_keys'
-      ? { message: unknownArgumentsMessage(issue.keys, accepted) }
-      : { message: context.defaultError }),
-  }).strict();
+  return z.strictObject(shape, {
+    error: issue => (issue.code === 'unrecognized_keys' ? unknownArgumentsMessage(issue.keys, accepted) : undefined),
+  });
 }

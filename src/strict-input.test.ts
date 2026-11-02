@@ -49,28 +49,25 @@ describe('strictInput', () => {
 
 // Every object a tool accepts, top level or nested (filter criteria, inline images), refuses
 // keys it does not know.
-function nonStrictObjects(schema: z.ZodTypeAny, path: string): string[] {
-  const def = schema._def as { typeName: string; innerType?: z.ZodTypeAny; schema?: z.ZodTypeAny; type?: z.ZodTypeAny };
-  switch (def.typeName) {
-    case 'ZodObject': {
-      const object = schema as z.ZodObject<z.ZodRawShape>;
-      const here = object._def.unknownKeys === 'strict' ? [] : [path];
-      return [...here, ...Object.entries(object.shape).flatMap(([key, value]) => nonStrictObjects(value as z.ZodTypeAny, `${path}.${key}`))];
-    }
-    case 'ZodOptional':
-    case 'ZodNullable':
-    case 'ZodDefault':
-      return nonStrictObjects(def.innerType!, path);
-    case 'ZodEffects':
-      return nonStrictObjects(def.schema!, path);
-    case 'ZodArray':
-      return nonStrictObjects(def.type!, `${path}[]`);
-    default:
-      return [];
+function nonStrictObjects(schema: unknown, path: string): string[] {
+  if (schema instanceof z.ZodObject) {
+    const here = schema.def.catchall instanceof z.ZodNever ? [] : [path];
+    return [...here, ...Object.entries(schema.shape).flatMap(([key, value]) => nonStrictObjects(value, `${path}.${key}`))];
   }
+  if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable || schema instanceof z.ZodDefault) {
+    return nonStrictObjects(schema.unwrap(), path);
+  }
+  if (schema instanceof z.ZodPipe) return [...nonStrictObjects(schema.in, path), ...nonStrictObjects(schema.out, path)];
+  if (schema instanceof z.ZodArray) return nonStrictObjects(schema.element, `${path}[]`);
+  return [];
 }
 
 describe('tool input schemas', () => {
+  it('finds a plain object behind optional, array and transform wrappers', () => {
+    const schema = strictInput({ a: z.object({ b: z.string() }).optional(), c: z.array(z.object({}).transform(value => value)) });
+    expect(nonStrictObjects(schema, 'tool')).toEqual(['tool.a', 'tool.c[]']);
+  });
+
   it('are strict objects at every level, so no misnamed argument is dropped silently', () => {
     expect(toolDefinitions.flatMap(tool => nonStrictObjects(tool.schema, tool.name))).toEqual([]);
   });

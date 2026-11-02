@@ -107,7 +107,7 @@ describe('describeFailure', () => {
     const result = z.object({ watermark: z.string(), output_dir: z.string() }).safeParse({});
     expect(result.success).toBe(false);
     const text = describeFailure('fetch window', (result as { error: z.ZodError }).error);
-    expect(text).toBe('Failed to fetch window: watermark: Required; output_dir: Required');
+    expect(text).toBe('Failed to fetch window: watermark: Invalid input: expected string, received undefined; output_dir: Invalid input: expected string, received undefined');
   });
 
   it('puts a multi-line message on one line', () => {

@@ -1,6 +1,5 @@
 import path from "node:path";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import { strictInput } from "./strict-input.js";
 
 // Schema definitions
@@ -707,8 +706,8 @@ export function toMcpTools(tools: ToolDefinition[]) {
   return tools.map(tool => ({
     name: tool.name,
     description: tool.description,
-    inputSchema: zodToJsonSchema(tool.schema),
-    ...(tool.outputSchema ? { outputSchema: zodToJsonSchema(tool.outputSchema) } : {}),
+    inputSchema: z.toJSONSchema(tool.schema, { io: "input" }),
+    ...(tool.outputSchema ? { outputSchema: z.toJSONSchema(tool.outputSchema) } : {}),
     annotations: tool.annotations,
   }));
 }
