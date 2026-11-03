@@ -3,7 +3,8 @@
 // the index, then map every change in the working tree and index to its symbols and flows with
 // detect-changes. detect-changes reads hunks against the index, so without the refresh it names
 // symbols at stale line numbers. A partial or capped result is not a complete check and fails,
-// as does output this script does not recognise, so a changed tool can never pass silently.
+// as does output this script does not recognise, so a changed tool can never pass silently. On a
+// HIGH or CRITICAL rating it prints the ordered steps of each flow detect-changes lists.
 import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -39,23 +40,50 @@ const REBUILD = ['analyze', '--index-only', '--force', '--no-parse-cache'];
 const COUNT_EMPTY_IDS = ['cypher', "MATCH (n) WHERE n.id = '' RETURN count(n)", '--repo', '.'];
 const DETECT = ['detect-changes', '--scope', 'all', '--repo', '.'];
 
-// The count in cypher's answer to COUNT_EMPTY_IDS, or null when it holds none: stdout is JSON
-// whose markdown is a one-column table of header, separator and the count's row.
-function parseCount(output) {
+// The cells of each row in a cypher answer, or null when it is not one: stdout is JSON whose
+// markdown is a table of header, separator and rows, or a bare [] when no row matched.
+function parseRows(output) {
+  if (output.trim() === '[]') return [];
   try {
-    const rows = JSON.parse(output).markdown.trim().split('\n');
-    const match = /^\|\s*(\d+)\s*\|$/.exec(rows.at(-1).trim());
-    return rows.length === 3 && match ? Number(match[1]) : null;
+    const lines = JSON.parse(output).markdown.trim().split('\n');
+    if (lines.length < 2) return null;
+    const rows = lines.slice(2).map(line => /^\|(.*)\|$/.exec(line.trim())?.[1].split('|').map(cell => cell.trim()));
+    return rows.every(Boolean) ? rows : null;
   } catch {
     return null;
   }
 }
 
+// The count in cypher's answer to COUNT_EMPTY_IDS, or null when it holds none.
+function parseCount(output) {
+  const rows = parseRows(output);
+  return rows?.length === 1 && rows[0].length === 1 && /^\d+$/.test(rows[0][0]) ? Number(rows[0][0]) : null;
+}
+
+// A HIGH or CRITICAL rating has to be traced flow by flow before a commit, so each flow
+// detect-changes lists under such a rating is printed as its steps.
+const TRACED_RISKS = ['high', 'critical'];
+const FLOW_LINE = /^ {2}• (.+) \(\d+ steps?\) — changed: /;
+
+const stepsQuery = label => [
+  'cypher',
+  `MATCH (s)-[r:CodeRelation]->(p:Process) WHERE r.type = 'STEP_IN_PROCESS' AND p.label = '${label.replace(/[\\']/g, '\\$&')}' RETURN r.step, s.id, s.filePath ORDER BY r.step`,
+  '--repo',
+  '.',
+];
+
+// The labels of the flows detect-changes lists, when it rates the risk HIGH or CRITICAL; none otherwise.
+function tracedFlows(output) {
+  const risk = /^Risk level: (\w+)$/m.exec(output)?.[1].toLowerCase();
+  if (!TRACED_RISKS.includes(risk)) return [];
+  return output.split('\n').flatMap(line => FLOW_LINE.exec(line)?.[1] ?? []);
+}
+
 // run(args) runs the GitNexus runner with args and returns { status, stdout, stderr }; log prints
 // a line; runnerExists tells whether the runner at runner is there. Returns the exit code. The
 // output of the index builds and the empty-id counts (banner, index statistics, warnings) is
-// printed only when one fails, so a passing check ends in detect-changes' risk level and changed
-// symbols.
+// printed only when one fails, so a passing check ends in detect-changes' risk level, changed
+// symbols and affected flows, then the steps of those flows on a HIGH or CRITICAL rating.
 export function runGraphCheck(run, log, runnerExists, runner = RUNNER) {
   if (!runnerExists()) {
     log(`graph:check: ${runner} is missing; create it with npx gitnexus@latest analyze, then run npm run graph:check again`);
@@ -99,6 +127,22 @@ export function runGraphCheck(run, log, runnerExists, runner = RUNNER) {
   }
   const detect = step(DETECT, true);
   if (detect.code !== 0) return detect.code;
+  // The steps only inform the commit; a query that fails or answers unrecognisably is named and
+  // leaves the exit code to detect-changes' answer.
+  for (const label of tracedFlows(detect.stdout)) {
+    const { code, stdout } = step(stepsQuery(label));
+    if (code !== 0) continue;
+    const rows = parseRows(stdout);
+    if (rows === null || rows.some(cells => cells.length !== 3)) {
+      log(stdout.trimEnd());
+      log(`graph:check: unrecognised cypher output for the steps of flow ${label}`);
+    } else if (rows.length === 0) {
+      log(`graph:check: flow ${label} not found`);
+    } else {
+      log(`graph:check: steps of flow ${label}:`);
+      for (const [index, id, file] of rows) log(`  ${index}. ${id} (${file})`);
+    }
+  }
   const reasons = judgeDetectChanges(detect.stdout);
   if (reasons.length > 0) {
     log(`graph:check: not a complete check: ${reasons.join('; ')}`);
