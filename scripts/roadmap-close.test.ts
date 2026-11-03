@@ -21,10 +21,15 @@ const roadmap = [
 const lines = (...parts: string[]) => `${parts.join('\n')}\n`;
 
 describe('closeItem', () => {
-  it('removes the first item and renumbers the rest, keeping the preamble and spacing', () => {
+  it('removes the first item and keeps the numbers of the rest, the preamble and the spacing', () => {
     expect(closeItem(roadmap, 1)).toEqual({
-      markdown: lines('# Roadmap', '', 'Work to implement, in order.', '', '## 1. Second', '', 'Two.', '', '```', '## 9. not a heading', '```', '', '## 2. Third', '', 'Three.'),
+      markdown: lines('# Roadmap', '', 'Work to implement, in order.', '', '## 2. Second', '', 'Two.', '', '```', '## 9. not a heading', '```', '', '## 3. Third', '', 'Three.'),
     });
+  });
+
+  it('closes an item by its number when the numbers are out of order or have gaps', () => {
+    const closed = closeItem('# Roadmap\n\n## 7. Fix\n\nFix.\n\n## 2. Second\n\nTwo.\n\n## 5. Fifth\n\nFive.\n', 2);
+    expect(closed).toEqual({ markdown: '# Roadmap\n\n## 7. Fix\n\nFix.\n\n## 5. Fifth\n\nFive.\n' });
   });
 
   it('closing the last item leaves the file ending in one newline', () => {
@@ -35,15 +40,6 @@ describe('closeItem', () => {
 
   it('closing the only item keeps CRLF line endings', () => {
     expect(closeItem('# Roadmap\r\n\r\n## 1. Only\r\n\r\nIt.\r\n', 1)).toEqual({ markdown: '# Roadmap\r\n' });
-  });
-
-  it('renumbers a heading whose number loses a digit', () => {
-    const eleven = Array.from({ length: 11 }, (_, index) => `## ${index + 1}. Item ${index + 1}\n\nText.\n`).join('\n');
-    const closed = closeItem(`# Roadmap\n\n${eleven}`, 9).markdown as string;
-    expect(closed.match(/^## .*$/gm)).toEqual([
-      '## 1. Item 1', '## 2. Item 2', '## 3. Item 3', '## 4. Item 4', '## 5. Item 5', '## 6. Item 6', '## 7. Item 7', '## 8. Item 8',
-      '## 9. Item 10', '## 10. Item 11',
-    ]);
   });
 
   it('refuses an item that does not exist, naming the headings found', () => {
@@ -61,9 +57,9 @@ describe('closeItem', () => {
   });
 
   it.each([
-    ['a skipped number', '## 1. First\n\n## 3. Third\n', ['## 1. First', '## 3. Third']],
+    ['a repeated number', '## 1. First\n\n## 1. Again\n', ['## 1. First', '## 1. Again']],
     ['a heading with no number', '## 1. First\n\n## Notes\n', ['## Notes']],
-  ])('refuses headings not numbered 1, 2, 3, … in order: %s', (_name, input, named) => {
+  ])('refuses headings that do not each hold a unique number: %s', (_name, input, named) => {
     const refused = closeItem(input, 1);
     expect(refused.markdown).toBeUndefined();
     expect(refused.error).toBeDefined();
@@ -85,7 +81,7 @@ describe('roadmap-close.mjs', () => {
   it('closes the item in ROADMAP.md', () => {
     fs.writeFileSync(path.join(dir, 'ROADMAP.md'), roadmap);
     expect(run(['2']).code).toBe(0);
-    expect(file()).toBe(lines('# Roadmap', '', 'Work to implement, in order.', '', '## 1. First', '', 'One.', '', '## 2. Third', '', 'Three.'));
+    expect(file()).toBe(lines('# Roadmap', '', 'Work to implement, in order.', '', '## 1. First', '', 'One.', '', '## 3. Third', '', 'Three.'));
   });
 
   it('refuses a missing item without changing the file', () => {

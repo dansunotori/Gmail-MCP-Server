@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Closes a roadmap item (npm run roadmap:close -- <n>): removes the `## <n>.` section of
-// ROADMAP.md up to the next `## ` heading and renumbers the later headings from n, leaving the
-// preamble and the spacing between sections as they are. Refuses, naming the headings found,
-// when there is no section n or the headings are not numbered 1, 2, 3, … in order.
+// ROADMAP.md up to the next `## ` heading, leaving the numbers of the other items, the preamble
+// and the spacing between sections as they are. Refuses, naming the headings found, when there
+// is no section n or a heading does not hold a number of its own.
 import fs from 'fs';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { runDirectly } from './script-support.mjs';
@@ -22,34 +22,23 @@ function sections(markdown) {
     });
 }
 
-// The markdown with item n removed and the later items renumbered, as { markdown }, or
-// { error } naming the headings found.
+// The markdown with item n removed, as { markdown }, or { error } naming the headings found.
 export function closeItem(markdown, n) {
   const headings = sections(markdown);
   const found = headings.length === 0 ? 'no ## headings' : `the headings are:\n${headings.map(heading => heading.line).join('\n')}`;
-  if (!headings.every((heading, index) => NUMBERED.exec(heading.line)?.[1] === String(index + 1))) {
-    return { error: `the ## headings are not numbered 1, 2, 3, … in order; ${found}` };
+  const numbers = headings.map(heading => NUMBERED.exec(heading.line)?.[1]);
+  if (numbers.some(number => number === undefined) || new Set(numbers).size !== numbers.length) {
+    return { error: `the ## headings do not each hold a unique number; ${found}` };
   }
-  if (n < 1 || n > headings.length) return { error: `there is no item ${n}; ${found}` };
+  const index = numbers.indexOf(String(n));
+  if (index === -1) return { error: `there is no item ${n}; ${found}` };
 
-  const removed = headings[n - 1];
-  const next = headings[n];
-  let result;
-  if (next) {
-    result = markdown.slice(0, removed.start) + markdown.slice(next.start);
-  } else {
-    // The last item: the file keeps the line ending it ended with, after the previous section.
-    const ending = /\r?\n$/.exec(markdown)?.[0] ?? '';
-    result = markdown.slice(0, removed.start).replace(/(?:\r?\n)+$/, '') + ending;
-  }
-  // Each later heading moves up by the removed section's length and its number goes down by one;
-  // the last is rewritten first, so a number losing a digit leaves the earlier offsets in place.
-  const shift = next ? next.start - removed.start : 0;
-  for (let number = headings.length; number > n; number--) {
-    const at = headings[number - 1].start - shift + 3;
-    result = result.slice(0, at) + String(number - 1) + result.slice(at + String(number).length);
-  }
-  return { markdown: result };
+  const removed = headings[index];
+  const next = headings[index + 1];
+  if (next) return { markdown: markdown.slice(0, removed.start) + markdown.slice(next.start) };
+  // The last item: the file keeps the line ending it ended with, after the previous section.
+  const ending = /\r?\n$/.exec(markdown)?.[0] ?? '';
+  return { markdown: markdown.slice(0, removed.start).replace(/(?:\r?\n)+$/, '') + ending };
 }
 
 function main(args) {
