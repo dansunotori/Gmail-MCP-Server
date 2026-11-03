@@ -19,12 +19,12 @@ const emptyIds = (count: number): Result => ({
 
 // The cypher command's answer to a flow's steps query: the JSON with its markdown table, or the
 // bare [] it prints when no row matches.
-const flowSteps = (rows: [number, string, string][]): Result => ({
+const flowSteps = (rows: [string, number, string, string][]): Result => ({
   status: 0,
   stdout: rows.length === 0
     ? '[]'
     : JSON.stringify({
-      markdown: ['| r.step | s.id | s.filePath |', '| --- | --- | --- |', ...rows.map(row => `| ${row.join(' | ')} |`)].join('\n'),
+      markdown: ['| p.id | r.step | s.id | s.filePath |', '| --- | --- | --- | --- |', ...rows.map(row => `| ${row.join(' | ')} |`)].join('\n'),
       row_count: rows.length,
       staleness: { status: 'current' },
     }, null, 2),
@@ -37,7 +37,7 @@ const REBUILD = ['analyze', '--index-only', '--force', '--no-parse-cache'];
 const DETECT = ['detect-changes', '--scope', 'all', '--repo', '.'];
 const STEPS = (quotedLabel: string) => [
   'cypher',
-  `MATCH (s)-[r:CodeRelation]->(p:Process) WHERE r.type = 'STEP_IN_PROCESS' AND p.label = '${quotedLabel}' RETURN r.step, s.id, s.filePath ORDER BY r.step`,
+  `MATCH (s)-[r:CodeRelation]->(p:Process) WHERE r.type = 'STEP_IN_PROCESS' AND p.label = '${quotedLabel}' RETURN p.id, r.step, s.id, s.filePath ORDER BY p.id, r.step`,
   '--repo',
   '.',
 ];
@@ -89,12 +89,12 @@ const reachingFlows = (risk: string, affected: number) => [
 const STEP_FLOW = STEPS('RunGraphCheck → Step');
 const QUOTED_FLOW = STEPS("It\\'s → Done");
 const STEP_FLOW_ROWS = flowSteps([
-  [1, 'Function:scripts/graph-check.mjs:runGraphCheck', 'scripts/graph-check.mjs'],
-  [2, 'Function:scripts/graph-check.mjs:runGraphCheck.step@65:2', 'scripts/graph-check.mjs'],
+  ['proc_55_rungraphcheck', 1, 'Function:scripts/graph-check.mjs:runGraphCheck', 'scripts/graph-check.mjs'],
+  ['proc_55_rungraphcheck', 2, 'Function:scripts/graph-check.mjs:runGraphCheck.step@65:2', 'scripts/graph-check.mjs'],
 ]);
-const QUOTED_FLOW_ROWS = flowSteps([[1, 'Function:src/done.ts:done', 'src/done.ts']]);
+const QUOTED_FLOW_ROWS = flowSteps([['proc_9_done', 1, 'Function:src/done.ts:done', 'src/done.ts']]);
 const STEP_FLOW_LINES = [
-  'graph:check: steps of flow RunGraphCheck → Step:',
+  'graph:check: steps of flow RunGraphCheck → Step (proc_55_rungraphcheck):',
   '  1. Function:scripts/graph-check.mjs:runGraphCheck (scripts/graph-check.mjs)',
   '  2. Function:scripts/graph-check.mjs:runGraphCheck.step@65:2 (scripts/graph-check.mjs)',
 ];
@@ -200,8 +200,38 @@ describe('runGraphCheck', () => {
       const { code, logged } = check(run);
       expect(calls, risk).toEqual([REFRESH, COUNT, DETECT, STEP_FLOW, QUOTED_FLOW]);
       expect(code).toBe(0);
-      expect(logged).toEqual([detect, ...STEP_FLOW_LINES, "graph:check: steps of flow It's → Done:", '  1. Function:src/done.ts:done (src/done.ts)']);
+      expect(logged).toEqual([detect, ...STEP_FLOW_LINES, "graph:check: steps of flow It's → Done (proc_9_done):", '  1. Function:src/done.ts:done (src/done.ts)']);
     }
+  });
+
+  it('prints the steps of processes sharing a label apart, each in step order', () => {
+    const detect = reachingFlows('high', 7);
+    const shared = flowSteps([
+      ['proc_142_searchcommand', 1, 'Function:src/cli/commands.ts:searchCommand', 'src/cli/commands.ts'],
+      ['proc_142_searchcommand', 2, 'Function:src/read-tools.ts:searchEmails', 'src/read-tools.ts'],
+      ['proc_143_searchcommand', 1, 'Function:src/cli/commands.ts:searchCommand', 'src/cli/commands.ts'],
+      ['proc_143_searchcommand', 2, 'Function:src/cli/commands.test.ts:idsGmail.list', 'src/cli/commands.test.ts'],
+    ]);
+    const { run } = runner({ status: 0, stdout: detect }, undefined, undefined, { [STEP_FLOW[1]]: shared, [QUOTED_FLOW[1]]: QUOTED_FLOW_ROWS });
+    const { code, logged } = check(run);
+    expect(code).toBe(0);
+    expect(logged.slice(1, 7)).toEqual([
+      'graph:check: steps of flow RunGraphCheck → Step (proc_142_searchcommand):',
+      '  1. Function:src/cli/commands.ts:searchCommand (src/cli/commands.ts)',
+      '  2. Function:src/read-tools.ts:searchEmails (src/read-tools.ts)',
+      'graph:check: steps of flow RunGraphCheck → Step (proc_143_searchcommand):',
+      '  1. Function:src/cli/commands.ts:searchCommand (src/cli/commands.ts)',
+      '  2. Function:src/cli/commands.test.ts:idsGmail.list (src/cli/commands.test.ts)',
+    ]);
+  });
+
+  it('names a high-rated flow listing whose lines it cannot read, running no steps query and keeping the exit code', () => {
+    const detect = reachingFlows('high', 7).replace(/ \((\d+) steps?\) — changed:/g, ' [$1] changed:');
+    const { run, calls } = runner({ status: 0, stdout: detect });
+    const { code, logged } = check(run);
+    expect(calls).toEqual([REFRESH, COUNT, DETECT]);
+    expect(code).toBe(0);
+    expect(logged).toEqual([detect, 'graph:check: unrecognised flow listing in detect-changes output; no flow steps printed']);
   });
 
   it('names a flow the steps query does not find as not found', () => {

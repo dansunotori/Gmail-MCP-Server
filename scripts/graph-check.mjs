@@ -61,22 +61,26 @@ function parseCount(output) {
 }
 
 // A HIGH or CRITICAL rating has to be traced flow by flow before a commit, so each flow
-// detect-changes lists under such a rating is printed as its steps.
+// detect-changes lists under such a rating is printed as its steps. Several processes can share
+// a label, so the steps query keeps each process's steps apart by its id.
 const TRACED_RISKS = ['high', 'critical'];
 const FLOW_LINE = /^ {2}• (.+) \(\d+ steps?\) — changed: /;
 
 const stepsQuery = label => [
   'cypher',
-  `MATCH (s)-[r:CodeRelation]->(p:Process) WHERE r.type = 'STEP_IN_PROCESS' AND p.label = '${label.replace(/[\\']/g, '\\$&')}' RETURN r.step, s.id, s.filePath ORDER BY r.step`,
+  `MATCH (s)-[r:CodeRelation]->(p:Process) WHERE r.type = 'STEP_IN_PROCESS' AND p.label = '${label.replace(/[\\']/g, '\\$&')}' RETURN p.id, r.step, s.id, s.filePath ORDER BY p.id, r.step`,
   '--repo',
   '.',
 ];
 
-// The labels of the flows detect-changes lists, when it rates the risk HIGH or CRITICAL; none otherwise.
+// The labels of the flows detect-changes lists when it rates the risk HIGH or CRITICAL, none
+// under any other rating, and null when such a rating lists no flow line this script can read:
+// more than five affected processes always come with a listing.
 function tracedFlows(output) {
   const risk = /^Risk level: (\w+)$/m.exec(output)?.[1].toLowerCase();
   if (!TRACED_RISKS.includes(risk)) return [];
-  return output.split('\n').flatMap(line => FLOW_LINE.exec(line)?.[1] ?? []);
+  const labels = output.split('\n').flatMap(line => FLOW_LINE.exec(line)?.[1] ?? []);
+  return labels.length > 0 ? labels : null;
 }
 
 // run(args) runs the GitNexus runner with args and returns { status, stdout, stderr }; log prints
@@ -129,18 +133,22 @@ export function runGraphCheck(run, log, runnerExists, runner = RUNNER) {
   if (detect.code !== 0) return detect.code;
   // The steps only inform the commit; a query that fails or answers unrecognisably is named and
   // leaves the exit code to detect-changes' answer.
-  for (const label of tracedFlows(detect.stdout)) {
+  const labels = tracedFlows(detect.stdout);
+  if (labels === null) log('graph:check: unrecognised flow listing in detect-changes output; no flow steps printed');
+  for (const label of labels ?? []) {
     const { code, stdout } = step(stepsQuery(label));
     if (code !== 0) continue;
     const rows = parseRows(stdout);
-    if (rows === null || rows.some(cells => cells.length !== 3)) {
+    if (rows === null || rows.some(cells => cells.length !== 4)) {
       log(stdout.trimEnd());
       log(`graph:check: unrecognised cypher output for the steps of flow ${label}`);
     } else if (rows.length === 0) {
       log(`graph:check: flow ${label} not found`);
     } else {
-      log(`graph:check: steps of flow ${label}:`);
-      for (const [index, id, file] of rows) log(`  ${index}. ${id} (${file})`);
+      rows.forEach(([processId, index, id, file], row) => {
+        if (processId !== rows[row - 1]?.[0]) log(`graph:check: steps of flow ${label} (${processId}):`);
+        log(`  ${index}. ${id} (${file})`);
+      });
     }
   }
   const reasons = judgeDetectChanges(detect.stdout);
