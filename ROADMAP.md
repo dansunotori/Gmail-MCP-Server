@@ -36,3 +36,11 @@ Keep a real repository only for behaviour that is git's own: the hook reading th
 ## 7. import-prompts keeps a second top-level heading from becoming a roadmap item heading
 
 `importPrompts` in `scripts/import-prompts.mjs` moves every heading of depth 5 or less after the title down one level, so a second `# ` heading in a prompt becomes `## `, which `roadmap:close` and the numbered-heading check read as an item boundary. Move headings after the title so that none lands at depth 2, and test it with a prompt holding a second `# ` heading: the imported item holds no `## ` line besides its own.
+
+## 8. graph:check prints the steps of flows sharing a label apart
+
+`scripts/graph-check.mjs` finds a flow's steps by `p.label`, but labels repeat across processes (in this index `SearchCommand → List`, `ListLabelsCommand → List` and `ListFiltersCommand → List` each label three), so the steps of every process with that label come back in one list ordered by step, interleaved. Return `p.id` with each row (`RETURN p.id, r.step, s.id, s.filePath ORDER BY p.id, r.step`) and print each process under its own heading naming the label and the id. Test with the runner stubbed: an answer holding two processes of one label prints two step lists, each in step order.
+
+## 9. graph:check names a flow listing it cannot read
+
+When `detect-changes` rates the risk `high` or `critical` and prints `Affected execution flows:`, but no line under it matches `FLOW_LINE` in `scripts/graph-check.mjs`, the check prints no steps and says nothing, so a change in how GitNexus formats those lines turns the steps off silently. In that case print one line naming the unrecognised flow listing, keeping the exit code. Test with the runner stubbed: a high rating whose flow lines are in another format prints that line and runs no steps query.
