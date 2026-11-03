@@ -38,3 +38,5 @@ tmp/
 .claude/skills/gitnexus-*/
 .superpowers/
 .superpowers-state/
+
+.test-theatre-ledger.md
