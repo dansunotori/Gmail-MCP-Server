@@ -21,25 +21,30 @@ const roadmap = [
 const lines = (...parts: string[]) => `${parts.join('\n')}\n`;
 
 describe('closeItem', () => {
-  it('removes the first item and keeps the numbers of the rest, the preamble and the spacing', () => {
+  it('removes the first item, keeps the numbers of the rest, the preamble and the spacing, and records the closed number before the first item', () => {
     expect(closeItem(roadmap, 1)).toEqual({
-      markdown: lines('# Roadmap', '', 'Work to implement, in order.', '', '## 2. Second', '', 'Two.', '', '```', '## 9. not a heading', '```', '', '## 3. Third', '', 'Three.'),
+      markdown: lines('# Roadmap', '', 'Work to implement, in order.', '', '<!-- highest item number: 1 -->', '', '## 2. Second', '', 'Two.', '', '```', '## 9. not a heading', '```', '', '## 3. Third', '', 'Three.'),
     });
   });
 
-  it('closes an item by its number when the numbers are out of order or have gaps', () => {
-    const closed = closeItem('# Roadmap\n\n## 7. Fix\n\nFix.\n\n## 2. Second\n\nTwo.\n\n## 5. Fifth\n\nFive.\n', 2);
-    expect(closed).toEqual({ markdown: '# Roadmap\n\n## 7. Fix\n\nFix.\n\n## 5. Fifth\n\nFive.\n' });
+  it('closes an item by its number when the numbers are out of order or have gaps, leaving a higher recorded number as it is', () => {
+    const closed = closeItem('# Roadmap\n\n<!-- highest item number: 9 -->\n\n## 7. Fix\n\nFix.\n\n## 2. Second\n\nTwo.\n\n## 5. Fifth\n\nFive.\n', 2);
+    expect(closed).toEqual({ markdown: '# Roadmap\n\n<!-- highest item number: 9 -->\n\n## 7. Fix\n\nFix.\n\n## 5. Fifth\n\nFive.\n' });
+  });
+
+  it('raises a lower recorded number to the closed one', () => {
+    const closed = closeItem('# Roadmap\n\n<!-- highest item number: 2 -->\n\n## 1. First\n\nOne.\n\n## 4. Fourth\n\nFour.\n', 4);
+    expect(closed).toEqual({ markdown: '# Roadmap\n\n<!-- highest item number: 4 -->\n\n## 1. First\n\nOne.\n' });
   });
 
   it('closing the last item leaves the file ending in one newline', () => {
     expect(closeItem(roadmap, 3)).toEqual({
-      markdown: lines('# Roadmap', '', 'Work to implement, in order.', '', '## 1. First', '', 'One.', '', '## 2. Second', '', 'Two.', '', '```', '## 9. not a heading', '```'),
+      markdown: lines('# Roadmap', '', 'Work to implement, in order.', '', '<!-- highest item number: 3 -->', '', '## 1. First', '', 'One.', '', '## 2. Second', '', 'Two.', '', '```', '## 9. not a heading', '```'),
     });
   });
 
-  it('closing the only item keeps CRLF line endings', () => {
-    expect(closeItem('# Roadmap\r\n\r\n## 1. Only\r\n\r\nIt.\r\n', 1)).toEqual({ markdown: '# Roadmap\r\n' });
+  it('closing the only item keeps the record and CRLF line endings', () => {
+    expect(closeItem('# Roadmap\r\n\r\n## 1. Only\r\n\r\nIt.\r\n', 1)).toEqual({ markdown: '# Roadmap\r\n\r\n<!-- highest item number: 1 -->\r\n' });
   });
 
   it('refuses an item that does not exist, naming the headings found', () => {
@@ -81,7 +86,7 @@ describe('roadmap-close.mjs', () => {
   it('closes the item in ROADMAP.md', () => {
     fs.writeFileSync(path.join(dir, 'ROADMAP.md'), roadmap);
     expect(run(['2']).code).toBe(0);
-    expect(file()).toBe(lines('# Roadmap', '', 'Work to implement, in order.', '', '## 1. First', '', 'One.', '', '## 3. Third', '', 'Three.'));
+    expect(file()).toBe(lines('# Roadmap', '', 'Work to implement, in order.', '', '<!-- highest item number: 2 -->', '', '## 1. First', '', 'One.', '', '## 3. Third', '', 'Three.'));
   });
 
   it('refuses a missing item without changing the file', () => {

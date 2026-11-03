@@ -11,17 +11,19 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { fromMarkdown } from 'mdast-util-from-markdown';
+import { recordedHighest } from './roadmap-close.mjs';
 import { runDirectly } from './script-support.mjs';
 
 const PROMPT_FILE = /^gmail-.+\.md$/;
 
 const sourceLine = name => `Source: \`${name}\``;
 
-// The next item number: one more than the highest `## N.` heading and than highestUsed, so a
-// number closed with roadmap:close is never given to another item.
+// The next item number: one more than the highest `## N.` heading, than the number the
+// roadmap's highest-number comment records and than highestUsed, so a number closed with
+// roadmap:close, committed or not, is never given to another item.
 function nextNumber(roadmap, highestUsed) {
   const numbers = [...roadmap.matchAll(/^## (\d+)\./gm)].map(match => Number(match[1]));
-  return Math.max(highestUsed, ...numbers) + 1;
+  return Math.max(highestUsed, recordedHighest(roadmap), ...numbers) + 1;
 }
 
 // The raw source of a heading's text, without its # markers or setext underline.

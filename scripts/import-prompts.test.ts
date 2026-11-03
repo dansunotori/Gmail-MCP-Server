@@ -88,6 +88,13 @@ describe('importPrompts', () => {
     expect(roadmap).toContain('## 21. New item\n');
   });
 
+  it('numbers a prompt imported after an uncommitted highest item was closed above that item, not with its number', () => {
+    write('gmail-new.md', '# New item\n\nBody.\n');
+    const closed = closeItem('# Roadmap\n\n## 1. First\n\nOne.\n\n## 2. Uncommitted\n\nTwo.\n', 2).markdown as string;
+    const { roadmap } = importPrompts({ promptsDir: dir, roadmap: closed, imported: never });
+    expect(roadmap.match(/^## .*$/gm)).toEqual(['## 1. First', '## 3. New item']);
+  });
+
   it('refuses a prompt with no title line, naming the file', () => {
     write('gmail-untitled.md', 'No heading here.\n');
     expect(() => importPrompts({ promptsDir: dir, roadmap: ROADMAP, imported: never }))

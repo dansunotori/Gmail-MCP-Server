@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Closes a roadmap item (npm run roadmap:close -- <n>): removes the `## <n>.` section of
 // ROADMAP.md up to the next `## ` heading, leaving the numbers of the other items, the preamble
-// and the spacing between sections as they are. Refuses, naming the headings found, when there
-// is no section n or a heading does not hold a number of its own.
+// and the spacing between sections as they are, and raises the `<!-- highest item number: N -->`
+// comment to n when it is lower. Refuses, naming the headings found, when there is no section n
+// or a heading does not hold a number of its own.
 import fs from 'fs';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { runDirectly } from './script-support.mjs';
@@ -22,8 +23,29 @@ function sections(markdown) {
     });
 }
 
-// The markdown with item n removed, as { markdown }, or { error } naming the headings found.
+// The comment recording the highest item number the roadmap has held, so that a number closed
+// before any commit is still never given to another item.
+const HIGHEST = /^<!-- highest item number: (\d+) -->$/m;
+const highestComment = number => `<!-- highest item number: ${number} -->`;
+
+// The number the roadmap's highest-number comment records, or 0 when it has none.
+export function recordedHighest(markdown) {
+  return Number(HIGHEST.exec(markdown)?.[1] ?? 0);
+}
+
+// The markdown with item n removed and the highest-number comment at least n, as { markdown },
+// or { error } naming the headings found. A missing comment goes before the first item.
 export function closeItem(markdown, n) {
+  const closed = removeItem(markdown, n);
+  if (closed.error) return closed;
+  const comment = highestComment(Math.max(recordedHighest(markdown), n));
+  if (HIGHEST.test(closed.markdown)) return { markdown: closed.markdown.replace(HIGHEST, comment) };
+  const eol = markdown.includes('\r\n') ? '\r\n' : '\n';
+  const first = sections(markdown)[0].start;
+  return removeItem(markdown.slice(0, first) + comment + eol + eol + markdown.slice(first), n);
+}
+
+function removeItem(markdown, n) {
   const headings = sections(markdown);
   const found = headings.length === 0 ? 'no ## headings' : `the headings are:\n${headings.map(heading => heading.line).join('\n')}`;
   const numbers = headings.map(heading => NUMBERED.exec(heading.line)?.[1]);
