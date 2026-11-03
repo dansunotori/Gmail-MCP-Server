@@ -1,14 +1,10 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { runScript } from './git-fixture.js';
-import { closeItem } from './roadmap-close.mjs';
+import { describe, expect, it } from 'vitest';
+import { closeItem, main } from './roadmap-close.mjs';
 
-const scripts = path.dirname(fileURLToPath(import.meta.url));
-const root = path.join(scripts, '..');
-const script = path.join(scripts, 'roadmap-close.mjs');
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // Three items, the second holding a code block with a heading-like line that is not a heading.
 const roadmap = [
@@ -73,36 +69,31 @@ describe('closeItem', () => {
 });
 
 describe('roadmap-close.mjs', () => {
-  let dir: string;
-  beforeEach(() => {
-    dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'roadmap-close-')));
-  });
-  afterEach(() => {
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
-  const run = (args: string[]) => runScript(script, args, { cwd: dir, env: process.env });
-  const file = () => fs.readFileSync(path.join(dir, 'ROADMAP.md'), 'utf8');
+  // The command line on a ROADMAP.md held in memory: its exit code, the file it leaves, its log.
+  const run = (args: string[]) => {
+    let file = roadmap;
+    const logged: string[] = [];
+    const code = main(args, { read: () => file, write: (markdown: string) => { file = markdown; }, log: (line: string) => logged.push(line) });
+    return { code, file, logged };
+  };
 
   it('closes the item in ROADMAP.md', () => {
-    fs.writeFileSync(path.join(dir, 'ROADMAP.md'), roadmap);
-    expect(run(['2']).code).toBe(0);
-    expect(file()).toBe(lines('# Roadmap', '', 'Work to implement, in order.', '', '<!-- highest item number: 2 -->', '', '## 1. First', '', 'One.', '', '## 3. Third', '', 'Three.'));
+    expect(run(['2'])).toEqual({
+      code: 0,
+      file: lines('# Roadmap', '', 'Work to implement, in order.', '', '<!-- highest item number: 2 -->', '', '## 1. First', '', 'One.', '', '## 3. Third', '', 'Three.'),
+      logged: [],
+    });
   });
 
   it('refuses a missing item without changing the file', () => {
-    fs.writeFileSync(path.join(dir, 'ROADMAP.md'), roadmap);
     const refused = run(['4']);
     expect(refused.code).toBe(1);
-    expect(refused.stderr).not.toBe('');
-    expect(file()).toBe(roadmap);
+    expect(refused.logged).toEqual([expect.stringMatching(/^roadmap:close: there is no item 4; /)]);
+    expect(refused.file).toBe(roadmap);
   });
 
   it.each([[[]], [['0']], [['two']], [['1', '2']]])('refuses the arguments %j with the usage and leaves the file unchanged', (args) => {
-    fs.writeFileSync(path.join(dir, 'ROADMAP.md'), roadmap);
-    const refused = run(args);
-    expect(refused.code).toBe(2);
-    expect(refused.stderr).toContain('roadmap:close');
-    expect(file()).toBe(roadmap);
+    expect(run(args)).toEqual({ code: 2, file: roadmap, logged: ['usage: npm run roadmap:close -- <n>'] });
   });
 
   it('is the roadmap:close npm script', () => {

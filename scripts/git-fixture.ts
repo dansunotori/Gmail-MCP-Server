@@ -53,6 +53,36 @@ export function scriptedRun(answers: Record<string, { status?: number; stdout?: 
   return { run, calls };
 }
 
+// A runner in the shape of runCaptured (script-support.mjs) for the scripts that read a command's
+// output, running nothing. answers maps a full command line ("git show :ROADMAP.md") to the
+// stdout it returns, or to the error it throws; a command line without an answer throws, naming
+// it. calls lists every command run, as its command line and the directory it ran in.
+export function answeringRun(answers: Record<string, string | Buffer | Error> = {}) {
+  const calls: { line: string; cwd?: string }[] = [];
+  const run = (command: string, args: string[], options: { cwd?: string } = {}) => {
+    const line = [command, ...args].join(' ');
+    calls.push({ line, cwd: options.cwd });
+    const answer = answers[line];
+    if (answer === undefined) throw new Error(`unexpected command: ${line}`);
+    if (answer instanceof Error) throw answer;
+    return answer;
+  };
+  return { run, calls };
+}
+
+type Io = { stdin: () => string; stdout: (text: string) => void; stderr: (text: string) => void; run: unknown; env: NodeJS.ProcessEnv; cwd: string };
+
+// A script's main(args, io) run in-process with run as its runner, from cwd, with an empty
+// environment and stdin: its exit code and what it wrote to stderr.
+export function runMain(main: (args: string[], io: Io) => number, args: string[], run: unknown, cwd: string) {
+  const stderr: string[] = [];
+  const code = main(args, { stdin: () => '', stdout: () => {}, stderr: text => stderr.push(text), run, env: {}, cwd });
+  return { code, stderr: stderr.join('') };
+}
+
+// An error as execFileSync throws it for a command that exits with status.
+export const exitError = (status: number, message = `exited ${status}`) => Object.assign(new Error(message), { status });
+
 // The answers of a clean main checkout: on main, nothing uncommitted.
 export const cleanMain: Record<string, { status?: number; stdout?: string }> = {
   'git rev-parse --abbrev-ref HEAD': { stdout: 'main\n' },

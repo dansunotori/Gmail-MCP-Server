@@ -3,8 +3,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CONFIG, REPORT, checkDuplicates, clonesOf, scopeRule } from './check-duplicates.mjs';
-import { fixtureRepo, gitIn, isolatedEnv, runScript, withoutInheritedGitEnv } from './git-fixture.js';
+import { CONFIG, REPORT, checkDuplicates, clonesOf, main, runCommitHook, scopeRule } from './check-duplicates.mjs';
+import { answeringRun, exitError, fixtureRepo, gitIn, isolatedEnv, runMain, runScript, withoutInheritedGitEnv } from './git-fixture.js';
+import { runCaptured } from './script-support.mjs';
 
 const scripts = path.dirname(fileURLToPath(import.meta.url));
 const script = path.join(scripts, 'check-duplicates.mjs');
@@ -58,28 +59,47 @@ describe('clonesOf', () => {
 
 const OTHER = 'export const other = 2;\n';
 
-// Repositories are built once and only read by the tests, except that C's tests each set the
-// config they need.
-const repos: string[] = [];
+const dirs: string[] = [];
+const writeIn = (dir: string, file: string, content: string) => {
+  fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+  fs.writeFileSync(path.join(dir, file), content);
+};
+const cli = (args: string[], run: typeof runCaptured, cwd: string) => runMain(main, args, run, cwd);
+// The project's PreToolUse hook on Bash for a command run in cwd: its deny reason, or undefined.
+const hookFor = (command: string, run: typeof runCaptured, cwd: string): string | undefined =>
+  runCommitHook({ cwd, tool_name: 'Bash', tool_input: { command } }, run);
+
+// A repository built once, its files staged, and only read by the tests.
 function repository(files: Record<string, string>) {
   const repo = fixtureRepo('check-duplicates-repo-');
-  repos.push(repo);
-  const git = gitIn(repo);
-  const write = (file: string, content: string) => {
-    fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
-    fs.writeFileSync(path.join(repo, file), content);
-  };
-  const run = (args: string[], input?: string) => runScript(script, args, { cwd: repo, env: isolatedEnv, input });
-  // The project's PreToolUse hook on Bash, as Claude Code runs it for a command.
-  const commitHook = (command: string) => run(['--commit-hook'], JSON.stringify({ cwd: repo, tool_name: 'Bash', tool_input: { command } }));
-  const denial = (command: string) => JSON.parse(commitHook(command).stdout).hookSpecificOutput;
+  dirs.push(repo);
+  const write = (file: string, content: string) => writeIn(repo, file, content);
   for (const [file, content] of Object.entries(files)) write(file, content);
-  git('add', '.');
-  return { repo, git, write, run, commitHook, denial };
+  gitIn(repo)('add', '.');
+  return { repo, write, run: (args: string[]) => cli(args, runCaptured, repo), hook: (command: string) => hookFor(command, runCaptured, repo) };
+}
+
+// A directory that is no repository, holding the working files and the config, with git
+// answered as if its index listed them and staged the blobs of staged and the config, all in
+// scope.
+function stubbed(workingFiles: Record<string, string>, stagedFiles: Record<string, string> = workingFiles) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'check-duplicates-stub-')));
+  dirs.push(dir);
+  const config = { [CONFIG]: JSON.stringify(projectConfig) };
+  const working = { ...config, ...workingFiles };
+  for (const [file, content] of Object.entries(working)) writeIn(dir, file, content);
+  const blobs = Object.entries({ ...config, ...stagedFiles }).map(([file, content], index) => ({ file, content, blob: String(index + 1).padStart(40, '0') }));
+  const git = answeringRun({
+    'git rev-parse --show-toplevel': `${dir}\n`,
+    'git ls-files -z --cached': Object.keys(working).map(file => `${file}\0`).join(''),
+    'git ls-files -s -z': blobs.map(({ file, blob }) => `100644 ${blob} 0\t${file}\0`).join(''),
+    'git cat-file --batch': Buffer.from(blobs.map(({ content, blob }) => `${blob} blob ${Buffer.byteLength(content)}\n${content}\n`).join('')),
+  });
+  return { dir, git, run: (args: string[]) => cli(args, git.run, dir), hook: (command: string) => hookFor(command, git.run, dir) };
 }
 
 afterAll(() => {
-  for (const repo of repos) fs.rmSync(repo, { recursive: true, force: true });
+  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
 describe('check-duplicates.mjs on a repository holding a clone in the index and another in the working copy', () => {
@@ -125,57 +145,61 @@ describe('check-duplicates.mjs on a repository holding a clone in the index and 
   });
 
   it('as a commit hook, denies a commit on the staged clone, naming it and the report', () => {
-    const denied = A.denial('git commit -m x');
-    expect(denied).toMatchObject({ hookEventName: 'PreToolUse', permissionDecision: 'deny' });
-    expect(denied.permissionDecisionReason).toContain('src/a.ts');
-    expect(denied.permissionDecisionReason).toContain('src/b.ts');
-    expect(denied.permissionDecisionReason).toContain(path.join(A.repo, REPORT));
-    expect(denied.permissionDecisionReason).not.toContain('src/c.ts');
+    const reason = A.hook('git commit -m x');
+    expect(reason).toContain('src/a.ts');
+    expect(reason).toContain('src/b.ts');
+    expect(reason).toContain(path.join(A.repo, REPORT));
+    expect(reason).not.toContain('src/c.ts');
   });
 
   it('as a commit hook, denies commit -a on the working copy clone', () => {
-    const denied = A.denial('git commit -a -m x');
-    expect(denied.permissionDecision).toBe('deny');
-    expect(denied.permissionDecisionReason).toContain('src/a.ts');
-    expect(denied.permissionDecisionReason).toContain('src/c.ts');
-    expect(denied.permissionDecisionReason).not.toContain('src/b.ts');
-  });
-
-  it('as a commit hook, refuses a commit naming paths, asking for staging instead', () => {
-    const denied = A.denial('git commit -m x src/b.ts');
-    expect(denied.permissionDecision).toBe('deny');
-    expect(denied.permissionDecisionReason).toContain('git add');
+    const reason = A.hook('git commit -a -m x');
+    expect(reason).toContain('src/a.ts');
+    expect(reason).toContain('src/c.ts');
+    expect(reason).not.toContain('src/b.ts');
   });
 });
 
-describe('check-duplicates.mjs on a repository without duplicated code', () => {
-  const B = repository({ [CONFIG]: JSON.stringify(projectConfig), 'src/unique.ts': 'export const unique = 1;\n' });
-
-  it('passes the command line check without output', () => {
-    expect(B.run([])).toEqual({ code: 0, stdout: '', stderr: '' });
+describe('check-duplicates.mjs with git answered by a stub', () => {
+  it('passes the command line check and allows a commit without duplicated code', () => {
+    const B = stubbed({ 'src/unique.ts': 'export const unique = 1;\n' });
+    expect(B.run([])).toEqual({ code: 0, stderr: '' });
+    expect(B.hook('git commit -m x')).toBeUndefined();
   });
 
-  it('as a commit hook, allows a commit', () => {
-    expect(B.commitHook('git commit -m x').stdout).toBe('');
+  it('as a commit hook, denies a commit on the clone the index stages, whatever the working copy holds', () => {
+    const C = stubbed({ 'src/a.ts': BLOCK, 'src/b.ts': OTHER }, { 'src/a.ts': BLOCK, 'src/b.ts': BLOCK });
+    const reason = C.hook('git commit -m x');
+    expect(reason).toContain('Duplicate code: 1 clone');
+    expect(reason).toContain('src/a.ts:1-8 duplicates src/b.ts:1-8');
+    expect(C.hook('git commit -a -m x')).toBeUndefined();
   });
-});
 
-describe('check-duplicates.mjs commit hook on a repository holding a staged clone', () => {
-  const C = repository({ [CONFIG]: JSON.stringify(projectConfig), 'src/a.ts': BLOCK, 'src/b.ts': BLOCK });
+  it('as a commit hook, refuses a commit naming paths, asking for staging instead, without reading the files', () => {
+    const C = stubbed({ 'src/a.ts': BLOCK });
+    expect(C.hook('git commit -m x src/a.ts')).toContain('git add');
+    expect(C.git.calls.map(call => call.line)).toEqual(['git rev-parse --show-toplevel']);
+  });
 
   it('does not check a repository without the config', () => {
-    C.git('rm', '-q', '--cached', '--ignore-unmatch', CONFIG);
-    fs.rmSync(path.join(C.repo, CONFIG), { force: true });
-    expect(C.commitHook('git commit -m x').stdout).toBe('');
+    const C = stubbed({ 'src/a.ts': BLOCK, 'src/b.ts': BLOCK });
+    fs.rmSync(path.join(C.dir, CONFIG));
+    expect(C.hook('git commit -m x')).toBeUndefined();
   });
 
   it('refuses a commit while the config is inconsistent', () => {
-    C.write(CONFIG, JSON.stringify({ ...projectConfig, format: ['typescript'] }));
-    C.git('add', CONFIG);
-    expect(C.denial('git commit -m x')).toMatchObject({ permissionDecision: 'deny' });
+    const C = stubbed({ 'src/a.ts': BLOCK });
+    writeIn(C.dir, CONFIG, JSON.stringify({ ...projectConfig, format: ['typescript'] }));
+    expect(C.hook('git commit -m x')).toContain('could not run');
+  });
+
+  it('exits 2 naming the failure when git cannot answer', () => {
+    const git = answeringRun({ 'git rev-parse --show-toplevel': exitError(128, 'not a git repository') });
+    expect(cli([], git.run, os.tmpdir())).toEqual({ code: 2, stderr: 'check-duplicates: not a git repository\n' });
   });
 });
 
+// The script as Claude Code runs it, a node process reading the payload on stdin.
 describe('check-duplicates.mjs commit hook wiring without a repository', () => {
   const D = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'check-duplicates-nogit-')));
   afterAll(() => {

@@ -12,12 +12,11 @@
 //   node scripts/check-roadmap.mjs --commit-hook  Claude Code PreToolUse hook on Bash: denies a
 //                                           git commit while its repository's staged or working
 //                                           ROADMAP.md fails
-import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fromMarkdown } from 'mdast-util-from-markdown';
-import { deny, readCommit, unreadableCommit } from './commit-hook.mjs';
-import { runDirectly } from './script-support.mjs';
+import { answerHook, readCommit, unreadableCommit } from './commit-hook.mjs';
+import { processIo, runDirectly } from './script-support.mjs';
 
 const ROADMAP = 'ROADMAP.md';
 
@@ -100,26 +99,28 @@ export function applyToolEdit(current, toolName, toolInput) {
 
 const format = (label, findings) => findings.map(({ line, phrase }) => `${label}:${line}: "${phrase}"`).join('\n');
 
-function runHook() {
-  const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
-  const project = process.env.CLAUDE_PROJECT_DIR || payload.cwd;
+// Claude Code PreToolUse hook on Write and Edit: the deny reason for a change to the project's
+// ROADMAP.md (env.CLAUDE_PROJECT_DIR, else the session directory) whose result reports finished
+// work, or undefined.
+export function runHook(payload, env) {
+  const project = env.CLAUDE_PROJECT_DIR || payload.cwd;
   const target = path.resolve(payload.cwd || project, payload.tool_input?.file_path ?? '');
   const roadmap = path.join(project, ROADMAP);
-  if (target !== roadmap) return;
+  if (target !== roadmap) return undefined;
   const current = fs.existsSync(roadmap) ? fs.readFileSync(roadmap, 'utf8') : '';
   const result = applyToolEdit(current, payload.tool_name, payload.tool_input);
-  if (result === null) return;
+  if (result === null) return undefined;
   const findings = findCompletionLanguage(result);
-  if (findings.length === 0) return;
-  deny(`${ROADMAP} lists open work only; reword these to describe what remains to do:\n${format(ROADMAP, findings)}`);
+  if (findings.length === 0) return undefined;
+  return `${ROADMAP} lists open work only; reword these to describe what remains to do:\n${format(ROADMAP, findings)}`;
 }
 
 // The ROADMAP.md the commit will record, from git's index, or null when none is staged. Run
 // from a pre-commit hook, git's own environment names the repository. Both queries name the
 // file at the repository root from any directory inside it (`:(top)` and `:<path>` are
 // root-relative). A git failure throws.
-function stagedRoadmap(cwd = process.cwd()) {
-  const git = args => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+function stagedRoadmap(cwd, run) {
+  const git = args => run('git', args, { cwd });
   if (git(['ls-files', '--stage', '--', `:(top)${ROADMAP}`]) === '') return null;
   return git(['show', `:${ROADMAP}`]);
 }
@@ -137,50 +138,43 @@ function checkCopy(label, read) {
   return findings.length === 0 ? null : format(label, findings);
 }
 
-// Claude Code PreToolUse hook on Bash (configured for git commands only): a git commit is
-// denied while its repository's ROADMAP.md reports finished work. Both the staged copy and the
-// working copy are checked, since `commit -a` and a pathspec commit record the working copy;
-// which one a given command records is not predicted from its flags.
-function runCommitHook() {
-  const commit = readCommit();
-  if (commit === null) return;
-  if (commit === 'refuse') {
-    deny(unreadableCommit(ROADMAP));
-    return;
-  }
+// Claude Code PreToolUse hook on Bash (configured for git commands only): the deny reason for a
+// git commit while its repository's ROADMAP.md reports finished work, or undefined. Both the
+// staged copy and the working copy are checked, since `commit -a` and a pathspec commit record
+// the working copy; which one a given command records is not predicted from its flags. run
+// answers as runCaptured (script-support.mjs) does.
+export function runCommitHook(payload, run) {
+  const commit = readCommit(payload, run);
+  if (commit === null) return undefined;
+  if (commit === 'refuse') return unreadableCommit(ROADMAP);
   const { root } = commit;
   const working = path.join(root, ROADMAP);
   const reports = [
-    checkCopy(`${ROADMAP} (staged)`, () => stagedRoadmap(root)),
+    checkCopy(`${ROADMAP} (staged)`, () => stagedRoadmap(root, run)),
     checkCopy(`${ROADMAP} (working copy)`, () => (fs.existsSync(working) ? fs.readFileSync(working, 'utf8') : null)),
   ].filter(report => report !== null);
-  if (reports.length === 0) return;
-  deny(`${ROADMAP} lists open work only; reword these, stage the file again and commit:\n${reports.join('\n')}`);
+  if (reports.length === 0) return undefined;
+  return `${ROADMAP} lists open work only; reword these, stage the file again and commit:\n${reports.join('\n')}`;
 }
 
-function main(args) {
-  if (args[0] === '--hook') {
-    runHook();
-    return 0;
-  }
-  if (args[0] === '--commit-hook') {
-    runCommitHook();
-    return 0;
-  }
+// The command line with io (processIo in script-support.mjs); returns the exit code.
+export function main(args, io) {
+  if (args[0] === '--hook') return answerHook(io, payload => runHook(payload, io.env));
+  if (args[0] === '--commit-hook') return answerHook(io, payload => runCommitHook(payload, io.run));
   if (args[0] === '--staged') {
-    const staged = stagedRoadmap();
+    const staged = stagedRoadmap(io.cwd, io.run);
     const findings = staged === null ? [] : findCompletionLanguage(staged);
     if (findings.length === 0) return 0;
-    process.stderr.write(`${format(`${ROADMAP} (staged)`, findings)}\n`);
+    io.stderr(`${format(`${ROADMAP} (staged)`, findings)}\n`);
     return 1;
   }
   const file = args[0] ?? ROADMAP;
-  const findings = findCompletionLanguage(fs.readFileSync(file, 'utf8'));
+  const findings = findCompletionLanguage(fs.readFileSync(path.resolve(io.cwd, file), 'utf8'));
   if (findings.length === 0) return 0;
-  process.stderr.write(`${format(file, findings)}\n`);
+  io.stderr(`${format(file, findings)}\n`);
   return 1;
 }
 
 if (runDirectly(import.meta.url)) {
-  process.exitCode = main(process.argv.slice(2));
+  process.exitCode = main(process.argv.slice(2), processIo);
 }

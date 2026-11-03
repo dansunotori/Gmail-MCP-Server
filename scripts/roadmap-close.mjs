@@ -63,20 +63,26 @@ function removeItem(markdown, n) {
   return { markdown: markdown.slice(0, removed.start).replace(/(?:\r?\n)+$/, '') + ending };
 }
 
-function main(args) {
+// The command line: read() gives ROADMAP.md, write(markdown) replaces it and log(line) reports.
+// Returns the exit code.
+export function main(args, { read, write, log }) {
   if (args.length !== 1 || !/^[1-9]\d*$/.test(args[0])) {
-    process.stderr.write(`${USAGE}\n`);
+    log(USAGE);
     return 2;
   }
-  const closed = closeItem(fs.readFileSync(ROADMAP, 'utf8'), Number(args[0]));
+  const closed = closeItem(read(), Number(args[0]));
   if (closed.error) {
-    process.stderr.write(`roadmap:close: ${closed.error}\n`);
+    log(`roadmap:close: ${closed.error}`);
     return 1;
   }
-  fs.writeFileSync(ROADMAP, closed.markdown);
+  write(closed.markdown);
   return 0;
 }
 
 if (runDirectly(import.meta.url)) {
-  process.exitCode = main(process.argv.slice(2));
+  process.exitCode = main(process.argv.slice(2), {
+    read: () => fs.readFileSync(ROADMAP, 'utf8'),
+    write: markdown => fs.writeFileSync(ROADMAP, markdown),
+    log: line => process.stderr.write(`${line}\n`),
+  });
 }

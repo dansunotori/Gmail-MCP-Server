@@ -1,9 +1,6 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { commitContents, readCommit } from './commit-hook.mjs';
-import { fixtureRepo, withoutInheritedGitEnv } from './git-fixture.js';
+import { describe, expect, it } from 'vitest';
+import { answerHook, commitContents, commitTarget, readCommit } from './commit-hook.mjs';
+import { answeringRun, exitError } from './git-fixture.js';
 
 // What a commit with these arguments records: the index as staged, the working copy of every
 // tracked file (-a / --all), or a selection of paths, hunks or HEAD.
@@ -38,36 +35,14 @@ describe('commitContents', () => {
   });
 });
 
-// The hook input is read from stdin (file descriptor 0): the spy answers it with the payload and
-// leaves every other read alone. Inherited GIT_* variables are removed so a test run started by a
-// git hook cannot redirect git.
-describe('readCommit', () => {
-  let outside: string;
-  let repo: string;
-  withoutInheritedGitEnv();
-
-  function read(cwd: string, command: string) {
-    const original = fs.readFileSync;
-    const payload = JSON.stringify({ cwd, tool_name: 'Bash', tool_input: { command } });
-    vi.spyOn(fs, 'readFileSync').mockImplementation(((file: unknown, ...rest: unknown[]) =>
-      file === 0 ? payload : (original as (...args: unknown[]) => unknown)(file, ...rest)) as typeof fs.readFileSync);
-    return readCommit();
-  }
-
-  beforeAll(() => {
-    repo = fixtureRepo('commit-hook repo ');
-    fs.mkdirSync(path.join(repo, 'inner'));
-    fs.mkdirSync(path.join(repo, 'sub'));
-    outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'commit-hook-outside-')));
-    fs.symlinkSync(path.join(repo, 'inner'), path.join(outside, 'link'));
-  });
-  afterAll(() => {
-    fs.rmSync(repo, { recursive: true, force: true });
-    fs.rmSync(outside, { recursive: true, force: true });
-  });
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+// git is answered by a stub: the work tree of a commit is whatever `git rev-parse --show-toplevel`
+// prints from the session directory with the command's -C options, which is git's own to resolve.
+describe('commitTarget', () => {
+  const repo = '/work/my repo';
+  const read = (cwd: string, command: string, answers: Record<string, string | Error> = {}) => {
+    const git = answeringRun(answers);
+    return { target: commitTarget(command, cwd, git.run), calls: git.calls };
+  };
 
   it.each([
     'git status && git commit -m x',
@@ -82,8 +57,10 @@ describe('readCommit', () => {
     'git -C * commit -m x',
     'git -C {a,b} commit -m x',
     'git --git-dir=.git commit -m x',
-  ])('refuses %j, whose target repository is not in its text', command => {
-    expect(read(outside, command)).toBe('refuse');
+  ])('refuses %j, whose target repository is not in its text, without running git', command => {
+    const { target, calls } = read('/outside', command);
+    expect(target).toBe('refuse');
+    expect(calls).toEqual([]);
   });
 
   it.each([
@@ -91,20 +68,59 @@ describe('readCommit', () => {
     'git log --grep commit',
     'git log --grep "commit; x"',
     'git status && git log | head',
-  ])('ignores %j, which is not a commit', command => {
-    expect(read(outside, command)).toBeNull();
+  ])('ignores %j, which is not a commit, without running git', command => {
+    const { target, calls } = read('/outside', command);
+    expect(target).toBeNull();
+    expect(calls).toEqual([]);
   });
 
-  // [where the session runs, the command, the commit's arguments]
+  // [the command, the git command line that finds its work tree, the commit's arguments]
   it.each([
-    ['the work tree', () => repo, () => 'git commit -m x', ['-m', 'x']],
-    ['the work tree with global options', () => repo, () => 'git --no-pager -c user.name=x commit -m x', ['-m', 'x']],
-    ['a directory outside, -C in double quotes', () => outside, () => `git -C "${repo}" commit -m x`, ['-m', 'x']],
-    ['a directory outside, -C in single quotes', () => outside, () => `git -c user.name=x -C '${repo}' commit -m x`, ['-m', 'x']],
-    ['a directory outside, chained -C', () => outside, () => `git -C "${path.dirname(repo)}" -C "${path.basename(repo)}" commit -m x`, ['-m', 'x']],
-    ['a directory outside, -C through a symlink', () => outside, () => 'git -C link/.. commit -m x', ['-m', 'x']],
-    ['the work tree, quoted arguments', () => repo, () => 'git commit --author "A <a@b>" -m "a -- b"', ['--author', 'A <a@b>', '-m', 'a -- b']],
-  ] as [string, () => string, () => string, string[]][])('finds the work tree and arguments of a commit from %s', (_name, cwd, command, args) => {
-    expect(read(cwd(), command())).toEqual({ root: repo, args });
+    ['git commit -m x', 'git rev-parse --show-toplevel', ['-m', 'x']],
+    ['git --no-pager -c user.name=x commit -m x', 'git rev-parse --show-toplevel', ['-m', 'x']],
+    [`git -C "${repo}" commit -m x`, `git -C ${repo} rev-parse --show-toplevel`, ['-m', 'x']],
+    [`git -c user.name=x -C '${repo}' commit -m x`, `git -C ${repo} rev-parse --show-toplevel`, ['-m', 'x']],
+    ['git -C "/work" -C "my repo" commit -m x', 'git -C /work -C my repo rev-parse --show-toplevel', ['-m', 'x']],
+    ['git -C link/.. commit -m x', 'git -C link/.. rev-parse --show-toplevel', ['-m', 'x']],
+    ['git commit --author "A <a@b>" -m "a -- b"', 'git rev-parse --show-toplevel', ['--author', 'A <a@b>', '-m', 'a -- b']],
+  ])('finds the work tree and arguments of %j from the session directory, with its -C options in order', (command, line, args) => {
+    const { target, calls } = read('/outside', command, { [line]: `${repo}\n` });
+    expect(target).toEqual({ root: repo, args });
+    expect(calls).toEqual([{ line, cwd: '/outside' }]);
+  });
+
+  it('reads a commit git finds no work tree for, or cannot run for, as no commit, and throws on any other failure', () => {
+    expect(read('/outside', 'git commit -m x', { 'git rev-parse --show-toplevel': exitError(128, 'not a git repository') }).target).toBeNull();
+    expect(read('/outside', 'git commit -m x', { 'git rev-parse --show-toplevel': Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) }).target).toBeNull();
+    expect(() => read('/outside', 'git commit -m x', { 'git rev-parse --show-toplevel': new Error('EPIPE') })).toThrow('EPIPE');
+  });
+});
+
+describe('readCommit', () => {
+  it("reads the command of a hook payload from the session directory it names", () => {
+    const git = answeringRun({ 'git rev-parse --show-toplevel': '/work/repo\n' });
+    expect(readCommit({ cwd: '/work/repo/sub', tool_name: 'Bash', tool_input: { command: 'git commit -m x' } }, git.run)).toEqual({ root: '/work/repo', args: ['-m', 'x'] });
+    expect(git.calls).toEqual([{ line: 'git rev-parse --show-toplevel', cwd: '/work/repo/sub' }]);
+  });
+});
+
+describe('answerHook', () => {
+  const answer = (reason: string | undefined) => {
+    const written: string[] = [];
+    const seen: unknown[] = [];
+    const io = { stdin: () => '{"tool_name":"Bash"}', stdout: (text: string) => written.push(text) };
+    const code = answerHook(io, (payload: unknown) => { seen.push(payload); return reason; });
+    return { code, written, seen };
+  };
+
+  it('writes the deny of the reason the decision gives for the payload on stdin', () => {
+    const { code, written, seen } = answer('no');
+    expect(code).toBe(0);
+    expect(seen).toEqual([{ tool_name: 'Bash' }]);
+    expect(written.map(text => JSON.parse(text))).toEqual([{ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'no' } }]);
+  });
+
+  it('writes nothing when the decision allows the call', () => {
+    expect(answer(undefined)).toMatchObject({ code: 0, written: [] });
   });
 });

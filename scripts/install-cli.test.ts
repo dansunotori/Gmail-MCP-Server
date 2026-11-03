@@ -2,24 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fixtureRepo, gitIn, isolatedEnv } from './git-fixture.js';
 import { linkBins } from './install-cli.mjs';
-import { mainCheckoutOf } from './script-support.mjs';
+import { checkoutOfGitDirs } from './script-support.mjs';
 
-describe('mainCheckoutOf', () => {
+describe('checkoutOfGitDirs', () => {
   it('names the main checkout from a linked worktree, and none from the main checkout itself', () => {
-    const main = fixtureRepo('main-checkout-');
-    const git = gitIn(main);
-    git('commit', '-q', '--allow-empty', '-m', 'start');
-    const worktree = path.join(fs.realpathSync(os.tmpdir()), `linked-${path.basename(main)}`);
-    git('worktree', 'add', '-q', worktree, '-b', 'side');
-    try {
-      expect(mainCheckoutOf(main, isolatedEnv)).toBeNull();
-      expect(mainCheckoutOf(worktree, isolatedEnv)).toBe(main);
-    } finally {
-      fs.rmSync(worktree, { recursive: true, force: true });
-      fs.rmSync(main, { recursive: true, force: true });
-    }
+    expect(checkoutOfGitDirs('/repo/.git\n/repo/.git\n')).toBeNull();
+    expect(checkoutOfGitDirs('/repo/.git/worktrees/side\n/repo/.git\n')).toBe('/repo');
   });
 });
 

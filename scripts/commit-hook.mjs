@@ -1,8 +1,7 @@
 // What the project's Claude Code PreToolUse hooks on git commits share (.claude/settings.json):
 // which repository a Bash command commits into, read from its text, and the deny they answer
 // with. Each hook checks that repository and denies the commit while its check fails.
-import { execFileSync } from 'child_process';
-import fs from 'fs';
+import { runCaptured } from './script-support.mjs';
 
 // Characters that make the shell, not git, decide what a command means: operators, subshells,
 // redirection, expansions ($, `, ~, globs, braces), escapes, comments and line breaks.
@@ -50,7 +49,7 @@ const NEUTRAL_OPTIONS = new Set([
 // The hooks guard against a failing check slipping into a commit, not against a command built
 // to evade them, so a command that never names `commit` (an alias, an encoded word) is let
 // through; this project's shell rules reject operators and expansions before they run anyway.
-function commitTarget(command) {
+function parseCommit(command) {
   const mentionsCommit = command.includes('commit');
   const refuse = mentionsCommit ? 'refuse' : null;
   const words = plainWords(command);
@@ -128,34 +127,46 @@ export function commitContents(args) {
 // The root of the work tree a git command with these -C options acts on, from the session's
 // directory, as git itself resolves them (symlinks included); null when git finds none, in
 // which case the commit fails in git too.
-function workTreeRoot(cwd, dirs) {
+function workTreeRoot(cwd, dirs, run) {
   try {
     const args = [...dirs.flatMap(dir => ['-C', dir]), 'rev-parse', '--show-toplevel'];
-    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return run('git', args, { cwd }).trim();
   } catch (error) {
     if (typeof error?.status === 'number' || error?.code === 'ENOENT') return null;
     throw error;
   }
 }
 
-// The hook input on stdin: { root, args } for a git commit into the work tree at root with
-// those arguments, 'refuse' for a commit whose target repository cannot be read from the
-// command's text, which a hook refuses rather than guesses at, or null for anything else.
-export function readCommit() {
-  const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
-  const target = commitTarget(payload.tool_input?.command ?? '');
+// What a Bash command run from cwd commits: { root, args } for a git commit into the work tree
+// at root with those arguments, 'refuse' for a commit whose target repository cannot be read from
+// the command's text, which a hook refuses rather than guesses at, or null for anything else.
+// run(command, args, options) answers as runCaptured does; only a commit makes it run git.
+export function commitTarget(command, cwd, run = runCaptured) {
+  const target = parseCommit(command);
   if (target === null || target === 'refuse') return target;
-  const root = workTreeRoot(payload.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd(), target.commit);
+  const root = workTreeRoot(cwd, target.commit, run);
   return root === null ? null : { root, args: target.args };
 }
+
+// commitTarget for a hook payload's command, from the session directory it names.
+export const readCommit = (payload, run = runCaptured) =>
+  commitTarget(payload.tool_input?.command ?? '', payload.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd(), run);
 
 // The deny for a commit 'refuse' stands for, naming what the hook checks.
 export const unreadableCommit = checked => `This command cannot be checked against ${checked}: run the commit as a single plain git command, ` +
   'git [-c name=value] [-C dir] commit ..., without shell operators, variables, ~, globs, backslashes ' +
   'or other git options, so the hook can tell which repository it records into.';
 
-export function deny(reason) {
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason },
-  }));
+// The hook output denying the tool call for reason.
+export const deny = reason => JSON.stringify({
+  hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason },
+});
+
+// Answers a PreToolUse hook with io (processIo in script-support.mjs): decide(payload) gives the
+// deny reason for the payload read from io.stdin, written to io.stdout as the hook's decision, or
+// undefined to allow the call. Returns the exit code, 0.
+export function answerHook(io, decide) {
+  const reason = decide(JSON.parse(io.stdin()));
+  if (reason !== undefined) io.stdout(deny(reason));
+  return 0;
 }

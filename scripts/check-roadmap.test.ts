@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { applyToolEdit, findCompletionLanguage } from './check-roadmap.mjs';
-import { fixtureRepo, gitIn, isolatedEnv as isolated, runScript } from './git-fixture.js';
+import { applyToolEdit, findCompletionLanguage, main, runCommitHook, runHook } from './check-roadmap.mjs';
+import { answeringRun, isolatedEnv as isolated, runMain, runScript } from './git-fixture.js';
 
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-roadmap.mjs');
 const phrases = (markdown: string) => findCompletionLanguage(markdown).map((finding: { phrase: string }) => finding.phrase);
@@ -84,161 +84,116 @@ describe('applyToolEdit', () => {
   });
 });
 
+// A project directory on disk holding the working ROADMAP.md the tests write; git is a stub.
 describe('check-roadmap.mjs', () => {
   const clean = '# Roadmap\n\n## 1. Open item\n\nDone when:\n\n- It works.\n';
+  const finished = '# Roadmap\n\nThis is shipped.\n';
+  const open = '# Roadmap\n\nOpen work.\n';
+  const merged = '# Roadmap\n\nIt merged.\n';
+  const staged = 'ROADMAP.md (staged):3: "shipped"';
   let dir: string;
-  // A run inside a Claude Code session inherits CLAUDE_PROJECT_DIR pointing at this repository;
-  // the hook tests set it so, and must still check the fixture project they pass.
-  let inherited: string | undefined;
   beforeAll(() => {
-    inherited = process.env.CLAUDE_PROJECT_DIR;
-    process.env.CLAUDE_PROJECT_DIR = path.join(path.dirname(script), '..');
     dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'check-roadmap-')));
   });
   afterAll(() => {
-    if (inherited === undefined) delete process.env.CLAUDE_PROJECT_DIR;
-    else process.env.CLAUDE_PROJECT_DIR = inherited;
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
   const roadmap = () => path.join(dir, 'ROADMAP.md');
-  // The fixture directory is the project the hook sees, whatever CLAUDE_PROJECT_DIR the test
-  // run itself inherits.
-  const run = (args: string[], input?: string) => runScript(script, args, { cwd: dir, env: { ...process.env, CLAUDE_PROJECT_DIR: dir }, input });
-  const hook = (toolName: string, toolInput: Record<string, unknown>) =>
-    run(['--hook'], JSON.stringify({ cwd: dir, tool_name: toolName, tool_input: toolInput }));
+  const setWorking = (content: string) => {
+    fs.rmSync(roadmap(), { recursive: true, force: true });
+    fs.writeFileSync(roadmap(), content);
+  };
+  // git's answers for a staged ROADMAP.md (none when null), its work tree being dir.
+  const gitWithStaged = (content: string | null) => answeringRun({
+    'git rev-parse --show-toplevel': `${dir}\n`,
+    'git ls-files --stage -- :(top)ROADMAP.md': content === null ? '' : '100644 0123456789abcdef0123456789abcdef01234567 0\tROADMAP.md\n',
+    ...(content === null ? {} : { 'git show :ROADMAP.md': content }),
+  });
+  const cli = (args: string[], git = answeringRun(), cwd = dir) => runMain(main, args, git.run, cwd);
+  // The hook reads the project from CLAUDE_PROJECT_DIR, which a run inside a Claude Code session
+  // inherits pointing at this repository; it is passed as dir here.
+  const hook = (toolName: string, toolInput: Record<string, unknown>, cwd = dir) =>
+    runHook({ cwd, tool_name: toolName, tool_input: toolInput }, { CLAUDE_PROJECT_DIR: dir });
+  const commitHook = (command: string, git: ReturnType<typeof answeringRun>, cwd = dir) =>
+    runCommitHook({ cwd, tool_name: 'Bash', tool_input: { command } }, git.run);
 
   it('passes a clean roadmap and fails one reporting finished work, naming the line and phrase', () => {
-    fs.writeFileSync(roadmap(), clean);
-    expect(run([roadmap()]).code).toBe(0);
+    setWorking(clean);
+    expect(cli([roadmap()]).code).toBe(0);
     fs.appendFileSync(roadmap(), '\nThis is shipped.\n');
-    const failed = run([roadmap()]);
+    const failed = cli([roadmap()]);
     expect(failed.code).toBe(1);
     expect(failed.stderr).toContain('ROADMAP.md:9: "shipped"');
   });
 
   it('as a hook, denies an edit to ROADMAP.md whose result reports finished work', () => {
-    fs.writeFileSync(roadmap(), clean);
-    const denied = JSON.parse(hook('Edit', { file_path: roadmap(), old_string: '- It works.', new_string: '- It works. Fixed.' }).stdout);
-    expect(denied.hookSpecificOutput).toMatchObject({ hookEventName: 'PreToolUse', permissionDecision: 'deny' });
-    expect(denied.hookSpecificOutput.permissionDecisionReason).toContain('"Fixed"');
+    setWorking(clean);
+    expect(hook('Edit', { file_path: roadmap(), old_string: '- It works.', new_string: '- It works. Fixed.' })).toContain('"Fixed"');
   });
 
-  it('as a hook, allows a clean edit', () => {
-    fs.writeFileSync(roadmap(), clean);
-    expect(hook('Edit', { file_path: roadmap(), old_string: '- It works.', new_string: '- It works offline.' }).stdout).toBe('');
-  });
-
-  it('as a hook, allows a write to another file', () => {
-    fs.writeFileSync(roadmap(), clean);
-    expect(hook('Write', { file_path: path.join(dir, 'README.md'), content: 'Fixed.' }).stdout).toBe('');
-  });
-
-  it('as a hook, allows an edit that does not apply', () => {
-    fs.writeFileSync(roadmap(), clean);
-    expect(hook('Edit', { file_path: roadmap(), old_string: 'missing', new_string: 'Fixed.' }).stdout).toBe('');
+  it('as a hook, allows a clean edit, a write to another file and an edit that does not apply', () => {
+    setWorking(clean);
+    expect(hook('Edit', { file_path: roadmap(), old_string: '- It works.', new_string: '- It works offline.' })).toBeUndefined();
+    expect(hook('Write', { file_path: path.join(dir, 'README.md'), content: 'Fixed.' })).toBeUndefined();
+    expect(hook('Edit', { file_path: roadmap(), old_string: 'missing', new_string: 'Fixed.' })).toBeUndefined();
   });
 
   it('as a hook, resolves a relative file path against the session directory in the payload', () => {
-    // The process runs elsewhere and the project is dir, so only the payload directory leads
-    // ../ROADMAP.md to dir/ROADMAP.md.
-    const denied = runScript(script, ['--hook'], {
-      cwd: os.tmpdir(),
-      env: { ...process.env, CLAUDE_PROJECT_DIR: dir },
-      input: JSON.stringify({ cwd: path.join(dir, 'sub'), tool_name: 'Write', tool_input: { file_path: '../ROADMAP.md', content: '# Roadmap\n\nAll merged.\n' } }),
-    });
-    expect(JSON.parse(denied.stdout).hookSpecificOutput.permissionDecision).toBe('deny');
-  });
-});
-
-describe('check-roadmap.mjs in a repository', () => {
-  const finished = '# Roadmap\n\nThis is shipped.\n';
-  const open = '# Roadmap\n\nOpen work.\n';
-  const merged = '# Roadmap\n\nIt merged.\n';
-  const staged = 'ROADMAP.md (staged):3: "shipped"';
-  let repo: string;
-  beforeAll(() => {
-    repo = fixtureRepo('check-roadmap-repo-');
-    fs.mkdirSync(path.join(repo, 'sub'));
-  });
-  afterAll(() => {
-    fs.rmSync(repo, { recursive: true, force: true });
+    expect(hook('Write', { file_path: '../ROADMAP.md', content: '# Roadmap\n\nAll merged.\n' }, path.join(dir, 'sub'))).toContain('"merged"');
   });
 
-  // The staged ROADMAP.md (none when null) and the working copy a test starts from.
-  const setRoadmap = (stagedContent: string | null, working: string) => {
-    const file = path.join(repo, 'ROADMAP.md');
-    fs.rmSync(file, { recursive: true, force: true });
-    if (stagedContent === null) gitIn(repo)('rm', '-q', '--cached', '--ignore-unmatch', 'ROADMAP.md');
-    else {
-      fs.writeFileSync(file, stagedContent);
-      gitIn(repo)('add', 'ROADMAP.md');
-    }
-    fs.writeFileSync(file, working);
-  };
-  const checkStaged = (cwd = repo) => runScript(script, ['--staged'], { cwd, env: isolated });
-  // The project's PreToolUse hook on Bash: the process runs outside the repository, so the
-  // repository comes from the payload directory.
-  const commitHook = (command: string, cwd = repo) =>
-    runScript(script, ['--commit-hook'], { cwd: os.tmpdir(), env: isolated, input: JSON.stringify({ cwd, tool_name: 'Bash', tool_input: { command } }) }).stdout;
-
-  it('--staged checks the staged ROADMAP.md, not the working copy', () => {
-    setRoadmap(finished, open);
-    const failed = checkStaged();
+  it('--staged checks the staged ROADMAP.md, not the working copy, naming it at the root from any directory', () => {
+    setWorking(open);
+    const git = gitWithStaged(finished);
+    const failed = cli(['--staged'], git, path.join(dir, 'sub'));
     expect(failed.code).toBe(1);
     expect(failed.stderr).toContain(staged);
+    expect(git.calls.map(call => call.cwd)).toEqual([path.join(dir, 'sub'), path.join(dir, 'sub')]);
 
-    setRoadmap(open, merged);
-    expect(checkStaged().code).toBe(0);
-  });
-
-  it('--staged checks the root ROADMAP.md when run from a subdirectory of the repository', () => {
-    setRoadmap(finished, open);
-    const failed = checkStaged(path.join(repo, 'sub'));
-    expect(failed.code).toBe(1);
-    expect(failed.stderr).toContain(staged);
+    setWorking(merged);
+    expect(cli(['--staged'], gitWithStaged(open)).code).toBe(0);
   });
 
   it('--staged passes when no ROADMAP.md is staged', () => {
-    setRoadmap(null, open);
-    expect(checkStaged().code).toBe(0);
+    setWorking(finished);
+    const git = gitWithStaged(null);
+    expect(cli(['--staged'], git).code).toBe(0);
+    expect(git.calls.map(call => call.line)).toEqual(['git ls-files --stage -- :(top)ROADMAP.md']);
   });
 
-  it('as a commit hook, denies a git commit whose staged ROADMAP.md reports finished work', () => {
-    setRoadmap(finished, open);
-    const denied = JSON.parse(commitHook('git commit -m "Update"')).hookSpecificOutput;
-    expect(denied).toMatchObject({ hookEventName: 'PreToolUse', permissionDecision: 'deny' });
-    expect(denied.permissionDecisionReason).toContain(staged);
-  });
-
-  it('as a commit hook run from a subdirectory, checks the root ROADMAP.md', () => {
-    setRoadmap(finished, open);
-    const denied = JSON.parse(commitHook('git commit -m x', path.join(repo, 'sub'))).hookSpecificOutput;
-    expect(denied.permissionDecisionReason).toContain(staged);
+  it('as a commit hook, denies a git commit whose staged ROADMAP.md reports finished work, reading it at the work tree root', () => {
+    setWorking(open);
+    const git = gitWithStaged(finished);
+    expect(commitHook('git commit -m "Update"', git, path.join(dir, 'sub'))).toContain(staged);
+    expect(git.calls.slice(1).map(call => call.cwd)).toEqual([dir, dir]);
   });
 
   it('as a commit hook, checks the working copy too, which commit -a records', () => {
-    setRoadmap(open, merged);
-    const denied = JSON.parse(commitHook('git commit -am "Update"')).hookSpecificOutput;
-    expect(denied.permissionDecisionReason).toContain('ROADMAP.md (working copy):3: "merged"');
+    setWorking(merged);
+    expect(commitHook('git commit -am "Update"', gitWithStaged(open))).toContain('ROADMAP.md (working copy):3: "merged"');
   });
 
   it('allows a commit when staged and working copies are clean', () => {
-    setRoadmap(open, open);
-    expect(commitHook('git commit -m x')).toBe('');
+    setWorking(open);
+    expect(commitHook('git commit -m x', gitWithStaged(open))).toBeUndefined();
   });
 
   it('as a commit hook, denies with the findings already collected when a roadmap cannot be read', () => {
-    setRoadmap(finished, open);
-    fs.rmSync(path.join(repo, 'ROADMAP.md'));
-    fs.mkdirSync(path.join(repo, 'ROADMAP.md'));
-    const denied = JSON.parse(commitHook('git commit -m x')).hookSpecificOutput;
-    expect(denied.permissionDecision).toBe('deny');
-    expect(denied.permissionDecisionReason).toContain(staged);
-    expect(denied.permissionDecisionReason).toContain('ROADMAP.md (working copy)');
+    fs.rmSync(roadmap(), { recursive: true, force: true });
+    fs.mkdirSync(roadmap());
+    const reason = commitHook('git commit -m x', gitWithStaged(finished));
+    expect(reason).toContain(staged);
+    expect(reason).toContain('ROADMAP.md (working copy): cannot be read');
+  });
+
+  it('as a commit hook, denies a commit whose target repository is not in its text, and ignores a command that is not a commit', () => {
+    expect(commitHook('git status && git commit -m x', answeringRun())).toContain('cannot be checked against ROADMAP.md');
+    expect(commitHook('git status', answeringRun())).toBeUndefined();
   });
 });
 
+// The script as Claude Code runs it, a node process reading the payload on stdin.
 describe('check-roadmap.mjs commit hook wiring', () => {
   it.each([
     ['git status', undefined],

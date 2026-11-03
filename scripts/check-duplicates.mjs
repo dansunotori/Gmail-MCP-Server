@@ -15,13 +15,13 @@
 //
 // Either way jscpd's full JSON report is left at tmp/jscpd/jscpd-report.json under the
 // repository root.
-import { execFileSync, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import fs from 'fs';
 import { createRequire } from 'module';
 import os from 'os';
 import path from 'path';
-import { commitContents, deny, readCommit, unreadableCommit } from './commit-hook.mjs';
-import { runDirectly } from './script-support.mjs';
+import { answerHook, commitContents, readCommit, unreadableCommit } from './commit-hook.mjs';
+import { processIo, runCaptured, runDirectly } from './script-support.mjs';
 
 export const CONFIG = '.jscpd.json';
 export const REPORT = path.join('tmp', 'jscpd', 'jscpd-report.json');
@@ -49,27 +49,32 @@ export function scopeRule(config) {
 }
 
 // The paths in git's index under root that the rule takes and that are regular files on disk,
-// sorted.
-export function scopeFiles(root, inScope) {
-  const listed = execFileSync('git', ['ls-files', '-z', '--cached'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+// sorted. run answers as runCaptured (script-support.mjs) does.
+export function scopeFiles(root, inScope, run = runCaptured) {
+  const listed = run('git', ['ls-files', '-z', '--cached'], { cwd: root });
   return [...new Set(listed.split('\0').filter(file => file !== '' && inScope(file)))]
     .filter(file => fs.lstatSync(path.join(root, file), { throwIfNoEntry: false })?.isFile())
     .sort();
 }
 
-// The in-scope files as git's index stages them, each regular file's blob written under its own
-// path in dir, sorted: what a commit records, whatever the working copy holds. One
-// `git cat-file --batch` reads every blob.
-export function writeStagedFiles(root, inScope, dir) {
-  const listed = execFileSync('git', ['ls-files', '-s', '-z'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  const entries = listed.split('\0').filter(Boolean).map(line => {
+// The entries of a `git ls-files -s -z` listing that a commit records as regular files and the
+// rule takes: each with its mode, blob and path.
+export function stagedEntries(listed, inScope) {
+  return listed.split('\0').filter(Boolean).map(line => {
     const [meta, file] = line.split('\t');
     const [mode, blob, stage] = meta.split(' ');
     return { mode, blob, stage, file };
   }).filter(entry => entry.stage === '0' && (entry.mode === '100644' || entry.mode === '100755') && inScope(entry.file));
+}
+
+// The in-scope files as git's index stages them, each regular file's blob written under its own
+// path in dir, sorted: what a commit records, whatever the working copy holds. One
+// `git cat-file --batch` reads every blob.
+export function writeStagedFiles(root, inScope, dir, run = runCaptured) {
+  const entries = stagedEntries(run('git', ['ls-files', '-s', '-z'], { cwd: root }), inScope);
   if (entries.length === 0) return [];
-  const blobs = execFileSync('git', ['cat-file', '--batch'], {
-    cwd: root, input: `${entries.map(entry => entry.blob).join('\n')}\n`, maxBuffer: 1 << 30, stdio: ['pipe', 'pipe', 'pipe'],
+  const blobs = run('git', ['cat-file', '--batch'], {
+    cwd: root, input: `${entries.map(entry => entry.blob).join('\n')}\n`, maxBuffer: 1 << 30, encoding: 'buffer',
   });
   let offset = 0;
   for (const { file } of entries) {
@@ -106,86 +111,86 @@ export function clonesOf(report) {
 export const formatClone = ({ first, second, lines, tokens }) =>
   `${first.file}:${first.start}-${first.end} duplicates ${second.file}:${second.start}-${second.end} (${lines} lines, ${tokens} tokens)`;
 
+// The clones jscpd finds among files, paths relative to dir, with the config at configPath, its
+// JSON report written to reportPath; sorted. Throws when jscpd cannot run or fails.
+export function findClones(dir, files, configPath, reportPath) {
+  const result = spawnSync(process.execPath, [JSCPD, '--config', configPath, '--workers', '1', '--output', path.dirname(reportPath), ...files], {
+    cwd: dir,
+    encoding: 'utf8',
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`jscpd exited ${result.status ?? `on ${result.signal}`}: ${(result.stderr || result.stdout).trim()}`);
+  return clonesOf(JSON.parse(fs.readFileSync(reportPath, 'utf8')));
+}
+
 // The clones in the repository at root, sorted: in its working copy, or with staged set in the
 // blobs its index stages, read from a temporary copy so the clones still name repository paths.
 // The report is left under root either way. Throws when the config is unreadable or
-// inconsistent, or jscpd cannot run or fails, so a check that did not run never passes. jscpd
-// leaves a file with fewer tokens than minTokens out of its counts; such a file cannot hold a
-// clone.
-export function checkDuplicates(root, { staged = false } = {}) {
+// inconsistent, or git or jscpd cannot run or fails, so a check that did not run never passes.
+// jscpd leaves a file with fewer tokens than minTokens out of its counts; such a file cannot hold
+// a clone. run answers as runCaptured (script-support.mjs) does.
+export function checkDuplicates(root, { staged = false, run = runCaptured } = {}) {
   const configPath = path.join(root, CONFIG);
   const inScope = scopeRule(JSON.parse(fs.readFileSync(configPath, 'utf8')));
   const reportPath = path.join(root, REPORT);
   fs.rmSync(reportPath, { force: true });
   const stagedDir = staged ? fs.mkdtempSync(path.join(os.tmpdir(), 'check-duplicates-staged-')) : undefined;
   try {
-    const files = stagedDir ? writeStagedFiles(root, inScope, stagedDir) : scopeFiles(root, inScope);
+    const files = stagedDir ? writeStagedFiles(root, inScope, stagedDir, run) : scopeFiles(root, inScope, run);
     if (files.length === 0) return [];
-    const result = spawnSync(process.execPath, [JSCPD, '--config', configPath, '--workers', '1', '--output', path.dirname(reportPath), ...files], {
-      cwd: stagedDir ?? root,
-      encoding: 'utf8',
-    });
-    if (result.error) throw result.error;
-    if (result.status !== 0) throw new Error(`jscpd exited ${result.status ?? `on ${result.signal}`}: ${(result.stderr || result.stdout).trim()}`);
-    return clonesOf(JSON.parse(fs.readFileSync(reportPath, 'utf8')));
+    return findClones(stagedDir ?? root, files, configPath, reportPath);
   } finally {
     if (stagedDir) fs.rmSync(stagedDir, { recursive: true, force: true });
   }
 }
 
-// Claude Code PreToolUse hook on Bash (configured for git commands only): a git commit is
-// denied while the files it records hold duplicated code. A plain commit records the index, so
-// the staged blobs are checked (a file staged only in part as the commit records it); commit -a
-// records the working copy of every tracked file, so that copy is checked. A commit naming paths
-// or picking hunks records a mix neither copy is, so it is refused with a request to stage the
-// change instead. A repository without .jscpd.json is not checked.
-function runCommitHook() {
-  const commit = readCommit();
-  if (commit === null) return;
-  if (commit === 'refuse') {
-    deny(unreadableCommit('duplicate code'));
-    return;
-  }
+// Claude Code PreToolUse hook on Bash (configured for git commands only): the deny reason for a
+// git commit while the files it records hold duplicated code, or undefined. A plain commit
+// records the index, so the staged blobs are checked (a file staged only in part as the commit
+// records it); commit -a records the working copy of every tracked file, so that copy is checked.
+// A commit naming paths or picking hunks records a mix neither copy is, so it is refused with a
+// request to stage the change instead. A repository without .jscpd.json is not checked. run
+// answers as runCaptured (script-support.mjs) does.
+export function runCommitHook(payload, run) {
+  const commit = readCommit(payload, run);
+  if (commit === null) return undefined;
+  if (commit === 'refuse') return unreadableCommit('duplicate code');
   const { root, args } = commit;
-  if (!fs.existsSync(path.join(root, CONFIG))) return;
+  if (!fs.existsSync(path.join(root, CONFIG))) return undefined;
   const contents = commitContents(args);
   if (contents === 'select') {
-    deny('The duplicate-code check reads what a commit records from git\'s index, or with -a from the working copy; a commit that names paths, ' +
+    return 'The duplicate-code check reads what a commit records from git\'s index, or with -a from the working copy; a commit that names paths, ' +
       'picks hunks (--include, --only, --patch, --interactive, --pathspec-from-file, --fixup=reword:) or uses an option the check does not read ' +
       '(an abbreviated one included) may record a mix it cannot read, so stage the change with git add, then run git commit without paths, ' +
-      'or with -a, spelling options in full.');
-    return;
+      'or with -a, spelling options in full.';
   }
   let clones;
   try {
-    clones = checkDuplicates(root, { staged: contents === 'index' });
+    clones = checkDuplicates(root, { staged: contents === 'index', run });
   } catch (error) {
-    deny(`The duplicate-code check could not run, so the commit is refused: ${error.message}`);
-    return;
+    return `The duplicate-code check could not run, so the commit is refused: ${error.message}`;
   }
-  if (clones.length === 0) return;
-  deny(`Duplicate code: ${clones.length} clone${clones.length === 1 ? '' : 's'} in the files this commit records. ` +
+  if (clones.length === 0) return undefined;
+  return `Duplicate code: ${clones.length} clone${clones.length === 1 ? '' : 's'} in the files this commit records. ` +
     'Move each duplicated block into one place both sides use, stage the change and commit again. ' +
-    `jscpd's full report is ${path.join(root, REPORT)}.\n${clones.map(formatClone).join('\n')}`);
+    `jscpd's full report is ${path.join(root, REPORT)}.\n${clones.map(formatClone).join('\n')}`;
 }
 
-function main(args) {
-  if (args[0] === '--commit-hook') {
-    runCommitHook();
-    return 0;
-  }
+// The command line with io (processIo in script-support.mjs); returns the exit code.
+export function main(args, io) {
+  if (args[0] === '--commit-hook') return answerHook(io, payload => runCommitHook(payload, io.run));
   try {
-    const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-    const clones = checkDuplicates(root);
+    const root = io.run('git', ['rev-parse', '--show-toplevel'], { cwd: io.cwd }).trim();
+    const clones = checkDuplicates(root, { run: io.run });
     if (clones.length === 0) return 0;
-    process.stderr.write(`${clones.map(formatClone).join('\n')}\n${clones.length} clone${clones.length === 1 ? '' : 's'}; full report: ${path.join(root, REPORT)}\n`);
+    io.stderr(`${clones.map(formatClone).join('\n')}\n${clones.length} clone${clones.length === 1 ? '' : 's'}; full report: ${path.join(root, REPORT)}\n`);
     return 1;
   } catch (error) {
-    process.stderr.write(`check-duplicates: ${error.message}\n`);
+    io.stderr(`check-duplicates: ${error.message}\n`);
     return 2;
   }
 }
 
 if (runDirectly(import.meta.url)) {
-  process.exitCode = main(process.argv.slice(2));
+  process.exitCode = main(process.argv.slice(2), processIo);
 }

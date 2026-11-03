@@ -102,7 +102,43 @@ describe('importPrompts', () => {
   });
 });
 
-describe('roadmap history', () => {
+describe('roadmap history read through a git log runner', () => {
+  // A runner answering `git log -p` with the patch that closed item 2, the highest-numbered one,
+  // and `git log -S` with a commit for the Source line that patch removed.
+  const calls: string[][] = [];
+  const gitLog = (repoRoot: string, options: string[]) => {
+    calls.push([repoRoot, ...options]);
+    if (options[0] === '-p') return '@@ -1,8 +1,5 @@\n # Roadmap\n \n ## 1. First\n-\n-## 2. Item\n-\n-Source: `gmail-old.md`\n';
+    return options[1] === '-SSource: `gmail-old.md`' ? 'abc1234\n' : '';
+  };
+
+  it('asks git for the commits that added or removed the line, and reads any as the line once held', () => {
+    expect(everInRoadmapHistory('/repo', 'Source: `gmail-old.md`', gitLog)).toBe(true);
+    expect(everInRoadmapHistory('/repo', 'Source: `gmail-never.md`', gitLog)).toBe(false);
+    expect(calls.slice(0, 2)).toEqual([
+      ['/repo', '-F', '-SSource: `gmail-old.md`', '--format=%h'],
+      ['/repo', '-F', '-SSource: `gmail-never.md`', '--format=%h'],
+    ]);
+  });
+
+  it('numbers a prompt imported after the highest-numbered item was closed above that item, not with its number', () => {
+    const prompts = fs.mkdtempSync(path.join(os.tmpdir(), 'import-prompts-'));
+    try {
+      fs.writeFileSync(path.join(prompts, 'gmail-new.md'), '# New item\n\nBody.\n');
+      const { roadmap } = importPrompts({
+        promptsDir: prompts,
+        roadmap: '# Roadmap\n\n## 1. First\n',
+        imported: (line: string) => everInRoadmapHistory('/repo', line, gitLog),
+        highestUsed: highestNumberInRoadmapHistory('/repo', gitLog),
+      });
+      expect(roadmap.match(/^## .*$/gm)).toEqual(['## 1. First', '## 3. New item']);
+    } finally {
+      fs.rmSync(prompts, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('roadmap history in a repository', () => {
   let repo: string;
 
   // One history shared by the tests: commit 1 adds items 1 and 2, the second holding the Source
@@ -122,9 +158,10 @@ describe('roadmap history', () => {
     fs.rmSync(repo, { recursive: true, force: true });
   });
 
-  it('finds a Source line that a past version of ROADMAP.md held, and not one it never held', () => {
+  it('finds a Source line that a past version of ROADMAP.md held, and not one it never held, and the highest number it held', () => {
     expect(everInRoadmapHistory(repo, 'Source: `gmail-old.md`')).toBe(true);
     expect(everInRoadmapHistory(repo, 'Source: `gmail-never.md`')).toBe(false);
+    expect(highestNumberInRoadmapHistory(repo)).toBe(2);
   });
 
   it('reads the history of the repository it is given even when GIT_DIR names another', () => {
@@ -138,19 +175,4 @@ describe('roadmap history', () => {
     }
   });
 
-  it('numbers a prompt imported after the highest-numbered item was closed above that item, not with its number', () => {
-    const prompts = fs.mkdtempSync(path.join(os.tmpdir(), 'import-prompts-'));
-    try {
-      fs.writeFileSync(path.join(prompts, 'gmail-new.md'), '# New item\n\nBody.\n');
-      const { roadmap } = importPrompts({
-        promptsDir: prompts,
-        roadmap: fs.readFileSync(path.join(repo, 'ROADMAP.md'), 'utf-8'),
-        imported: (line: string) => everInRoadmapHistory(repo, line),
-        highestUsed: highestNumberInRoadmapHistory(repo),
-      });
-      expect(roadmap.match(/^## .*$/gm)).toEqual(['## 1. First', '## 3. New item']);
-    } finally {
-      fs.rmSync(prompts, { recursive: true, force: true });
-    }
-  });
 });

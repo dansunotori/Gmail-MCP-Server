@@ -80,20 +80,21 @@ export function importPrompts({ promptsDir, roadmap, imported, highestUsed = 0 }
 // of them when it runs a hook. The repository here is always repoRoot, so they are dropped.
 const GIT_LOCATION = /^GIT_(?:DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM)$/;
 
-// git log of ROADMAP.md in repoRoot with the given options.
-function roadmapLog(repoRoot, options) {
+// git log of ROADMAP.md in repoRoot with the given options: its output.
+export function roadmapLog(repoRoot, options) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !GIT_LOCATION.test(key)));
   return execFileSync('git', ['log', ...options, '--', 'ROADMAP.md'], { cwd: repoRoot, env, encoding: 'utf-8', maxBuffer: 256 * 1024 * 1024 });
 }
 
-// Whether any commit added or removed the line in ROADMAP.md.
-export function everInRoadmapHistory(repoRoot, line) {
-  return roadmapLog(repoRoot, ['-F', `-S${line}`, '--format=%h']).trim() !== '';
+// Whether any commit added or removed the line in ROADMAP.md. gitLog runs as roadmapLog does.
+export function everInRoadmapHistory(repoRoot, line, gitLog = roadmapLog) {
+  return gitLog(repoRoot, ['-F', `-S${line}`, '--format=%h']).trim() !== '';
 }
 
-// The highest `## N.` item number any commit added or removed in ROADMAP.md, or 0.
-export function highestNumberInRoadmapHistory(repoRoot) {
-  const numbers = [...roadmapLog(repoRoot, ['-p', '--format=']).matchAll(/^[-+]## (\d+)\./gm)].map(match => Number(match[1]));
+// The highest `## N.` item number any commit added or removed in ROADMAP.md, or 0. gitLog runs
+// as roadmapLog does.
+export function highestNumberInRoadmapHistory(repoRoot, gitLog = roadmapLog) {
+  const numbers = [...gitLog(repoRoot, ['-p', '--format=']).matchAll(/^[-+]## (\d+)\./gm)].map(match => Number(match[1]));
   return Math.max(0, ...numbers);
 }
 
