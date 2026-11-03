@@ -273,7 +273,7 @@ export const GmailAddedHistoryOutputSchema = z.object({
 
   if (!valid) {
     context.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       message: 'Invalid Gmail history result',
     });
   }
@@ -295,7 +295,7 @@ export const BatchFetchWindowSchema = strictInput({
     const match = WATERMARK_PATTERN.exec(value);
     if (!match) {
       context.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'watermark must be an ISO 8601 timestamp with an explicit Z or +HH:MM/-HH:MM zone suffix',
       });
       return;
@@ -318,7 +318,7 @@ export const BatchFetchWindowSchema = strictInput({
       && roundTrip.getUTCMinutes() === mi
       && roundTrip.getUTCSeconds() === s;
     if (!isValidCalendarDate || !Number.isFinite(Date.parse(value))) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'watermark is not a valid date' });
+      context.addIssue({ code: 'custom', message: 'watermark is not a valid date' });
     }
   }).describe("ISO 8601 timestamp with an explicit zone (Z or +HH:MM/-HH:MM), e.g. 2026-09-10T14:03:22Z; the window is inclusive of this instant"),
   output_dir: z.string().refine(value => path.isAbsolute(value), {

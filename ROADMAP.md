@@ -4,11 +4,7 @@ Work to implement, in order. Every change applies to the MCP tools and to the CL
 
 Do not renumber. Numbers are unique. Bug and code fixes precede coding and test machinery.
 
-<!-- highest item number: 2 -->
-
-## 3. Tool schemas use zod 4's string issue codes
-
-`src/tools.ts` raises custom issues with `z.ZodIssueCode.custom` in three places (the history output check and the watermark checks), and zod 4 marks `ZodIssueCode` deprecated in favour of the string literal codes. Replace each with `code: 'custom'`. The existing tests of the history output check and of the watermark refusals cover the messages.
+<!-- highest item number: 3 -->
 
 ## 4. The hook and CLI scripts take their git runner and I/O as arguments
 
