@@ -15,10 +15,18 @@ function documentedSteps(agents: string): string[] {
 
 describe('verify.mjs', () => {
   it('runs the checks every change needs, in order, ending with the CLI rebuild', () => {
-    expect(STEPS).toEqual(['test', 'typecheck', 'lockfile:lint', 'roadmap:check', 'duplicates:check', 'graph:check', 'install-cli']);
+    expect(STEPS).toEqual(['test', 'typecheck', 'lockfile:lint', 'audit', 'roadmap:check', 'duplicates:check', 'graph:check', 'install-cli']);
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     expect(packageJson.scripts.verify).toBe('node scripts/verify.mjs');
     for (const step of STEPS) expect(packageJson.scripts[step], step).toBeDefined();
+  });
+
+  it('audits dependencies with the command the CI step runs, after the lockfile lint', () => {
+    expect(STEPS.indexOf('audit')).toBe(STEPS.indexOf('lockfile:lint') + 1);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    expect(packageJson.scripts.audit).toBe('npm audit --audit-level=high');
+    const workflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8');
+    expect(workflow).toMatch(/- name: Audit dependencies\n\s+run: npm run audit\n/);
   });
 
   it('is described in AGENTS.md by the same steps in the same order, and a step out of step there is caught', () => {
