@@ -58,10 +58,13 @@ export function scopeFiles(root, inScope, run = runCaptured) {
 }
 
 // The entries of a `git ls-files -s -z` listing that a commit records as regular files and the
-// rule takes: each with its mode, blob and path.
+// rule takes: each with its mode, blob and path. The path is everything after the entry's first
+// tab, so a path holding tabs is kept whole.
 export function stagedEntries(listed, inScope) {
   return listed.split('\0').filter(Boolean).map(line => {
-    const [meta, file] = line.split('\t');
+    const tab = line.indexOf('\t');
+    const meta = line.slice(0, tab);
+    const file = line.slice(tab + 1);
     const [mode, blob, stage] = meta.split(' ');
     return { mode, blob, stage, file };
   }).filter(entry => entry.stage === '0' && (entry.mode === '100644' || entry.mode === '100755') && inScope(entry.file));

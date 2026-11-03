@@ -6,10 +6,6 @@ Do not renumber. Numbers are unique. Bug and code fixes precede coding and test 
 
 <!-- highest item number: 30 -->
 
-## 6. The staged duplicate-code check keeps paths that contain a tab
-
-`writeStagedFiles` in `scripts/check-duplicates.mjs` reads each `git ls-files -s -z` entry with `line.split('\t')`, so a path holding a tab is cut at its second tab and the staged copy is written under the wrong name. Split each entry at its first tab only, so the path is everything after it.
-
 ## 7. import-prompts keeps a second top-level heading from becoming a roadmap item heading
 
 `importPrompts` in `scripts/import-prompts.mjs` moves every heading of depth 5 or less after the title down one level, so a second `# ` heading in a prompt becomes `## `, which `roadmap:close` and the numbered-heading check read as an item boundary. Move headings after the title so that none lands at depth 2, and test it with a prompt holding a second `# ` heading: the imported item holds no `## ` line besides its own.

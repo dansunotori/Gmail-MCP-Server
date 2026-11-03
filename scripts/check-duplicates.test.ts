@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CONFIG, REPORT, checkDuplicates, clonesOf, main, runCommitHook, scopeRule } from './check-duplicates.mjs';
+import { CONFIG, REPORT, checkDuplicates, clonesOf, main, runCommitHook, scopeRule, stagedEntries } from './check-duplicates.mjs';
 import { answeringRun, exitError, fixtureRepo, gitIn, isolatedEnv, runMain, runScript, withoutInheritedGitEnv } from './git-fixture.js';
 import { runCaptured } from './script-support.mjs';
 
@@ -33,6 +33,25 @@ describe('scopeRule', () => {
     { name: 'lists a format its maps do not name', format: [...projectConfig.format, 'markdown'], mentions: /markdown/ },
   ])('refuses a config whose format list differs from the formats its maps name: it $name', ({ format, mentions }) => {
     expect(() => scopeRule({ ...projectConfig, format })).toThrow(mentions);
+  });
+});
+
+describe('stagedEntries', () => {
+  const blob = 'a'.repeat(40);
+
+  it('keeps a path holding tabs whole, splitting each entry at its first tab only', () => {
+    expect(stagedEntries(`100644 ${blob} 0\tsrc/a\tb\tc.ts\0`, () => true)).toEqual([{ mode: '100644', blob, stage: '0', file: 'src/a\tb\tc.ts' }]);
+  });
+
+  it('takes only regular files at stage 0 that the rule takes', () => {
+    const listed = [
+      `100644 ${blob} 0\tsrc/a.ts`,
+      `100755 ${blob} 0\trun.sh`,
+      `120000 ${blob} 0\tlink.ts`,
+      `100644 ${blob} 2\tconflict.ts`,
+      `100644 ${blob} 0\tREADME.md`,
+    ].map(entry => `${entry}\0`).join('');
+    expect(stagedEntries(listed, (file: string) => !file.endsWith('.md')).map((entry: { file: string }) => entry.file)).toEqual(['src/a.ts', 'run.sh']);
   });
 });
 
