@@ -4,7 +4,8 @@
 // listed, waited for until GitHub lists them, watched to the end, their progress shown unless
 // --quiet is given (npm run ci:watch -- --quiet), which prints only each run's verdict line.
 // Exits 0 when every run
-// passes, 1 when one does not (naming the run and its failed jobs and steps), 2 when HEAD is
+// passes, 1 when one does not (naming the run and its failed jobs and steps, then printing the
+// tail of its failed-step log, --quiet or not), 2 when HEAD is
 // detached or not pushed to origin, no run appears in time, or git or gh fails.
 import { execFileSync, spawnSync } from 'child_process';
 import { runDirectly, sleep } from './script-support.mjs';
@@ -93,8 +94,27 @@ function watchRuns({ run, watch, sleep, log, waitSeconds = 180, pollSeconds = 5 
     failed = true;
     const steps = failedSteps(view.jobs);
     log(`ci:watch: ${view.name} ${view.url} ended ${view.conclusion} for ${short}${steps.length > 0 ? `; failed: ${steps.join(', ')}` : ''}`);
+    logFailedTail(run, log, id, repo);
   }
   return failed ? 1 : 0;
+}
+
+export const FAILED_LOG_LINES = 60;
+
+// The last FAILED_LOG_LINES lines of a failed run's failed-step log, so the cause prints with
+// the verdict. A log that cannot be read is named in one line; the run has failed either way.
+function logFailedTail(run, log, id, repo) {
+  const args = ['run', 'view', id, '--repo', repo, '--log-failed'];
+  let output;
+  try {
+    output = run('gh', args);
+  } catch (error) {
+    log(`ci:watch: gh ${args.join(' ')} failed: ${error.message.trim()}`);
+    return;
+  }
+  const text = output.replace(/\n$/, '');
+  if (text === '') return;
+  for (const line of text.split('\n').slice(-FAILED_LOG_LINES)) log(line);
 }
 
 const run = (command, args) => execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });

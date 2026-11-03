@@ -4,11 +4,7 @@ Work to implement, in order. Every change applies to the MCP tools and to the CL
 
 Do not renumber. Numbers are unique. Bug and code fixes precede coding and test machinery.
 
-<!-- highest item number: 1 -->
-
-## 2. ci:watch prints the log of each failed step
-
-When a run fails, `scripts/ci-watch.mjs` names the failed jobs and steps but not why they failed, so the cause is read by a separate `gh run view <id> --log-failed`, which needs `--repo` set to origin's repository or it reads the upstream fork's. After the verdict line of a failed run, have `ci:watch` run `gh run view <id> --repo <repo> --log-failed` through its `run` and print the last 60 lines, in `--quiet` mode too, still exiting 1; a failure of that command prints one line naming it and keeps the exit code 1. Test with `run` stubbed: a passing run prints no log, a failed run prints the tail of its log after the verdict line, and a log command that fails is named without changing the exit code.
+<!-- highest item number: 2 -->
 
 ## 3. Tool schemas use zod 4's string issue codes
 
