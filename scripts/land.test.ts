@@ -99,6 +99,13 @@ describe('land', () => {
     expect(logged).toEqual(['usage: npm run land -- <branch>']);
   });
 
+  it.each(['-', '--upload-pack=touch x', '-q'])('refuses the branch name %j, which git would read as an option, before running anything', branch => {
+    const { code, logged, calls } = landing(branch);
+    expect(code).toBe(2);
+    expect(logged).toEqual(['usage: npm run land -- <branch>']);
+    expect(calls).toEqual([]);
+  });
+
   it('is the land npm script', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     expect(packageJson.scripts.land).toBe('node scripts/land.mjs');

@@ -11,9 +11,10 @@ import { runDirectly } from './script-support.mjs';
 const USAGE = 'usage: npm run land -- <branch>';
 
 // run(command, args) runs a command in the main checkout and returns { status, stdout }; log
-// prints a line. Returns the exit code.
+// prints a line. Returns the exit code. A branch name starting with - is refused before any
+// command runs, since git would read it as an option.
 export function land(branch, run, log) {
-  if (!branch) {
+  if (!branch || branch.startsWith('-')) {
     log(USAGE);
     return 2;
   }

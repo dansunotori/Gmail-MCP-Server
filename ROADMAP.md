@@ -6,10 +6,6 @@ Do not renumber. Numbers are unique. Bug and code fixes precede coding and test 
 
 <!-- highest item number: 30 -->
 
-## 5. npm run land refuses a branch name that git would read as an option
-
-`scripts/land.mjs` passes the branch argument straight into `git merge-base --is-ancestor origin/main <branch>` and `git merge --ff-only --quiet <branch>`, so a name starting with `-` is parsed by git as an option. Refuse such a name with the usage line and exit code 2 before any git command runs, and test it with `scriptedRun` from `scripts/git-fixture.ts`: the runner receives no call.
-
 ## 6. The staged duplicate-code check keeps paths that contain a tab
 
 `writeStagedFiles` in `scripts/check-duplicates.mjs` reads each `git ls-files -s -z` entry with `line.split('\t')`, so a path holding a tab is cut at its second tab and the staged copy is written under the wrong name. Split each entry at its first tab only, so the path is everything after it.
