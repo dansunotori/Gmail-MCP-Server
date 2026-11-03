@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { everInRoadmapHistory, importPrompts } from './import-prompts.mjs';
+import { everInRoadmapHistory, highestNumberInRoadmapHistory, importPrompts } from './import-prompts.mjs';
+import { closeItem } from './roadmap-close.mjs';
 import { fixtureRepo, gitIn } from './git-fixture.js';
 
 const ROADMAP = '# Roadmap\n\nWork to implement, in order.\n\n## 7. Script to import prompts\n\nBody.\n\n## 12. Another item\n\nBody.\n';
@@ -81,6 +82,12 @@ describe('importPrompts', () => {
     expect(roadmap).toContain('\n### Top\n');
   });
 
+  it('numbers a new prompt above the highest number the roadmap ever held when that is above every open item', () => {
+    write('gmail-new.md', '# New item\n\nBody.\n');
+    const { roadmap } = importPrompts({ promptsDir: dir, roadmap: ROADMAP, imported: never, highestUsed: 20 });
+    expect(roadmap).toContain('## 21. New item\n');
+  });
+
   it('refuses a prompt with no title line, naming the file', () => {
     write('gmail-untitled.md', 'No heading here.\n');
     expect(() => importPrompts({ promptsDir: dir, roadmap: ROADMAP, imported: never }))
@@ -88,18 +95,20 @@ describe('importPrompts', () => {
   });
 });
 
-describe('everInRoadmapHistory', () => {
+describe('roadmap history', () => {
   let repo: string;
 
-  // One history shared by both tests: commit 1 adds the Source line, commit 2 removes it.
+  // One history shared by the tests: commit 1 adds items 1 and 2, the second holding the Source
+  // line, and commit 2 closes item 2, the highest-numbered one, with roadmap:close.
   beforeAll(() => {
     repo = fixtureRepo('import-prompts-repo-');
     const git = gitIn(repo);
-    fs.writeFileSync(path.join(repo, 'ROADMAP.md'), '## 1. Item\n\nSource: `gmail-old.md`\n');
+    const roadmap = '# Roadmap\n\n## 1. First\n\nOne.\n\n## 2. Item\n\nSource: `gmail-old.md`\n';
+    fs.writeFileSync(path.join(repo, 'ROADMAP.md'), roadmap);
     git('add', 'ROADMAP.md');
     git('commit', '-q', '-m', 'add');
-    fs.writeFileSync(path.join(repo, 'ROADMAP.md'), '# Roadmap\n');
-    git('commit', '-q', '-am', 'remove');
+    fs.writeFileSync(path.join(repo, 'ROADMAP.md'), closeItem(roadmap, 2).markdown as string);
+    git('commit', '-q', '-am', 'close');
   });
 
   afterAll(() => {
@@ -119,6 +128,22 @@ describe('everInRoadmapHistory', () => {
     } finally {
       if (saved === undefined) delete process.env.GIT_DIR;
       else process.env.GIT_DIR = saved;
+    }
+  });
+
+  it('numbers a prompt imported after the highest-numbered item was closed above that item, not with its number', () => {
+    const prompts = fs.mkdtempSync(path.join(os.tmpdir(), 'import-prompts-'));
+    try {
+      fs.writeFileSync(path.join(prompts, 'gmail-new.md'), '# New item\n\nBody.\n');
+      const { roadmap } = importPrompts({
+        promptsDir: prompts,
+        roadmap: fs.readFileSync(path.join(repo, 'ROADMAP.md'), 'utf-8'),
+        imported: (line: string) => everInRoadmapHistory(repo, line),
+        highestUsed: highestNumberInRoadmapHistory(repo),
+      });
+      expect(roadmap.match(/^## .*$/gm)).toEqual(['## 1. First', '## 3. New item']);
+    } finally {
+      fs.rmSync(prompts, { recursive: true, force: true });
     }
   });
 });

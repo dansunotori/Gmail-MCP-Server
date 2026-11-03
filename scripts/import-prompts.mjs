@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Appends this server's prompts (gmail-*.md in a prompts directory, such as
 // figaro-pa-predecessor/docs/prompts) to ROADMAP.md as numbered items, each with a
-// `Source: \`<file>\`` line. A prompt already imported is skipped: its Source line is in
+// `Source: \`<file>\`` line, numbered above every item number ROADMAP.md holds or ever held. A prompt already imported is skipped: its Source line is in
 // ROADMAP.md, or was in an earlier version of it, since an item leaves the roadmap once it
 // is implemented. Idempotent.
 //
@@ -17,10 +17,11 @@ const PROMPT_FILE = /^gmail-.+\.md$/;
 
 const sourceLine = name => `Source: \`${name}\``;
 
-// The next item number: one more than the highest `## N.` heading, or 1 when there is none.
-function nextNumber(roadmap) {
+// The next item number: one more than the highest `## N.` heading and than highestUsed, so a
+// number closed with roadmap:close is never given to another item.
+function nextNumber(roadmap, highestUsed) {
   const numbers = [...roadmap.matchAll(/^## (\d+)\./gm)].map(match => Number(match[1]));
-  return numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
+  return Math.max(highestUsed, ...numbers) + 1;
 }
 
 // The raw source of a heading's text, without its # markers or setext underline.
@@ -56,8 +57,9 @@ function sectionFor(number, name, content) {
 }
 
 // Returns the roadmap with every prompt not yet imported appended, and the names it added.
-// imported(sourceLine) says whether an earlier version of the roadmap held that line.
-export function importPrompts({ promptsDir, roadmap, imported }) {
+// imported(sourceLine) says whether an earlier version of the roadmap held that line;
+// highestUsed is the highest item number an earlier version held.
+export function importPrompts({ promptsDir, roadmap, imported, highestUsed = 0 }) {
   const names = fs.readdirSync(promptsDir).filter(name => PROMPT_FILE.test(name)).sort();
   const added = [];
   let result = roadmap.endsWith('\n') ? roadmap : `${roadmap}\n`;
@@ -65,7 +67,7 @@ export function importPrompts({ promptsDir, roadmap, imported }) {
     const source = sourceLine(name);
     const present = result.split('\n').some(line => line.startsWith(source));
     if (present || imported(source)) continue;
-    const section = sectionFor(nextNumber(result), name, fs.readFileSync(path.join(promptsDir, name), 'utf-8'));
+    const section = sectionFor(nextNumber(result, highestUsed), name, fs.readFileSync(path.join(promptsDir, name), 'utf-8'));
     result += `\n${section}`;
     added.push(name);
   }
@@ -76,11 +78,21 @@ export function importPrompts({ promptsDir, roadmap, imported }) {
 // of them when it runs a hook. The repository here is always repoRoot, so they are dropped.
 const GIT_LOCATION = /^GIT_(?:DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM)$/;
 
+// git log of ROADMAP.md in repoRoot with the given options.
+function roadmapLog(repoRoot, options) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !GIT_LOCATION.test(key)));
+  return execFileSync('git', ['log', ...options, '--', 'ROADMAP.md'], { cwd: repoRoot, env, encoding: 'utf-8', maxBuffer: 256 * 1024 * 1024 });
+}
+
 // Whether any commit added or removed the line in ROADMAP.md.
 export function everInRoadmapHistory(repoRoot, line) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !GIT_LOCATION.test(key)));
-  const out = execFileSync('git', ['log', '-F', `-S${line}`, '--format=%h', '--', 'ROADMAP.md'], { cwd: repoRoot, env, encoding: 'utf-8' });
-  return out.trim() !== '';
+  return roadmapLog(repoRoot, ['-F', `-S${line}`, '--format=%h']).trim() !== '';
+}
+
+// The highest `## N.` item number any commit added or removed in ROADMAP.md, or 0.
+export function highestNumberInRoadmapHistory(repoRoot) {
+  const numbers = [...roadmapLog(repoRoot, ['-p', '--format=']).matchAll(/^[-+]## (\d+)\./gm)].map(match => Number(match[1]));
+  return Math.max(0, ...numbers);
 }
 
 if (runDirectly(import.meta.url)) {
@@ -95,6 +107,7 @@ if (runDirectly(import.meta.url)) {
     promptsDir,
     roadmap: fs.readFileSync(roadmapPath, 'utf-8'),
     imported: line => everInRoadmapHistory(root, line),
+    highestUsed: highestNumberInRoadmapHistory(root),
   });
   if (added.length === 0) {
     console.log('nothing to import');
