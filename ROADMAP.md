@@ -4,15 +4,11 @@ Work to implement, in order. Every change applies to the MCP tools and to the CL
 
 Do not renumber. Numbers are unique. Bug and code fixes precede coding and test machinery.
 
-<!-- highest item number: 30 -->
+<!-- highest item number: 33 -->
 
 ## 7. import-prompts keeps a second top-level heading from becoming a roadmap item heading
 
 `importPrompts` in `scripts/import-prompts.mjs` moves every heading of depth 5 or less after the title down one level, so a second `# ` heading in a prompt becomes `## `, which `roadmap:close` and the numbered-heading check read as an item boundary. Move headings after the title so that none lands at depth 2, and test it with a prompt holding a second `# ` heading: the imported item holds no `## ` line besides its own.
-
-## 33. The duplicate-code check names clones by their repository paths when every checked file shares a directory
-
-When the only files `checkDuplicates` in `scripts/check-duplicates.mjs` passes to jscpd are `src/a.ts` and `src/b.ts`, the clone it reports reads `a.ts:1-8 duplicates b.ts:1-8`, so the deny names paths that are not in the repository; with a root-level file such as `.jscpd.json` among them, the same clone reads `src/a.ts:1-8 duplicates src/b.ts:1-8`. Find where the directory is lost (jscpd's report names, or `fileOf`), make every clone name its paths relative to the repository root whatever the files share, and test it with a stubbed runner whose index stages only `src/a.ts` and `src/b.ts` holding the same block.
 
 ## 29. roadmap:check refuses an item removed without its number recorded
 

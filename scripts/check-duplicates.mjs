@@ -92,20 +92,21 @@ export function writeStagedFiles(root, inScope, dir, run = runCaptured) {
   return [...new Set(entries.map(entry => entry.file))].sort();
 }
 
-// A report entry's file: its path, without the `:format` jscpd appends to some names.
-const fileOf = (side, format) => ({
-  file: side.name.endsWith(`:${format}`) ? side.name.slice(0, -format.length - 1) : side.name,
-  start: side.start,
-  end: side.end,
-});
+// A report entry's file: its path, without the `:format` jscpd appends to some names, relative
+// to root when root is given.
+const fileOf = (side, format, root) => {
+  const name = side.name.endsWith(`:${format}`) ? side.name.slice(0, -format.length - 1) : side.name;
+  return { file: root === undefined ? name : path.relative(root, name), start: side.start, end: side.end };
+};
 
 const order = (a, b) => a.file.localeCompare(b.file) || a.start - b.start;
 
-// The clones of a jscpd JSON report, each with its two ranges in path order, sorted.
-export function clonesOf(report) {
+// The clones of a jscpd JSON report, each with its two ranges in path order, sorted. With root,
+// the report's names are absolute and each is given relative to root.
+export function clonesOf(report, root) {
   return (report.duplicates ?? [])
     .map(clone => {
-      const [first, second] = [fileOf(clone.firstFile, clone.format), fileOf(clone.secondFile, clone.format)].sort(order);
+      const [first, second] = [fileOf(clone.firstFile, clone.format, root), fileOf(clone.secondFile, clone.format, root)].sort(order);
       return { first, second, lines: clone.lines, tokens: clone.tokens };
     })
     .sort((a, b) => order(a.first, b.first) || order(a.second, b.second));
@@ -115,15 +116,17 @@ export const formatClone = ({ first, second, lines, tokens }) =>
   `${first.file}:${first.start}-${first.end} duplicates ${second.file}:${second.start}-${second.end} (${lines} lines, ${tokens} tokens)`;
 
 // The clones jscpd finds among files, paths relative to dir, with the config at configPath, its
-// JSON report written to reportPath; sorted. Throws when jscpd cannot run or fails.
+// JSON report written to reportPath; sorted, each naming its paths relative to dir. jscpd's
+// relative names start at the directory every file shares, so it is asked for absolute ones.
+// Throws when jscpd cannot run or fails.
 export function findClones(dir, files, configPath, reportPath) {
-  const result = spawnSync(process.execPath, [JSCPD, '--config', configPath, '--workers', '1', '--output', path.dirname(reportPath), ...files], {
+  const result = spawnSync(process.execPath, [JSCPD, '--config', configPath, '--absolute', '--workers', '1', '--output', path.dirname(reportPath), ...files], {
     cwd: dir,
     encoding: 'utf8',
   });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`jscpd exited ${result.status ?? `on ${result.signal}`}: ${(result.stderr || result.stdout).trim()}`);
-  return clonesOf(JSON.parse(fs.readFileSync(reportPath, 'utf8')));
+  return clonesOf(JSON.parse(fs.readFileSync(reportPath, 'utf8')), fs.realpathSync(dir));
 }
 
 // The clones in the repository at root, sorted: in its working copy, or with staged set in the

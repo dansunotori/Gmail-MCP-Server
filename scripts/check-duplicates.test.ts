@@ -99,15 +99,15 @@ function repository(files: Record<string, string>) {
 }
 
 // A directory that is no repository, holding the working files and the config, with git
-// answered as if its index listed them and staged the blobs of staged and the config, all in
-// scope.
-function stubbed(workingFiles: Record<string, string>, stagedFiles: Record<string, string> = workingFiles) {
+// answered as if its index listed them and staged the blobs of staged and, unless configStaged
+// is false, the config, all in scope.
+function stubbed(workingFiles: Record<string, string>, stagedFiles: Record<string, string> = workingFiles, { configStaged = true } = {}) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'check-duplicates-stub-')));
   dirs.push(dir);
   const config = { [CONFIG]: JSON.stringify(projectConfig) };
   const working = { ...config, ...workingFiles };
   for (const [file, content] of Object.entries(working)) writeIn(dir, file, content);
-  const blobs = Object.entries({ ...config, ...stagedFiles }).map(([file, content], index) => ({ file, content, blob: String(index + 1).padStart(40, '0') }));
+  const blobs = Object.entries({ ...(configStaged ? config : {}), ...stagedFiles }).map(([file, content], index) => ({ file, content, blob: String(index + 1).padStart(40, '0') }));
   const git = answeringRun({
     'git rev-parse --show-toplevel': `${dir}\n`,
     'git ls-files -z --cached': Object.keys(working).map(file => `${file}\0`).join(''),
@@ -192,6 +192,11 @@ describe('check-duplicates.mjs with git answered by a stub', () => {
     expect(reason).toContain('Duplicate code: 1 clone');
     expect(reason).toContain('src/a.ts:1-8 duplicates src/b.ts:1-8');
     expect(C.hook('git commit -a -m x')).toBeUndefined();
+  });
+
+  it('as a commit hook, names a clone by its repository paths when every staged file shares a directory', () => {
+    const C = stubbed({ 'src/a.ts': BLOCK, 'src/b.ts': BLOCK }, { 'src/a.ts': BLOCK, 'src/b.ts': BLOCK }, { configStaged: false });
+    expect(C.hook('git commit -m x')).toContain('\nsrc/a.ts:1-8 duplicates src/b.ts:1-8 (');
   });
 
   it('as a commit hook, refuses a commit naming paths, asking for staging instead, without reading the files', () => {
