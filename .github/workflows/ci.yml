@@ -29,6 +29,9 @@ jobs:
       - name: Lint lockfile
         run: npm run lockfile:lint
 
+      - name: Check no tracked file is ignored
+        run: npm run ignored:check
+
       - name: Check the roadmap lists open work only
         run: npm run roadmap:check
 

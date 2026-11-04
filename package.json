@@ -35,6 +35,7 @@
     "test:watch": "vitest",
     "lockfile:lint": "lockfile-lint --path package-lock.json --type npm --validate-https --validate-integrity --allowed-hosts npm cdn.sheetjs.com",
     "audit": "npm audit --audit-level=high",
+    "ignored:check": "node scripts/check-ignored.mjs",
     "prepare": "npm run build",
     "roadmap:check": "node scripts/check-roadmap.mjs",
     "roadmap:check:staged": "node scripts/check-roadmap.mjs --staged",

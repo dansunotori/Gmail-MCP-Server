@@ -6,10 +6,6 @@ Do not renumber. Numbers are unique. Bug and code fixes precede coding and test 
 
 <!-- highest item number: 33 -->
 
-## 31. verify refuses a tracked file that .gitignore matches
-
-A file committed before its `.gitignore` rule stays tracked, so the rule does nothing for it, and nothing reports that. Add `scripts/check-ignored.mjs`, run as `npm run ignored:check` in CI and in `STEPS` of `scripts/verify.mjs` after `lockfile:lint`, that runs `git ls-files -ci --exclude-standard -z` and fails naming each path and `git rm --cached <path>`, and that also fails on a non-comment `.gitignore` line repeated in the file. Describe it in the `npm run verify` sentence of `AGENTS.md`. Test with a stubbed runner: a tracked ignored path fails naming it, a repeated line fails naming it, and a clean listing passes.
-
 ## 32. npm run roadmap:add numbers a new item
 
 Items written by hand take a number chosen by reading the headings, the highest-number comment and the git history, which `nextNumber` and `highestNumberInRoadmapHistory` in `scripts/import-prompts.mjs` already compute. Add `scripts/roadmap-add.mjs`, run as `npm run roadmap:add -- "<title>"`, that appends `## <next>. <title>` with an empty body to `ROADMAP.md` using those functions and prints the number, refusing an empty title. Name it in the Roadmap paragraph of `AGENTS.md` as the way to add an item. Test that it numbers above an item closed before any commit and above a number only the history holds.
