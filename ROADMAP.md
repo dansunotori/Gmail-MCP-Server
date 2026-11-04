@@ -6,10 +6,6 @@ Do not renumber. Numbers are unique. Bug and code fixes precede coding and test 
 
 <!-- highest item number: 33 -->
 
-## 29. roadmap:check refuses an item removed without its number recorded
-
-An item deleted from `ROADMAP.md` by hand, not with `npm run roadmap:close`, leaves no `<!-- highest item number: N -->` record, so when it was never committed its number can be given to the next imported item. In the staged check of `scripts/check-roadmap.mjs`, refuse a staged `ROADMAP.md` that drops a `## N.` heading the working copy or `HEAD` holds while its highest-number comment (`recordedHighest` in `scripts/roadmap-close.mjs`) records less than `N`, naming the heading and `npm run roadmap:close -- <N>`. Also refuse a `ROADMAP.md` whose `## N.` headings repeat a number or hold none. Test both refusals, and that a close made with `closeItem` passes.
-
 ## 31. verify refuses a tracked file that .gitignore matches
 
 A file committed before its `.gitignore` rule stays tracked, so the rule does nothing for it, and nothing reports that. Add `scripts/check-ignored.mjs`, run as `npm run ignored:check` in CI and in `STEPS` of `scripts/verify.mjs` after `lockfile:lint`, that runs `git ls-files -ci --exclude-standard -z` and fails naming each path and `git rm --cached <path>`, and that also fails on a non-comment `.gitignore` line repeated in the file. Describe it in the `npm run verify` sentence of `AGENTS.md`. Test with a stubbed runner: a tracked ignored path fails naming it, a repeated line fails naming it, and a clean listing passes.

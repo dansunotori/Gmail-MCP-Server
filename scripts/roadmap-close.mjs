@@ -13,14 +13,28 @@ const USAGE = 'usage: npm run roadmap:close -- <n>';
 const NUMBERED = /^## (\d+)\. /;
 
 // The top-level `## ` headings, read as CommonMark so a heading-like line in a code block is not
-// one: each with its offset and its source line.
-function sections(markdown) {
+// one: each with its offset, its source line and the item number it holds, undefined when none.
+export function itemHeadings(markdown) {
   return fromMarkdown(markdown).children
     .filter(node => node.type === 'heading' && node.depth === 2)
     .map(node => {
       const start = node.position.start.offset;
-      return { start, line: markdown.slice(start, node.position.end.offset).split(/\r?\n/)[0] };
+      const line = markdown.slice(start, node.position.end.offset).split(/\r?\n/)[0];
+      return { start, line, number: NUMBERED.exec(line)?.[1] };
     });
+}
+
+// The `## ` headings that hold no item number, or repeat the number of a heading before them:
+// each as itemHeadings gives it, with the problem.
+export function numberingProblems(markdown) {
+  const seen = new Set();
+  const problems = [];
+  for (const heading of itemHeadings(markdown)) {
+    if (heading.number === undefined) problems.push({ ...heading, problem: 'holds no item number' });
+    else if (seen.has(heading.number)) problems.push({ ...heading, problem: `repeats item number ${heading.number}` });
+    seen.add(heading.number);
+  }
+  return problems;
 }
 
 // The comment recording the highest item number the roadmap has held, so that a number closed
@@ -41,18 +55,15 @@ export function closeItem(markdown, n) {
   const comment = highestComment(Math.max(recordedHighest(markdown), n));
   if (HIGHEST.test(closed.markdown)) return { markdown: closed.markdown.replace(HIGHEST, comment) };
   const eol = markdown.includes('\r\n') ? '\r\n' : '\n';
-  const first = sections(markdown)[0].start;
+  const first = itemHeadings(markdown)[0].start;
   return removeItem(markdown.slice(0, first) + comment + eol + eol + markdown.slice(first), n);
 }
 
 function removeItem(markdown, n) {
-  const headings = sections(markdown);
+  const headings = itemHeadings(markdown);
   const found = headings.length === 0 ? 'no ## headings' : `the headings are:\n${headings.map(heading => heading.line).join('\n')}`;
-  const numbers = headings.map(heading => NUMBERED.exec(heading.line)?.[1]);
-  if (numbers.some(number => number === undefined) || new Set(numbers).size !== numbers.length) {
-    return { error: `the ## headings do not each hold a unique number; ${found}` };
-  }
-  const index = numbers.indexOf(String(n));
+  if (numberingProblems(markdown).length > 0) return { error: `the ## headings do not each hold a unique number; ${found}` };
+  const index = headings.findIndex(heading => heading.number === String(n));
   if (index === -1) return { error: `there is no item ${n}; ${found}` };
 
   const removed = headings[index];

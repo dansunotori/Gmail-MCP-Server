@@ -4,10 +4,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { applyToolEdit, findCompletionLanguage, main, runCommitHook, runHook } from './check-roadmap.mjs';
-import { answeringRun, isolatedEnv as isolated, runMain, runScript } from './git-fixture.js';
+import { closeItem } from './roadmap-close.mjs';
+import { answeringRun, fixtureRepo, gitIn, isolatedEnv as isolated, runMain, runScript, withoutInheritedGitEnv } from './git-fixture.js';
+import { runCaptured } from './script-support.mjs';
 
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-roadmap.mjs');
 const phrases = (markdown: string) => findCompletionLanguage(markdown).map((finding: { phrase: string }) => finding.phrase);
+
+// Items 1, 2 and 5, the comment recording 4, and the same roadmap with item 5 deleted by hand.
+const items = '# Roadmap\n\n<!-- highest item number: 4 -->\n\n## 1. First\n\nOne.\n\n## 2. Second\n\nTwo.\n\n## 5. Fifth\n\nFive.\n';
+const handClosed5 = items.replace('\n## 5. Fifth\n\nFive.\n', '');
 
 describe('findCompletionLanguage', () => {
   it.each(['fixed', 'shipped', 'landed', 'merged', 'resolved', 'implemented', 'now', 'no longer', 'previously', 'Fixed'])('finds %s', (word) => {
@@ -104,11 +110,13 @@ describe('check-roadmap.mjs', () => {
     fs.rmSync(roadmap(), { recursive: true, force: true });
     fs.writeFileSync(roadmap(), content);
   };
-  // git's answers for a staged ROADMAP.md (none when null), its work tree being dir.
-  const gitWithStaged = (content: string | null) => answeringRun({
+  // git's answers for a staged ROADMAP.md (none when null) and HEAD's (none when null), its work
+  // tree being dir.
+  const gitWithStaged = (content: string | null, head: string | null = null) => answeringRun({
     'git rev-parse --show-toplevel': `${dir}\n`,
     'git ls-files --stage -- :(top)ROADMAP.md': content === null ? '' : '100644 0123456789abcdef0123456789abcdef01234567 0\tROADMAP.md\n',
     ...(content === null ? {} : { 'git show :ROADMAP.md': content }),
+    'git cat-file --batch': head === null ? 'HEAD:ROADMAP.md missing\n' : `${'a'.repeat(40)} blob ${Buffer.byteLength(head)}\n${head}\n`,
   });
   const cli = (args: string[], git = answeringRun(), cwd = dir) => runMain(main, args, git.run, cwd);
   // The hook reads the project from CLAUDE_PROJECT_DIR, which a run inside a Claude Code session
@@ -149,7 +157,12 @@ describe('check-roadmap.mjs', () => {
     const failed = cli(['--staged'], git, path.join(dir, 'sub'));
     expect(failed.code).toBe(1);
     expect(failed.stderr).toContain(staged);
-    expect(git.calls.map(call => call.cwd)).toEqual([path.join(dir, 'sub'), path.join(dir, 'sub')]);
+    expect(git.calls.map(call => [call.line, call.cwd])).toEqual([
+      ['git ls-files --stage -- :(top)ROADMAP.md', path.join(dir, 'sub')],
+      ['git show :ROADMAP.md', path.join(dir, 'sub')],
+      ['git rev-parse --show-toplevel', path.join(dir, 'sub')],
+      ['git cat-file --batch', path.join(dir, 'sub')],
+    ]);
 
     setWorking(merged);
     expect(cli(['--staged'], gitWithStaged(open)).code).toBe(0);
@@ -166,7 +179,11 @@ describe('check-roadmap.mjs', () => {
     setWorking(open);
     const git = gitWithStaged(finished);
     expect(commitHook('git commit -m "Update"', git, path.join(dir, 'sub'))).toContain(staged);
-    expect(git.calls.slice(1).map(call => call.cwd)).toEqual([dir, dir]);
+    expect(git.calls.slice(1).map(call => [call.line, call.cwd])).toEqual([
+      ['git ls-files --stage -- :(top)ROADMAP.md', dir],
+      ['git show :ROADMAP.md', dir],
+      ['git cat-file --batch', dir],
+    ]);
   });
 
   it('as a commit hook, checks the working copy too, which commit -a records', () => {
@@ -187,9 +204,68 @@ describe('check-roadmap.mjs', () => {
     expect(reason).toContain('ROADMAP.md (working copy): cannot be read');
   });
 
+  it('fails a roadmap with a ## heading that holds no item number or repeats one, naming each', () => {
+    setWorking('# Roadmap\n\n## 1. First\n\n## Second\n\n## 1. Again\n');
+    const failed = cli([roadmap()]);
+    expect(failed.code).toBe(1);
+    expect(failed.stderr).toContain('ROADMAP.md:5: "## Second" holds no item number');
+    expect(failed.stderr).toContain('ROADMAP.md:7: "## 1. Again" repeats item number 1');
+  });
+
+  it('--staged refuses a staged roadmap dropping an item HEAD holds above the number its comment records, naming it and roadmap:close', () => {
+    setWorking(handClosed5);
+    const failed = cli(['--staged'], gitWithStaged(handClosed5, items));
+    expect(failed.code).toBe(1);
+    expect(failed.stderr).toContain('ROADMAP.md (staged) drops "## 5. Fifth", which ROADMAP.md (HEAD) holds, while its highest-number comment records 4');
+    expect(failed.stderr).toContain('npm run roadmap:close -- 5');
+  });
+
+  it('as a commit hook, refuses a staged roadmap dropping an item only the working copy holds', () => {
+    setWorking(items);
+    const reason = commitHook('git commit -m x', gitWithStaged(handClosed5, handClosed5));
+    expect(reason).toContain('drops "## 5. Fifth", which ROADMAP.md (working copy) holds');
+    expect(reason).toContain('npm run roadmap:close -- 5');
+  });
+
+  it.each([
+    ['above the number its comment records, raising it', 5],
+    ['below the number its comment records, leaving it', 2],
+  ])('passes a staged roadmap closing an item with closeItem %s', (_, n) => {
+    const closed = closeItem(items, n).markdown as string;
+    setWorking(closed);
+    expect(cli(['--staged'], gitWithStaged(closed, items))).toEqual({ code: 0, stderr: '' });
+  });
+
   it('as a commit hook, denies a commit whose target repository is not in its text, and ignores a command that is not a commit', () => {
     expect(commitHook('git status && git commit -m x', answeringRun())).toContain('cannot be checked against ROADMAP.md');
     expect(commitHook('git status', answeringRun())).toBeUndefined();
+  });
+});
+
+// git itself answering the staged check: HEAD is read with git cat-file, before and after the
+// first commit.
+describe('check-roadmap.mjs --staged in a repository', () => {
+  withoutInheritedGitEnv();
+  let repo: string;
+  beforeAll(() => {
+    repo = fixtureRepo('check-roadmap-repo-');
+  });
+  afterAll(() => {
+    fs.rmSync(repo, { recursive: true, force: true });
+  });
+  const stage = (content: string) => {
+    fs.writeFileSync(path.join(repo, 'ROADMAP.md'), content);
+    gitIn(repo)('add', 'ROADMAP.md');
+    return runMain(main, ['--staged'], runCaptured, repo);
+  };
+
+  it('passes before any commit, refuses an item deleted by hand from HEAD\'s roadmap, and passes it closed with closeItem', () => {
+    expect(stage(items)).toEqual({ code: 0, stderr: '' });
+    gitIn(repo)('commit', '-q', '-m', 'add');
+    const failed = stage(handClosed5);
+    expect(failed.code).toBe(1);
+    expect(failed.stderr).toContain('drops "## 5. Fifth", which ROADMAP.md (HEAD) holds');
+    expect(stage(closeItem(items, 5).markdown as string)).toEqual({ code: 0, stderr: '' });
   });
 });
 
