@@ -82,6 +82,12 @@ describe('importPrompts', () => {
     expect(roadmap).toContain('\n### Top\n');
   });
 
+  it('moves a second top-level heading, ATX or setext, two levels down, so the item holds no "## " line besides its own', () => {
+    write('gmail-two-titles.md', '# Title\n\nIntro.\n\n# Second\n\nBody.\n\nThird\n=====\n\n## Sub\n');
+    const { roadmap } = importPrompts({ promptsDir: dir, roadmap: '# Roadmap\n', imported: never });
+    expect(roadmap).toBe('# Roadmap\n\n## 1. Title\n\nSource: `gmail-two-titles.md`\n\nIntro.\n\n### Second\n\nBody.\n\n### Third\n\n### Sub\n');
+  });
+
   it('numbers a new prompt above the highest number the roadmap ever held when that is above every open item', () => {
     write('gmail-new.md', '# New item\n\nBody.\n');
     const { roadmap } = importPrompts({ promptsDir: dir, roadmap: ROADMAP, imported: never, highestUsed: 20 });

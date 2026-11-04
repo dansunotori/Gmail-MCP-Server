@@ -6,10 +6,6 @@ Do not renumber. Numbers are unique. Bug and code fixes precede coding and test 
 
 <!-- highest item number: 33 -->
 
-## 7. import-prompts keeps a second top-level heading from becoming a roadmap item heading
-
-`importPrompts` in `scripts/import-prompts.mjs` moves every heading of depth 5 or less after the title down one level, so a second `# ` heading in a prompt becomes `## `, which `roadmap:close` and the numbered-heading check read as an item boundary. Move headings after the title so that none lands at depth 2, and test it with a prompt holding a second `# ` heading: the imported item holds no `## ` line besides its own.
-
 ## 29. roadmap:check refuses an item removed without its number recorded
 
 An item deleted from `ROADMAP.md` by hand, not with `npm run roadmap:close`, leaves no `<!-- highest item number: N -->` record, so when it was never committed its number can be given to the next imported item. In the staged check of `scripts/check-roadmap.mjs`, refuse a staged `ROADMAP.md` that drops a `## N.` heading the working copy or `HEAD` holds while its highest-number comment (`recordedHighest` in `scripts/roadmap-close.mjs`) records less than `N`, naming the heading and `npm run roadmap:close -- <N>`. Also refuse a `ROADMAP.md` whose `## N.` headings repeat a number or hold none. Test both refusals, and that a close made with `closeItem` passes.

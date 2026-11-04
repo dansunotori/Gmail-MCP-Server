@@ -35,8 +35,9 @@ function headingText(text, heading) {
 
 // The prompt as a roadmap item: its first top-level "# " heading becomes the numbered heading,
 // and its body is kept as written, except that its top-level headings move one level down to
-// sit under that heading. The prompt is parsed as CommonMark (mdast-util-from-markdown), so a
-// "#" line in code, a block quote or a list item is left alone.
+// sit under that heading, and a further "# " heading two levels down, so none reads as an item
+// heading. The prompt is parsed as CommonMark (mdast-util-from-markdown), so a "#" line in code,
+// a block quote or a list item is left alone.
 function sectionFor(number, name, content) {
   const text = content.replace(/\r\n?/g, '\n');
   const tree = fromMarkdown(text);
@@ -49,10 +50,11 @@ function sectionFor(number, name, content) {
   for (const heading of headings.reverse()) {
     const { offset: start } = heading.position.start;
     const { offset: end } = heading.position.end;
+    const depth = Math.max(heading.depth + 1, 3);
     const atx = /^ {0,3}#/.test(text.slice(start, end));
     body = atx
-      ? body.slice(0, start) + body.slice(start, end).replace('#', '##') + body.slice(end)
-      : body.slice(0, start) + `${'#'.repeat(heading.depth + 1)} ${headingText(text, heading).replace(/\n/g, ' ')}` + body.slice(end);
+      ? body.slice(0, start) + body.slice(start, end).replace('#', '#'.repeat(depth - heading.depth + 1)) + body.slice(end)
+      : body.slice(0, start) + `${'#'.repeat(depth)} ${headingText(text, heading).replace(/\n/g, ' ')}` + body.slice(end);
   }
   const section = body.slice(title.position.end.offset).replace(/^\n+/, '').replace(/\s+$/, '');
   return `## ${number}. ${headingText(text, title).trim()}\n\n${sourceLine(name)}\n\n${section}\n`;
