@@ -90,10 +90,14 @@ export function main(args, { read, write, log }) {
   return 0;
 }
 
+// The ROADMAP.md of the current directory, as the roadmap command lines take it: read() gives
+// it, write(markdown) replaces it and log(line) writes to stderr.
+export const roadmapFileIo = {
+  read: () => fs.readFileSync(ROADMAP, 'utf8'),
+  write: markdown => fs.writeFileSync(ROADMAP, markdown),
+  log: line => process.stderr.write(`${line}\n`),
+};
+
 if (runDirectly(import.meta.url)) {
-  process.exitCode = main(process.argv.slice(2), {
-    read: () => fs.readFileSync(ROADMAP, 'utf8'),
-    write: markdown => fs.writeFileSync(ROADMAP, markdown),
-    log: line => process.stderr.write(`${line}\n`),
-  });
+  process.exitCode = main(process.argv.slice(2), roadmapFileIo);
 }

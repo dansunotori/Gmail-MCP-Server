@@ -21,7 +21,7 @@ const sourceLine = name => `Source: \`${name}\``;
 // The next item number: one more than the highest `## N.` heading, than the number the
 // roadmap's highest-number comment records and than highestUsed, so a number closed with
 // roadmap:close, committed or not, is never given to another item.
-function nextNumber(roadmap, highestUsed) {
+export function nextNumber(roadmap, highestUsed) {
   const numbers = [...roadmap.matchAll(/^## (\d+)\./gm)].map(match => Number(match[1]));
   return Math.max(highestUsed, recordedHighest(roadmap), ...numbers) + 1;
 }

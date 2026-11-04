@@ -40,6 +40,7 @@
     "roadmap:check": "node scripts/check-roadmap.mjs",
     "roadmap:check:staged": "node scripts/check-roadmap.mjs --staged",
     "roadmap:close": "node scripts/roadmap-close.mjs",
+    "roadmap:add": "node scripts/roadmap-add.mjs",
     "duplicates:check": "node scripts/check-duplicates.mjs",
     "verify": "node scripts/verify.mjs",
     "graph:check": "node scripts/graph-check.mjs",
