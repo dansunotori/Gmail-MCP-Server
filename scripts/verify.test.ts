@@ -15,7 +15,7 @@ function documentedSteps(agents: string): string[] {
 
 describe('verify.mjs', () => {
   it('runs the checks every change needs, in order, ending with the CLI rebuild', () => {
-    expect(STEPS).toEqual(['test', 'typecheck', 'lockfile:lint', 'ignored:check', 'audit', 'roadmap:check', 'duplicates:check', 'graph:check', 'install-cli']);
+    expect(STEPS).toEqual(['lockfile:lint', 'ignored:check', 'roadmap:check', 'duplicates:check', 'typecheck', 'test', 'audit', 'graph:check', 'install-cli']);
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     expect(packageJson.scripts.verify).toBe('node scripts/verify.mjs');
     for (const step of STEPS) expect(packageJson.scripts[step], step).toBeDefined();
@@ -29,8 +29,12 @@ describe('verify.mjs', () => {
     expect(workflow).toMatch(/run: npm run lockfile:lint\n\n\s+- name: [^\n]+\n\s+run: npm run ignored:check\n/);
   });
 
-  it('audits dependencies with the command the CI step runs, after the lockfile lint and the ignored-file check', () => {
-    expect(STEPS.indexOf('audit')).toBe(STEPS.indexOf('ignored:check') + 1);
+  it('runs the duplicate-code check and the typecheck before the test suite', () => {
+    expect(STEPS.indexOf('duplicates:check')).toBeLessThan(STEPS.indexOf('test'));
+    expect(STEPS.indexOf('typecheck')).toBeLessThan(STEPS.indexOf('test'));
+  });
+
+  it('audits dependencies with the command the CI step runs', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     expect(packageJson.scripts.audit).toBe('npm audit --audit-level=high');
     const workflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8');

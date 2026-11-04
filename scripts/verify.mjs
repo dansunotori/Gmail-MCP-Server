@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // The checks every change runs before it is committed, as one command (npm run verify): each
-// npm script in order, stopping at the first that fails with its exit code. The CLI rebuild
-// comes last, since the CLIs are links into dist and a change not rebuilt is not what they run.
+// npm script in order, stopping at the first that fails with its exit code. The quick checks
+// come before the test suite, so a failure they find is reported without the suite running
+// first. The CLI rebuild comes last, since the CLIs are links into dist and a change not rebuilt
+// is not what they run.
 import { spawnSync } from 'child_process';
 import { runDirectly } from './script-support.mjs';
 
-export const STEPS = ['test', 'typecheck', 'lockfile:lint', 'ignored:check', 'audit', 'roadmap:check', 'duplicates:check', 'graph:check', 'install-cli'];
+export const STEPS = ['lockfile:lint', 'ignored:check', 'roadmap:check', 'duplicates:check', 'typecheck', 'test', 'audit', 'graph:check', 'install-cli'];
 
 // Runs each step through run(step), which returns its exit code (null when it ended without
 // one, as when a signal stops it). Returns 0 when every step passes, else the failing step's
