@@ -527,10 +527,14 @@ describe('gmail-get-message', () => {
     expect(plain.json()).not.toHaveProperty('calendarReply');
   });
 
-  it('converts the HTML part to Markdown with --format markdown and says the body came from it', async () => {
+  it('converts the HTML part to Markdown with --format markdown and says the body came from it, leaving htmlBody raw', async () => {
     const { deps, json } = harness();
     await getMessageCommand(['m1', '--format', 'markdown'], deps);
-    expect(json()).toMatchObject({ body: 'See [this](https://x.test)', bodySource: 'html' });
+    expect(json()).toMatchObject({
+      body: 'See [this](https://x.test)',
+      bodySource: 'html',
+      htmlBody: '<style>p{}</style><p>See <a href="https://x.test">this</a></p>',
+    });
   });
 
   it('keeps html-over-stub for markdown when the HTML part is taken over a stub', async () => {

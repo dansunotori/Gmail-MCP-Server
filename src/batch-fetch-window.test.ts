@@ -299,6 +299,7 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     expect(file).toMatchObject(written);
     expect(file).not.toHaveProperty(absent);
     expect(result.failures).toEqual([{ id: 'a', error: 'body-part-fetch: 404', operation: 'body-part-fetch', status: 404, attempts: 1 }]);
+    expect(result.status).toBe('incomplete');
   });
 
   it('writes the calendar method and reply fields of meeting messages, and neither field for ordinary mail', async () => {
