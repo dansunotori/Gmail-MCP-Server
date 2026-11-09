@@ -91,19 +91,19 @@ not modify its environment".
    are listed with `filename`, `mimeType`, `size` and `attachmentId` (or `inlineBase64` when the
    data is inline). `body` is the plain-text part trimmed, or the HTML converted to text when
    there is no plain part or the plain part is a stub (see `bodySource`). The conversion
-   (`htmlToText` in `src/message-body.ts`) applies, in this order: CRLF and lone CR line
-   endings become LF (again after references are decoded, so `&#13;` adds none); remove style and script
-   blocks; a `<br>` that is not immediately followed by a newline becomes a newline; closing
-   `p`, `div`, `tr`, `li` and `h1`–`h6` tags become newlines; `<a href="…">text</a>`, with double
-   or single quotes, becomes `text [href]`; every other tag becomes a space; character
-   references are decoded in one pass, so `&amp;lt;` becomes `&lt;`: decimal (`&#8217;`) and
-   hexadecimal (`&#x2019;`) references, the five XML names (`&amp;` `&lt;` `&gt;` `&quot;`
-   `&apos;`), HTML's Latin-1 names (`&eacute;`, `&copy;`, …) and common punctuation names
-   (`&rsquo;`, `&ndash;`, `&hellip;`, `&euro;`, …), with a no-break space in any spelling becoming
-   a plain space, and a reference naming no character (unknown name, no closing `;`, code point
-   0, a surrogate or one beyond U+10FFFF) left as written; runs of spaces and tabs collapse to one
-   space; each line's leading and trailing spaces are dropped, so a line of only spaces is blank;
-   three or more newlines collapse to two; the result is trimmed. A body-part fetch failure is recorded in `failures` with the prefix
+   (`htmlToText` in `src/message-body.ts`) is the `html-to-text` library's `convert` with these
+   options: `wordwrap: false`, so lines are never wrapped; `whitespaceCharacters` adds the
+   no-break space to HTML's whitespace, so it collapses like a space; `baseElements.selectors` is
+   empty, so the whole joined input is converted, a part after the first part's `<body>`
+   included; `limits.maxInputLength` is unlimited, so a long part is never cut short; `img` is
+   skipped; `h1`–`h6` keep their case; `table`, `tr`, `td` and `th` are blocks, each cell a line
+   of its own, so adjacent values stay apart.
+   Everything else is the library's default: line breaks in the HTML source are whitespace, a
+   `<br>` is one line break, a paragraph or heading is set off by a blank line, a list item is
+   prefixed with ` * `, or ` 1. `, ` 2. ` and so on in an ordered list, `<a href="…">text</a>`
+   becomes `text [href]`, style and script are dropped, and character references are decoded
+   once each (so `&amp;lt;` becomes `&lt;`, and a reference to no valid character becomes
+   U+FFFD). A body-part fetch failure is recorded in `failures` with the prefix
    `body-part-fetch:`, a body part in an unknown charset with `body-part-charset: <charset>`
    (status `"unknown-charset"`), and the message is still written with whatever was recovered.
 8. Cross-check (when enabled): list `after:${epoch - 1} in:spam`, `after:${epoch - 1} in:trash`

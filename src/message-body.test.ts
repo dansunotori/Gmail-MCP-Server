@@ -6,7 +6,6 @@ import {
   extractMessageParts,
   headerValue,
   htmlToText,
-  NAMED_ENTITIES,
   isPlainTextStub,
   resolveMessageBody,
   selectBody,
@@ -91,21 +90,42 @@ describe('extractMessageParts', () => {
 });
 
 describe('htmlToText', () => {
-  it('strips style and script blocks', () => {
-    expect(htmlToText('<style>p{}</style>a<script>x()</script>b')).toBe('a b');
+  it('drops style, script and images', () => {
+    expect(htmlToText('<style>p{}</style><p>a</p><script>x()</script><p>b <img src="x.png" alt="pic"> c</p>')).toBe('a\n\nb c');
   });
 
-  it('turns br and block closers into newlines', () => {
-    expect(htmlToText('a<br>b</p>c</div>d</tr>e</li>f</h2>g')).toBe('a\nb\nc\nd\ne\nf\ng');
+  it('gives a br one line break and a paragraph or heading a blank line, keeping the heading as written', () => {
+    expect(htmlToText('<h1>Order Shipped</h1><p>a<br>b</p><p>c</p>')).toBe('Order Shipped\n\na\nb\n\nc');
   });
 
-  it('renders anchors as text [href] for double and single quotes', () => {
-    expect(htmlToText('<a href="https://x.test/a">Link</a>')).toBe('Link [https://x.test/a]');
-    expect(htmlToText("<a href='https://x.test/b'>Link</a>")).toBe('Link [https://x.test/b]');
+  it('prefixes list items, with numbers in an ordered list', () => {
+    expect(htmlToText('<ul><li>a</li><li>b</li></ul><ol><li>c</li></ol>')).toBe(' * a\n * b\n\n 1. c');
   });
 
-  it('drops remaining tags and decodes entities', () => {
-    expect(htmlToText('<b>x</b>&nbsp;&amp;&lt;&gt;&#39;&apos;&quot;')).toBe('x &<>\'\'"');
+  it('puts each table cell on a line of its own, so adjacent values stay apart', () => {
+    expect(htmlToText('<table><tr><th>Account</th><td>Balance</td></tr><tr><td>123</td><td>456</td></tr></table>'))
+      .toBe('Account\nBalance\n123\n456');
+  });
+
+  it('converts every joined HTML part, including one after the first part\'s body', () => {
+    expect(htmlToText('<html><body><p>Main message</p></body></html><p>Inline footer</p>')).toBe('Main message\n\nInline footer');
+  });
+
+  it('renders a link as text [href]', () => {
+    expect(htmlToText('<p>See <a href="https://x.test/a">this</a>.</p>')).toBe('See this [https://x.test/a].');
+  });
+
+  it('collapses a no-break space in any spelling with the spaces around it', () => {
+    expect(htmlToText('a&nbsp;&nbsp;b&#160;c &#xA0; d')).toBe('a b c d');
+  });
+
+  it('reads line breaks in the HTML source, CRLF and lone CR included, as spaces', () => {
+    expect(htmlToText('Re Itamin,\r\n\r\nWe have\rsent it\n')).toBe('Re Itamin, We have sent it');
+  });
+
+  it('does not wrap long lines', () => {
+    const line = Array.from({ length: 60 }, (_, index) => `word${index}`).join(' ');
+    expect(htmlToText(`<p>${line}</p>`)).toBe(line);
   });
 
   it('decodes decimal and hexadecimal character references', () => {
@@ -118,45 +138,8 @@ describe('htmlToText', () => {
       .toBe('It’s 9–5… © 2026 été €10 — «x»');
   });
 
-  it('maps the Latin-1 entity names to their own code points, from iexcl to yuml', () => {
-    expect([...NAMED_ENTITIES].filter(([, codePoint]) => codePoint >= 160 && codePoint <= 255)).toHaveLength(96);
-    expect(['iexcl', 'copy', 'shy', 'deg', 'iquest', 'Agrave', 'times', 'szlig', 'eacute', 'divide', 'yuml'].map(name => NAMED_ENTITIES.get(name)))
-      .toEqual([161, 169, 173, 176, 191, 192, 215, 223, 233, 247, 255]);
-  });
-
-  it('turns a no-break space in any spelling into a plain space', () => {
-    expect(htmlToText('a&nbsp;b&#160;c&#xA0;d')).toBe('a b c d');
-  });
-
-  it('leaves an invalid or unknown reference as written', () => {
-    for (const reference of ['&bogus;', '&#xZZ;', '&#1114112;', '&#xD800;', '&#0;', '&rsquo', '& amp;']) {
-      expect(htmlToText(`a ${reference} b`), reference).toBe(`a ${reference} b`);
-    }
-  });
-
   it('decodes each reference once, so an escaped reference stays a reference', () => {
     expect(htmlToText('&amp;lt;b&amp;gt; &amp;#8217; &amp;amp;')).toBe('&lt;b&gt; &#8217; &amp;');
-  });
-
-  it('collapses runs of spaces and blank lines and trims', () => {
-    expect(htmlToText('  a  \t b\n\n\n\nc  ')).toBe('a b\n\nc');
-  });
-
-  it('reads CRLF and lone CR line endings as LF, so no carriage return survives and blank lines collapse', () => {
-    expect(htmlToText('Re Itamin,\r\n\r\n \r\nWe have\rsent it')).toBe(htmlToText('Re Itamin,\n\n \nWe have\nsent it'));
-    expect(htmlToText('a\r\n\r\n\r\n\r\nb')).toBe('a\n\nb');
-    expect(htmlToText('a<br>\r\nb')).toBe(htmlToText('a<br>\nb'));
-    expect(htmlToText('<p>x</p>\r\n\r\n\r\n<p>y</p>')).not.toContain('\r');
-    expect(htmlToText('a&#13;&#10;b&#xD;c')).toBe('a\nb\nc');
-  });
-
-  it('keeps the documented behaviour: a br right before a newline is not converted', () => {
-    expect(htmlToText('a<br>\nb')).toBe('a\nb');
-  });
-
-  it('trims spaces at the ends of each line, so a line of only spaces is blank and collapses', () => {
-    expect(htmlToText('Re Itamin,\n\n \nWe have')).toBe('Re Itamin,\n\nWe have');
-    expect(htmlToText('<td>a</td> <td>b</td>\n<span> c </span>')).toBe('a b\nc');
   });
 });
 

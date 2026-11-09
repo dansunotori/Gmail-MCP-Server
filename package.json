@@ -83,6 +83,7 @@
     "email-addresses": "^5.0.0",
     "google-auth-library": "^11.3.1",
     "googleapis": "^186.0.0",
+    "html-to-text": "10.0.1",
     "mammoth": "^1.13.0",
     "mime-types": "^3.0.1",
     "nodemailer": "^10.1.2",
@@ -98,6 +99,7 @@
     }
   },
   "devDependencies": {
+    "@types/html-to-text": "^9.0.4",
     "@types/mime-types": "^2.1.4",
     "@types/node": "^24.19.2",
     "@types/nodemailer": "^8.0.2",

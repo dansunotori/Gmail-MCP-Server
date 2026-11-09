@@ -239,7 +239,7 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     await run(gmail, dir);
     const files = messageContents(dir);
     expect(files.map(file => [file.id, file.bodySource, file.body, file.htmlBody])).toEqual([
-      ['stub', 'html-over-stub', 'Your order has shipped .', '<p>Your order has <b>shipped</b>.</p>'],
+      ['stub', 'html-over-stub', 'Your order has shipped.', '<p>Your order has <b>shipped</b>.</p>'],
       ['real', 'text', 'Your order has shipped.', '<p>Your order has <b>shipped</b>.</p>'],
       ['htmlonly', 'html', 'Only HTML', '<p>Only <i>HTML</i></p>'],
     ]);
@@ -743,7 +743,7 @@ describe('batchFetchWindow: body resolution', () => {
     });
     await run(gmail, dir);
 
-    expect(readJson(path.join(dir, 'messages', '001.json')).body).toBe('Hello\nthere\nlink [https://x.test]& done');
+    expect(readJson(path.join(dir, 'messages', '001.json')).body).toBe('Hello\nthere\n\nlink [https://x.test]& done');
   });
 });
 

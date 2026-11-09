@@ -4,7 +4,7 @@ Work to implement, in order. Every change applies to the MCP tools and to the CL
 
 Do not renumber. Numbers are unique. Bug and code fixes precede coding and test machinery.
 
-<!-- highest item number: 34 -->
+<!-- highest item number: 37 -->
 
 ## 36. One reader for the blob batch output that check-duplicates and check-roadmap parse
 
@@ -13,10 +13,6 @@ Do not renumber. Numbers are unique. Bug and code fixes precede coding and test 
 ## 35. npm run verify resumes from a named step
 
 A step of `npm run verify` that fails for a reason outside the change, such as the GitNexus worker failing to start in `graph:check` straight after the test suite, means running the full suite again, or the remaining steps one by one by hand. Make `scripts/verify.mjs` take `--from <step>`, running `STEPS` from that step to the end and refusing a step `STEPS` does not hold with the list of steps, and make its failure line name the command that resumes from the failed step (`npm run verify -- --from graph:check`). Describe it in the `npm run verify` sentence of `AGENTS.md`. Test that `--from` runs only that step and those after it, that an unknown step is refused with the steps listed, and that the failure line names the resume command.
-
-## 37. Replace the hand-written htmlToText converter with a maintained HTML-to-text library
-
-`htmlToText` in `src/message-body.ts` converts HTML to text by its own parsing, with its own entity table (`LATIN1_ENTITY_NAMES`), for the body over a stub and for download_email's txt and json. The project does not write its own parsers: the Markdown format of gmail-get-message uses the `turndown` library. Replace the converter with a maintained HTML-to-text library pinned in `dependencies`, keeping `htmlToText`'s signature so `selectBody` and its callers stay as they are, and dropping the entity table. Keep the existing `message-body.test.ts` expectations for the text a stubbed message delivers, adjusting only those that state the hand-written converter's own spacing rather than the content.
 
 ## 38. npm run field:trace names every surface that carries a result field
 

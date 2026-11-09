@@ -1,4 +1,5 @@
 import type { gmail_v1 } from 'googleapis';
+import { convert, type HtmlToTextOptions } from 'html-to-text';
 import {
   failureCode,
   GmailRequestError,
@@ -215,70 +216,28 @@ function htmlBodyFields(payload: MessagePart | null | undefined, html: string, f
   return { htmlBody: hasHtmlPart(payload) ? html : null };
 }
 
-// HTML's Latin-1 entity names, for code points 160 to 255 in order.
-const LATIN1_ENTITY_NAMES = (
-  'nbsp iexcl cent pound curren yen brvbar sect uml copy ordf laquo not shy reg macr deg plusmn '
-  + 'sup2 sup3 acute micro para middot cedil sup1 ordm raquo frac14 frac12 frac34 iquest Agrave '
-  + 'Aacute Acirc Atilde Auml Aring AElig Ccedil Egrave Eacute Ecirc Euml Igrave Iacute Icirc Iuml '
-  + 'ETH Ntilde Ograve Oacute Ocirc Otilde Ouml times Oslash Ugrave Uacute Ucirc Uuml Yacute THORN '
-  + 'szlig agrave aacute acirc atilde auml aring aelig ccedil egrave eacute ecirc euml igrave iacute '
-  + 'icirc iuml eth ntilde ograve oacute ocirc otilde ouml divide oslash ugrave uacute ucirc uuml '
-  + 'yacute thorn yuml'
-).split(' ');
+// html-to-text's options for every body converted from HTML. The whole input is converted, not
+// only its <body>, since a message's HTML parts arrive joined and a part after the first one's
+// <body> is still body. Lines are not wrapped; a link reads `text [href]`; images, style and
+// script are dropped; headings keep their case; each table cell is a line of its own, so
+// adjacent values stay apart. A no-break space is whitespace, so it collapses like a space. The
+// input length limit is lifted, since the library would otherwise cut a long part short with
+// only a note on stderr.
+const HTML_TO_TEXT_OPTIONS: HtmlToTextOptions = {
+  wordwrap: false,
+  whitespaceCharacters: ' \t\r\n\f​ ',
+  baseElements: { selectors: [] },
+  limits: { maxInputLength: Number.POSITIVE_INFINITY },
+  selectors: [
+    { selector: 'img', format: 'skip' },
+    ...(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const).map(selector => ({ selector, options: { uppercase: false } })),
+    { selector: 'table', format: 'block' },
+    ...(['tr', 'td', 'th'] as const).map(selector => ({ selector, format: 'block', options: { leadingLineBreaks: 1, trailingLineBreaks: 1 } })),
+  ],
+};
 
-export const NAMED_ENTITIES: ReadonlyMap<string, number> = new Map([
-  ['quot', 34], ['amp', 38], ['apos', 39], ['lt', 60], ['gt', 62],
-  ...LATIN1_ENTITY_NAMES.map((name, index): [string, number] => [name, 160 + index]),
-  ['OElig', 338], ['oelig', 339], ['Scaron', 352], ['scaron', 353], ['Yuml', 376], ['fnof', 402],
-  ['circ', 710], ['tilde', 732], ['ensp', 8194], ['emsp', 8195], ['thinsp', 8201], ['zwnj', 8204],
-  ['zwj', 8205], ['lrm', 8206], ['rlm', 8207], ['ndash', 8211], ['mdash', 8212], ['lsquo', 8216],
-  ['rsquo', 8217], ['sbquo', 8218], ['ldquo', 8220], ['rdquo', 8221], ['bdquo', 8222],
-  ['dagger', 8224], ['Dagger', 8225], ['bull', 8226], ['hellip', 8230], ['permil', 8240],
-  ['prime', 8242], ['Prime', 8243], ['lsaquo', 8249], ['rsaquo', 8250], ['euro', 8364],
-  ['trade', 8482], ['larr', 8592], ['uarr', 8593], ['rarr', 8594], ['darr', 8595], ['hearts', 9829],
-]);
-
-const NO_BREAK_SPACE = 160;
-
-// One pass over every reference, so text that escapes a reference (`&amp;lt;`) keeps it as
-// written (`&lt;`) instead of being decoded twice. A reference that names no character (an
-// unknown name, a missing semicolon, code point 0, a surrogate or one beyond U+10FFFF) stays
-// as written. A no-break space becomes a plain space, so the space collapsing below applies.
-function decodeCharacterReferences(text: string): string {
-  return text.replace(/&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([A-Za-z][A-Za-z0-9]*));/g, (reference, decimal, hex, name) => {
-    const codePoint = decimal !== undefined ? Number.parseInt(decimal, 10)
-      : hex !== undefined ? Number.parseInt(hex, 16)
-      : NAMED_ENTITIES.get(name);
-    if (codePoint === undefined || codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
-      return reference;
-    }
-    return codePoint === NO_BREAK_SPACE ? ' ' : String.fromCodePoint(codePoint);
-  });
-}
-
-// CRLF and lone CR, as an HTML part or a decoded &#13; may carry them, read as LF.
-const toLf = (text: string) => text.replace(/\r\n?/g, '\n');
-
-// Apply these steps in exactly this order: the plain-text output shape is part of this
-// server's contract for downloaded message files, and the <br>-before-newline behaviour (no
-// `s` flag) is pinned by a test. Line endings are LF before the <br> rule, so a CRLF part
-// converts as its LF form does.
 export function htmlToText(html: string): string {
-  const withoutTags = toLf(html)
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<br\s*\/?>(?=.)/gi, '\n')
-    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
-    .replace(/<a\s[^>]*href\s*=\s*"([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '$2 [$1]')
-    .replace(/<a\s[^>]*href\s*=\s*'([^']*)'[^>]*>([\s\S]*?)<\/a>/gi, '$2 [$1]')
-    .replace(/<[^>]+>/g, ' ');
-  return toLf(decodeCharacterReferences(withoutTags))
-    .replace(/[ \t]+/g, ' ')
-    // A line's leading and trailing spaces are dropped, so a line left holding only a space
-    // is blank and collapses with the blank lines around it.
-    .replace(/^ +| +$/gm, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return convert(html, HTML_TO_TEXT_OPTIONS);
 }
 
 export async function resolveMessageBody(

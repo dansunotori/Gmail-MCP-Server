@@ -241,10 +241,10 @@ describe('readEmail', () => {
     } };
     const { gmail } = fakeGmail({ messages: { s: stubbed } });
     const result = await readEmail(gmail, { messageId: 's' });
-    expect(result.body).toBe('Your appointment is confirmed .');
+    expect(result.body).toBe('Your appointment is confirmed.');
     expect(result.bodySource).toBe('html-over-stub');
     expect(formatReadEmailText(result)).toContain(
-      '[Note: The plain-text part of this email is only a stub; this is its HTML part converted to text.]\n\nYour appointment is confirmed .',
+      '[Note: The plain-text part of this email is only a stub; this is its HTML part converted to text.]\n\nYour appointment is confirmed.',
     );
   });
 
