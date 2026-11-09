@@ -537,6 +537,18 @@ describe('gmail-get-message', () => {
     });
   });
 
+  it('leaves the HTML title out of the Markdown body', async () => {
+    const titled = { ...message, payload: { mimeType: 'text/html', body: { data: b64('<html><head><title>Page title</title></head><body><p>Hi</p></body></html>') } } };
+    const { deps, json } = harness(gmailReturning(titled));
+    await getMessageCommand(['m1', '--format', 'markdown'], deps);
+    expect(json()).toMatchObject({ body: 'Hi', bodySource: 'html' });
+
+    const openHead = { ...message, payload: { mimeType: 'text/html', body: { data: b64('<html><head><title>Invoice</title><p>Please pay £20</p></html>') } } };
+    const open = harness(gmailReturning(openHead));
+    await getMessageCommand(['m1', '--format', 'markdown'], open.deps);
+    expect(open.json()).toMatchObject({ body: 'Please pay £20', bodySource: 'html' });
+  });
+
   it('keeps html-over-stub for markdown when the HTML part is taken over a stub', async () => {
     const { deps, json } = harness(gmailReturning(stubbed));
     await getMessageCommand(['m1', '--format', 'markdown'], deps);

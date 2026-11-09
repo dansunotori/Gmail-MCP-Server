@@ -218,8 +218,9 @@ function htmlBodyFields(payload: MessagePart | null | undefined, html: string, f
 
 // html-to-text's options for every body converted from HTML. The whole input is converted, not
 // only its <body>, since a message's HTML parts arrive joined and a part after the first one's
-// <body> is still body. Lines are not wrapped; a link reads `text [href]`; images, style and
-// script are dropped; headings keep their case; each table cell is a line of its own, so
+// <body> is still body. Lines are not wrapped; a link reads `text [href]`; the title, images,
+// style and script are dropped, but not the rest of <head>, which holds the body's content when
+// a sender leaves out </head> and <body>; headings keep their case; each table cell is a line of its own, so
 // adjacent values stay apart. A no-break space is whitespace, so it collapses like a space. The
 // input length limit is lifted, since the library would otherwise cut a long part short with
 // only a note on stderr.
@@ -229,7 +230,7 @@ const HTML_TO_TEXT_OPTIONS: HtmlToTextOptions = {
   baseElements: { selectors: [] },
   limits: { maxInputLength: Number.POSITIVE_INFINITY },
   selectors: [
-    { selector: 'img', format: 'skip' },
+    ...(['title', 'img'] as const).map(selector => ({ selector, format: 'skip' })),
     ...(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const).map(selector => ({ selector, options: { uppercase: false } })),
     { selector: 'table', format: 'block' },
     ...(['tr', 'td', 'th'] as const).map(selector => ({ selector, format: 'block', options: { leadingLineBreaks: 1, trailingLineBreaks: 1 } })),

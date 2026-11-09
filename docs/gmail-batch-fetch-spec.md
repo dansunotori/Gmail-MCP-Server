@@ -95,8 +95,9 @@ not modify its environment".
    options: `wordwrap: false`, so lines are never wrapped; `whitespaceCharacters` adds the
    no-break space to HTML's whitespace, so it collapses like a space; `baseElements.selectors` is
    empty, so the whole joined input is converted, a part after the first part's `<body>`
-   included; `limits.maxInputLength` is unlimited, so a long part is never cut short; `img` is
-   skipped; `h1`–`h6` keep their case; `table`, `tr`, `td` and `th` are blocks, each cell a line
+   included; `limits.maxInputLength` is unlimited, so a long part is never cut short; `title`
+   and `img` are skipped, but not the rest of `head`, which holds the body when a sender leaves
+   out `</head>` and `<body>`; `h1`–`h6` keep their case; `table`, `tr`, `td` and `th` are blocks, each cell a line
    of its own, so adjacent values stay apart.
    Everything else is the library's default: line breaks in the HTML source are whitespace, a
    `<br>` is one line break, a paragraph or heading is set off by a blank line, a list item is

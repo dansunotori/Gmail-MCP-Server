@@ -90,8 +90,14 @@ describe('extractMessageParts', () => {
 });
 
 describe('htmlToText', () => {
-  it('drops style, script and images', () => {
+  it('drops the title, style, script and images', () => {
     expect(htmlToText('<style>p{}</style><p>a</p><script>x()</script><p>b <img src="x.png" alt="pic"> c</p>')).toBe('a\n\nb c');
+    expect(htmlToText('<html><head><title>Page title</title></head><body><p>Hi</p></body></html>')).toBe('Hi');
+    expect(htmlToText('<title>Bare title</title><p>Hi</p>')).toBe('Hi');
+  });
+
+  it('keeps content that follows the title in a head left open', () => {
+    expect(htmlToText('<html><head><title>Invoice</title><p>Please pay £20</p></html>')).toBe('Please pay £20');
   });
 
   it('gives a br one line break and a paragraph or heading a blank line, keeping the heading as written', () => {

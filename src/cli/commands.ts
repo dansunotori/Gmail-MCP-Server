@@ -155,7 +155,8 @@ function markdownBody(email: ReadEmailResult): { body: string; bodySource: BodyS
         return { body: email.body, bodySource: email.bodySource };
     }
     const turndown = new TurndownService();
-    turndown.remove(['head', 'style', 'script']);
+    // Turndown keeps a <title>'s text even inside a removed <head>, so title is removed too.
+    turndown.remove(['head', 'title', 'style', 'script']);
     return {
         body: turndown.turndown(email.html),
         bodySource: email.bodySource === 'html-over-stub' ? 'html-over-stub' : 'html',
