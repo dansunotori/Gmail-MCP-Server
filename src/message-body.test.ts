@@ -313,6 +313,21 @@ describe('resolveMessageBody', () => {
     expect(textOnly).not.toHaveProperty('htmlBodyError');
   });
 
+  it('joins a deferred part and the inline parts after it in MIME order', async () => {
+    const gmail = gmailWithAttachments(async id => ({ data: { data: b64(id === 'big-text' ? 'First part. ' : '<p>First</p>') } }));
+    const result = await resolveMessageBody(gmail as never, 'm1', {
+      mimeType: 'multipart/mixed',
+      parts: [
+        { mimeType: 'text/plain', body: { attachmentId: 'big-text' } },
+        { mimeType: 'text/html', body: { attachmentId: 'big-html' } },
+        { mimeType: 'text/plain', body: { data: b64('Second part.') } },
+        { mimeType: 'text/html', body: { data: b64('<p>Second</p>') } },
+      ],
+    });
+    expect(result.body).toBe('First part. Second part.');
+    expect(result.htmlBody).toBe('<p>First</p><p>Second</p>');
+  });
+
   it('gives an empty HTML part as an empty htmlBody, and an attached .html file as no HTML part', async () => {
     const gmail = gmailWithAttachments(async () => ({ data: {} }));
     const empty = await resolveMessageBody(gmail as never, 'm1', {

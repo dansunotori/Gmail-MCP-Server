@@ -85,7 +85,8 @@ not modify its environment".
    its `Content-Type` names; when a body part is delivered as an
    `attachmentId` with no filename (Gmail does this for large bodies), fetch it with
    `users.messages.attachments.get`, decode it by the `charset` its `Content-Type` names (UTF-8
-   when it names none), since Gmail serves it in that charset, and append it; a charset the
+   when it names none), since Gmail serves it in that charset, and join it in its own place
+   among the parts, so `text` and `html` keep MIME order whichever parts Gmail defers; a charset the
    decoder does not know is a failure with the prefix `body-part-charset:`, never a garbled
    part. Parts with a filename are attachments and
    are listed with `filename`, `mimeType`, `size` and `attachmentId` (or `inlineBase64` when the

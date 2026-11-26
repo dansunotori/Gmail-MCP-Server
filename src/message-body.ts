@@ -163,14 +163,20 @@ export function optionalHeader(headers: MessageHeader[] | null | undefined, name
   return found === undefined ? null : found.value ?? '';
 }
 
-function walk(payload: MessagePart | null | undefined, out: ExtractedParts): void {
+// A body part in MIME order: inline text already decoded, or a part Gmail defers, whose text
+// takes this place once fetched.
+type BodySegment = { mimeType: string; text: string } | { deferred: DeferredBody };
+
+function walk(payload: MessagePart | null | undefined, out: ExtractedParts, segments: BodySegment[]): void {
   if (!payload) return;
   const mime = payload.mimeType || '';
   if (payload.body?.attachmentId) {
     const isBody = (mime === 'text/plain' || mime === 'text/html') && !payload.filename;
     if (isBody) {
       const charset = partCharset(payload);
-      out.deferredBodies.push({ mimeType: mime, attachmentId: payload.body.attachmentId, ...(charset === undefined ? {} : { charset }) });
+      const deferred: DeferredBody = { mimeType: mime, attachmentId: payload.body.attachmentId, ...(charset === undefined ? {} : { charset }) };
+      out.deferredBodies.push(deferred);
+      segments.push({ deferred });
     } else {
       out.attachments.push({
         filename: payload.filename || '',
@@ -186,18 +192,34 @@ function walk(payload: MessagePart | null | undefined, out: ExtractedParts): voi
       size: payload.body.size || 0,
       inlineBase64: payload.body.data,
     });
-  } else if (mime === 'text/plain' && payload.body?.data) {
-    out.text += decodeBase64Url(payload.body.data);
-  } else if (mime === 'text/html' && payload.body?.data) {
-    out.html += decodeBase64Url(payload.body.data);
+  } else if ((mime === 'text/plain' || mime === 'text/html') && payload.body?.data) {
+    const text = decodeBase64Url(payload.body.data);
+    if (mime === 'text/plain') out.text += text;
+    else out.html += text;
+    segments.push({ mimeType: mime, text });
   }
-  for (const part of payload.parts || []) walk(part, out);
+  for (const part of payload.parts || []) walk(part, out, segments);
+}
+
+function extractWithSegments(payload: MessagePart | null | undefined): { parts: ExtractedParts; segments: BodySegment[] } {
+  const parts: ExtractedParts = { text: '', html: '', attachments: [], deferredBodies: [] };
+  const segments: BodySegment[] = [];
+  walk(payload, parts, segments);
+  return { parts, segments };
 }
 
 export function extractMessageParts(payload: MessagePart | null | undefined): ExtractedParts {
-  const out: ExtractedParts = { text: '', html: '', attachments: [], deferredBodies: [] };
-  walk(payload, out);
-  return out;
+  return extractWithSegments(payload).parts;
+}
+
+// The parts of one type joined in MIME order, each deferred part by its fetched text and a part
+// that could not be fetched left out.
+function joinInOrder(segments: BodySegment[], mimeType: string, fetched: Map<DeferredBody, string>): string {
+  return segments
+    .map(segment => 'deferred' in segment
+      ? (segment.deferred.mimeType === mimeType ? fetched.get(segment.deferred) ?? '' : '')
+      : (segment.mimeType === mimeType ? segment.text : ''))
+    .join('');
 }
 
 // Whether the payload holds a text/html body part by walk's rule: a named text/html part is an
@@ -247,8 +269,9 @@ export async function resolveMessageBody(
   payload: MessagePart | null | undefined,
   retry: GmailRetryOptions = {},
 ): Promise<ResolvedBody> {
-  const parts = extractMessageParts(payload);
+  const { parts, segments } = extractWithSegments(payload);
   const failures: BodyFailure[] = [];
+  const fetched = new Map<DeferredBody, string>();
 
   for (const deferred of parts.deferredBodies) {
     let data: string | null | undefined;
@@ -283,12 +306,10 @@ export async function resolveMessageBody(
       });
       continue;
     }
-    if (deferred.mimeType === 'text/plain') {
-      parts.text += decoded;
-    } else {
-      parts.html += decoded;
-    }
+    fetched.set(deferred, decoded);
   }
+  parts.text = joinInOrder(segments, 'text/plain', fetched);
+  parts.html = joinInOrder(segments, 'text/html', fetched);
 
   const bodySource = bodySourceOf(parts.text, parts.html);
   const body = bodySource === 'text' ? parts.text.trim() : htmlToText(parts.html);
