@@ -8,6 +8,14 @@ The agent owns every uncommitted change in the main checkout, whoever made it. W
 ## No Duplicated Code
 `scripts/check-duplicates.mjs` refuses duplicated code: jscpd, pinned in `devDependencies`, reads every file git's index lists whose extension or name `.jscpd.json` maps to a format (code, tests, scripts, configuration, shell and Dockerfiles; documents and `package-lock.json` are left out), with the thresholds that file sets. It runs in CI and in `npm run verify` (`npm run duplicates:check`), and as this project's PreToolUse hook on every `git commit` run through Claude Code, which reads what the commit records (the staged blobs for a plain commit, so a file staged in part is checked as it is staged, and the working copy for `commit -a`; `npm run duplicates:check` reads the working copy), refuses a commit that names paths, picks hunks (`--include`, `--only`, `--patch`, `--interactive`, `--pathspec-from-file`, `--fixup=reword:`) or uses an option it does not read (an abbreviation included) with a request to stage the change instead, and denies the commit while what it records holds a clone, listing each clone's two ranges in the reason; jscpd's full report is `tmp/jscpd/jscpd-report.json`. A clone is removed by moving the repeated code into one place both sides use, never by raising the thresholds or ignoring the file.
 
+## Testing: Matt Pocock's TDD Skill Only
+Every test in this repository is written strictly by Matt Pocock's `tdd` skill (`mattpocock-skills:tdd`; in a harness without it, follow the same rules as stated here). Every other testing approach and skill is banned, including superpowers `test-driven-development` and tests written after the code.
+- Before any test is written, the seams under test (the public interfaces where behaviour is observed) are written down and confirmed with the user. No test is written at an unconfirmed seam.
+- Red before green, in vertical slices: one seam, one failing test, then only the code that makes it pass, then the next test. Never all the tests first.
+- Tests verify behaviour through public interfaces, never internals: no mocked internal collaborators, no private functions, no call-count or call-order assertions, no verifying through a side channel. Mocks stand only at system boundaries (the Gmail API, time, randomness, the file system when needed).
+- Expected values come from an independent source (a known literal, a worked example, the spec), never recomputed the way the code computes them.
+- Refactoring is not part of the red → green loop; it belongs to review.
+
 ## PR & Issue Review
 Mandatory security audit on every PR before presenting. See `.claude/skills/pr-review-sop/SKILL.md`.
 
