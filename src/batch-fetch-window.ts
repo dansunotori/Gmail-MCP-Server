@@ -177,24 +177,49 @@ async function crossCheckListing(
   }
 }
 
+// The window the cross-check covers: the search bounds of its listings, the listed messages,
+// and, for a bounded window, its dating.
+type CheckedWindow = { bounds: string; ids: string[]; dating?: WindowDating };
+
 async function runCrossCheck(
   gmail: gmail_v1.Gmail,
-  epoch: number,
-  windowIds: string[],
+  checked: CheckedWindow,
   failures: Failure[],
   retry: GmailRetryOptions,
 ): Promise<CrossCheck> {
   const errors: CrossCheckError[] = [];
-  const spam = await crossCheckListing(gmail, `after:${epoch - 1} in:spam`, failures, errors, retry);
-  const trash = await crossCheckListing(gmail, `after:${epoch - 1} in:trash`, failures, errors, retry);
-  const anywhere = await crossCheckListing(gmail, `after:${epoch - 1} in:anywhere`, failures, errors, retry);
-  const window = new Set(windowIds);
-  const unexplainedIds = [...anywhere.ids].filter(id => !window.has(id) && !spam.ids.has(id) && !trash.ids.has(id));
+  const listings = [
+    await crossCheckListing(gmail, `${checked.bounds} in:spam`, failures, errors, retry),
+    await crossCheckListing(gmail, `${checked.bounds} in:trash`, failures, errors, retry),
+    await crossCheckListing(gmail, `${checked.bounds} in:anywhere`, failures, errors, retry),
+  ];
+  const window = new Set(checked.ids);
+  // A bounded window's listings hold whole seconds at each bound. Every message they show that
+  // the interior listing does not hold is dated, and those dated outside the window leave all
+  // three listings; one that cannot be dated stays, so the check never explains it away. The
+  // window's own interior listing serves when there was one; otherwise the check lists the
+  // interior itself, and when that listing fails the check is failed and dates nothing more.
+  let outside = new Set<string>();
+  if (checked.dating !== undefined) {
+    const { dating } = checked;
+    if (dating.interior === undefined && dating.interiorQuery !== undefined) {
+      const listed = await crossCheckListing(gmail, dating.interiorQuery, failures, errors, retry);
+      listings.push(listed);
+      if (listed.complete) dating.interior = listed.ids;
+    }
+    const interior = dating.interiorQuery === undefined ? new Set<string>() : dating.interior;
+    const shown = new Set(listings.slice(0, 3).flatMap(listing => [...listing.ids]));
+    const dated = interior === undefined ? new Set<string>() : await dating.outsideOf([...shown].filter(id => !interior.has(id)), 'inside');
+    // A date learned earlier holds whichever listing of the check failed since.
+    outside = new Set([...dated, ...dating.knownOutside()]);
+  }
+  const [spam, trash, anywhere] = listings.slice(0, 3).map(listing => new Set([...listing.ids].filter(id => !outside.has(id))));
+  const unexplainedIds = [...anywhere].filter(id => !window.has(id) && !spam.has(id) && !trash.has(id));
   // A listing that failed cannot explain or reveal anything, so the check is consistent only
   // when every listing ran to the end and left nothing unexplained. The window listing itself
   // is always complete here: an incomplete one fails the whole call.
-  const complete = spam.complete && trash.complete && anywhere.complete;
-  const counts = { window: window.size, spam: spam.ids.size, trash: trash.ids.size, anywhere: anywhere.ids.size };
+  const complete = listings.every(listing => listing.complete);
+  const counts = { window: window.size, spam: spam.size, trash: trash.size, anywhere: anywhere.size };
   const shared = { complete, unexplainedIds, errors, counts, ...counts };
   if (!complete) {
     return { ...shared, status: 'failed', consistent: false };
@@ -205,6 +230,98 @@ async function runCrossCheck(
   return { ...shared, status: 'consistent', consistent: true };
 }
 
+// A window listing that did not complete fails the whole call, before the guard and before any
+// deletion, so nothing under output_dir changes.
+async function completeListing(gmail: gmail_v1.Gmail, query: string, retry: GmailRetryOptions): Promise<ListAllMessageIdsResult> {
+  const listing = await listAllGmailMessageIds(gmail, { query, includeSpamTrash: true, retry });
+  if (!listing.complete) {
+    const attempts = listing.attempts ?? 1;
+    throw withContext(
+      `window listing failed: query "${query}" page ${listing.failedPage} `
+      + `status ${failureStatus(listing.error)} after ${attempts} attempt${attempts === 1 ? '' : 's'}`,
+      listing.error,
+    );
+  }
+  return listing;
+}
+
+// A message's internalDate as a number, or undefined when the message carries none.
+function usableDate(data: gmail_v1.Schema$Message): number | undefined {
+  const internal = Number(data.internalDate);
+  return data.internalDate === undefined || data.internalDate === null || !Number.isFinite(internal) ? undefined : internal;
+}
+
+function noDateFailure(id: string, attempts: number): Failure {
+  return { id, error: 'no internalDate', operation: 'messages.get', status: 'no-internal-date', attempts };
+}
+
+// The dating of a bounded window. Gmail's search bounds count whole seconds, so the window's
+// listings also hold the messages of the watermark's second dated before it and of the end's
+// second dated after it. interiorQuery lists, across every label, seconds strictly inside the
+// window however Gmail reads after: and before: (none when the window is too short to have
+// such seconds), and interior holds its IDs once listed: a message it holds is inside the
+// window, and any other is dated, so a message missing from it for any reason is never taken to
+// be inside. outsideOf dates messages (format metadata, fields id and internalDate, each
+// message once) and gives those dated outside the window. A lookup that fails, or a response
+// without the date, is recorded in failures with the calls it made, and that message counts as
+// undated says: outside, where an unknown date must not let a message into the window, or
+// inside, where it must not explain a message away. knownOutside gives every message dated
+// outside the window so far, with no further lookup.
+type WindowDating = {
+  interiorQuery?: string;
+  interior?: Set<string>;
+  outsideOf: (ids: string[], undated: 'outside' | 'inside') => Promise<Set<string>>;
+  knownOutside: () => Set<string>;
+};
+
+function windowDating(gmail: gmail_v1.Gmail, boundaryMs: number, untilMs: number, failures: Failure[], retry: GmailRetryOptions): WindowDating {
+  const dates = new Map<string, number | undefined>();
+  const dateOf = async (id: string): Promise<number | undefined> => {
+    let calls = 0;
+    try {
+      const { data } = await withGmailRetry(() => {
+        calls += 1;
+        return gmail.users.messages.get({ userId: 'me', id, format: 'metadata', fields: 'id,internalDate' });
+      }, retry);
+      const internal = usableDate(data);
+      if (internal === undefined) failures.push(noDateFailure(id, calls));
+      return internal;
+    } catch (error) {
+      if (isAuthError(error)) throw error;
+      failures.push(failure(id, 'messages.get', error));
+      return undefined;
+    }
+  };
+  // after:a before:b holds the seconds after a and before b, and at worst a and b as well, so
+  // starting one second past the watermark's second and ending one before the end's keeps it
+  // strictly inside the window either way; it holds a second only when b - a is at least 2.
+  const [first, last] = [Math.floor(boundaryMs / 1000) + 1, Math.floor(untilMs / 1000) - 1];
+  const isOutside = (internal: number) => internal < boundaryMs || internal > untilMs;
+  return {
+    ...(last - first >= 2 ? { interiorQuery: `after:${first} before:${last} in:anywhere` } : {}),
+    knownOutside: () => new Set([...dates].filter(([, internal]) => internal !== undefined && isOutside(internal)).map(([id]) => id)),
+    outsideOf: async (ids, undated) => {
+      const outside = new Set<string>();
+      for (const id of new Set(ids)) {
+        if (!dates.has(id)) dates.set(id, await dateOf(id));
+        const internal = dates.get(id);
+        if (internal === undefined ? undated === 'outside' : isOutside(internal)) outside.add(id);
+      }
+      return outside;
+    },
+  };
+}
+
+// The listed messages of a bounded window that leave it: those the interior listing does not
+// hold, dated outside the window or not dated at all, so listed, max_messages and the download
+// hold only messages known to be inside it. An empty listing needs no dating.
+async function listedOutside(gmail: gmail_v1.Gmail, listed: string[], dating: WindowDating, retry: GmailRetryOptions): Promise<Set<string>> {
+  if (listed.length === 0) return new Set();
+  const interior = dating.interiorQuery === undefined ? new Set<string>() : new Set((await completeListing(gmail, dating.interiorQuery, retry)).ids);
+  dating.interior = interior;
+  return dating.outsideOf(listed.filter(id => !interior.has(id)), 'outside');
+}
+
 export async function batchFetchWindow(
   gmail: gmail_v1.Gmail,
   input: BatchFetchWindowInput,
@@ -213,36 +330,34 @@ export async function batchFetchWindow(
 ): Promise<BatchFetchWindowResult> {
   const boundaryMs = Date.parse(input.watermark);
   const epoch = Math.floor(boundaryMs / 1000);
-  const windowQuery = `after:${epoch - 1} -in:spam -in:trash`;
+  const untilMs = input.until === undefined ? undefined : Date.parse(input.until);
+  const bounds = untilMs === undefined
+    ? `after:${epoch - 1}`
+    : `after:${epoch - 1} before:${Math.floor(untilMs / 1000) + 1}`;
+  const windowQuery = `${bounds} -in:spam -in:trash`;
 
   const emailAddress = await withGmailRetry(() => getGmailEmailAddress(gmail), retry);
   const failures: Failure[] = [];
-  const windowList = await listAllGmailMessageIds(gmail, { query: windowQuery, includeSpamTrash: true, retry });
-  // A window whose listing is incomplete is not a window: fail here, before the guard and
-  // before any deletion, so nothing under output_dir changes.
-  if (!windowList.complete) {
-    const attempts = windowList.attempts ?? 1;
-    throw withContext(
-      `window listing failed: query "${windowQuery}" page ${windowList.failedPage} `
-      + `status ${failureStatus(windowList.error)} after ${attempts} attempt${attempts === 1 ? '' : 's'}`,
-      windowList.error,
-    );
-  }
+  const windowList = await completeListing(gmail, windowQuery, retry);
+  const dating = untilMs === undefined ? undefined : windowDating(gmail, boundaryMs, untilMs, failures, retry);
+  const outside = dating === undefined ? new Set<string>() : await listedOutside(gmail, windowList.ids, dating, retry);
+  const windowIds = windowList.ids.filter(id => !outside.has(id));
 
   const base = {
     emailAddress,
     watermark: input.watermark,
+    ...(input.until === undefined ? {} : { until: input.until }),
     boundaryMs,
     query: windowQuery,
     pages: windowList.pages,
-    listed: windowList.ids.length,
+    listed: windowIds.length,
     maxMessages: input.max_messages,
     // Always true in a returned result: an incomplete listing fails the call above. Present so
     // the result shape is stable.
     listingComplete: true,
   };
 
-  if (windowList.ids.length > input.max_messages) {
+  if (windowIds.length > input.max_messages) {
     return BatchFetchWindowOutputSchema.parse({
       checkedAt: now().toISOString(),
       ...base,
@@ -266,10 +381,14 @@ export async function batchFetchWindow(
 
   const kept: KeptMessage[] = [];
   let belowBoundaryOrExcluded = 0;
-  for (const id of windowList.ids) {
+  for (const id of windowIds) {
     let data: gmail_v1.Schema$Message;
+    let calls = 0;
     try {
-      data = (await withGmailRetry(() => gmail.users.messages.get({ userId: 'me', id, format: 'full' }), retry)).data;
+      data = (await withGmailRetry(() => {
+        calls += 1;
+        return gmail.users.messages.get({ userId: 'me', id, format: 'full' });
+      }, retry)).data;
     } catch (error) {
       if (isAuthError(error)) {
         throw error;
@@ -278,8 +397,13 @@ export async function batchFetchWindow(
       continue;
     }
     const internal = Number(data.internalDate);
+    // A bounded window holds only messages it can date inside it.
+    if (untilMs !== undefined && usableDate(data) === undefined) {
+      failures.push(noDateFailure(id, calls));
+      continue;
+    }
     const labels = data.labelIds ?? [];
-    if (internal < boundaryMs || labels.includes('SPAM') || labels.includes('TRASH')) {
+    if (internal < boundaryMs || (untilMs !== undefined && internal > untilMs) || labels.includes('SPAM') || labels.includes('TRASH')) {
       belowBoundaryOrExcluded += 1;
       continue;
     }
@@ -366,7 +490,7 @@ export async function batchFetchWindow(
   }
 
   const crossCheck = input.cross_check
-    ? await runCrossCheck(gmail, epoch, windowList.ids, failures, retry)
+    ? await runCrossCheck(gmail, { bounds, ids: windowIds, ...(dating === undefined ? {} : { dating }) }, failures, retry)
     : CROSS_CHECK_SKIPPED;
 
   // Every Gmail call is behind us, so from here only the local file system can fail. Remove

@@ -940,6 +940,24 @@ describe('gmail-batch-fetch-window', () => {
     expect(deps.gmail).not.toHaveBeenCalled();
   });
 
+  it('passes --until through, and the result carries it as given', async () => {
+    const { deps, json } = harness();
+    await batchFetchWindowCommand(['--watermark', WATERMARK, '--until', '2026-09-08T12:00:00.500+01:00', '--output-dir', dir], deps);
+    expect(json()).toMatchObject({ status: 'ok', until: '2026-09-08T12:00:00.500+01:00' });
+  });
+
+  it('refuses an --until before the watermark or without a zone with exit 2, nothing on stdout and the output directory untouched', async () => {
+    fs.writeFileSync(path.join(dir, 'manifest.json'), 'earlier manifest');
+    const { deps, out } = harness();
+    for (const until of ['2026-09-07T11:59:59.999Z', '2026-09-08T12:00:00']) {
+      const failed = await batchFetchWindowCommand(['--watermark', WATERMARK, '--until', until, '--output-dir', dir], deps).catch(error => error);
+      expect(mapErrorToExitCode(failed), until).toBe(2);
+    }
+    expect(out).toEqual([]);
+    expect(fs.readdirSync(dir)).toEqual(['manifest.json']);
+    expect(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')).toBe('earlier manifest');
+  });
+
   it('refuses a foreign messages/ directory and prints or deletes nothing', async () => {
     fs.mkdirSync(path.join(dir, 'messages'));
     fs.writeFileSync(path.join(dir, 'messages', 'keep.txt'), 'mine');

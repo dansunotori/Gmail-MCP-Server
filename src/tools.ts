@@ -290,44 +290,64 @@ export const GmailIndexMetadataOutputSchema = z.object({
 
 const WATERMARK_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 
+// An instant given as ISO 8601 with an explicit zone, named field in its error messages.
+const zonedInstant = (field: string) => z.string().superRefine((value, context) => {
+  const match = WATERMARK_PATTERN.exec(value);
+  if (!match) {
+    context.addIssue({
+      code: 'custom',
+      message: `${field} must be an ISO 8601 timestamp with an explicit Z or +HH:MM/-HH:MM zone suffix`,
+    });
+    return;
+  }
+  // Date.parse silently rolls invalid calendar values (e.g. 2026-02-30) into the next
+  // month instead of rejecting them, so validate the calendar fields explicitly before
+  // trusting Date.parse for the actual instant.
+  const [, year, month, day, hour, minute, second] = match;
+  const y = Number(year);
+  const mo = Number(month);
+  const d = Number(day);
+  const h = Number(hour);
+  const mi = Number(minute);
+  const s = Number(second);
+  const roundTrip = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
+  const isValidCalendarDate = roundTrip.getUTCFullYear() === y
+    && roundTrip.getUTCMonth() === mo - 1
+    && roundTrip.getUTCDate() === d
+    && roundTrip.getUTCHours() === h
+    && roundTrip.getUTCMinutes() === mi
+    && roundTrip.getUTCSeconds() === s;
+  if (!isValidCalendarDate || !Number.isFinite(Date.parse(value))) {
+    context.addIssue({ code: 'custom', message: `${field} is not a valid date` });
+  }
+});
+
+// The order of two valid zoned instants, negative when a is earlier. Date.parse keeps whole
+// milliseconds only; zone offsets are whole minutes, so digits past the millisecond decide a
+// tie as they are written.
+function compareInstants(a: string, b: string): number {
+  const byMillisecond = Date.parse(a) - Date.parse(b);
+  if (byMillisecond !== 0) return byMillisecond;
+  const below = (value: string) => (WATERMARK_PATTERN.exec(value)?.[0].match(/\.(\d+)/)?.[1] ?? '').slice(3);
+  const [left, right] = [below(a), below(b)];
+  const width = Math.max(left.length, right.length);
+  return left.padEnd(width, '0').localeCompare(right.padEnd(width, '0'));
+}
+
 export const BatchFetchWindowSchema = strictInput({
-  watermark: z.string().superRefine((value, context) => {
-    const match = WATERMARK_PATTERN.exec(value);
-    if (!match) {
-      context.addIssue({
-        code: 'custom',
-        message: 'watermark must be an ISO 8601 timestamp with an explicit Z or +HH:MM/-HH:MM zone suffix',
-      });
-      return;
-    }
-    // Date.parse silently rolls invalid calendar values (e.g. 2026-02-30) into the next
-    // month instead of rejecting them, so validate the calendar fields explicitly before
-    // trusting Date.parse for the actual instant.
-    const [, year, month, day, hour, minute, second] = match;
-    const y = Number(year);
-    const mo = Number(month);
-    const d = Number(day);
-    const h = Number(hour);
-    const mi = Number(minute);
-    const s = Number(second);
-    const roundTrip = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
-    const isValidCalendarDate = roundTrip.getUTCFullYear() === y
-      && roundTrip.getUTCMonth() === mo - 1
-      && roundTrip.getUTCDate() === d
-      && roundTrip.getUTCHours() === h
-      && roundTrip.getUTCMinutes() === mi
-      && roundTrip.getUTCSeconds() === s;
-    if (!isValidCalendarDate || !Number.isFinite(Date.parse(value))) {
-      context.addIssue({ code: 'custom', message: 'watermark is not a valid date' });
-    }
-  }).describe("ISO 8601 timestamp with an explicit zone (Z or +HH:MM/-HH:MM), e.g. 2026-09-10T14:03:22Z; the window is inclusive of this instant"),
+  watermark: zonedInstant('watermark').describe("ISO 8601 timestamp with an explicit zone (Z or +HH:MM/-HH:MM), e.g. 2026-09-10T14:03:22Z; the window is inclusive of this instant"),
+  until: zonedInstant('until').optional().describe("End of the window: ISO 8601 timestamp with an explicit zone, inclusive to the millisecond, not before watermark. The listing, the download, max_messages, listed, inWindow, the manifest and the cross-check then cover only the messages from watermark to until, a listed message outside the window's interior being dated before it counts; one whose date cannot be fetched is left out of the window and recorded in failures (status incomplete unless the result is truncated); the cross-check never drops it by date, so it is in unexplainedIds when in:anywhere returns it and neither spam nor trash holds it. The result and the manifest carry until as given. Left out, the window has no upper bound: a message that arrives while the call runs can be listed and written, so give until for a fixed cutoff"),
   output_dir: z.string().refine(value => path.isAbsolute(value), {
     message: 'output_dir must be an absolute path',
   }).describe("Absolute directory; unless the result is truncated, the tool deletes and recreates messages/ and overwrites manifest.json and window-metadata.json inside it. Guard, checked before anything is deleted: messages/ may be deleted only if it is absent, empty, or holds the .batch-fetch-window marker the tool writes on every run and nothing but regular files named NNN.json or .publish-*. Anything else, including a missing marker, a subdirectory or a symlink, makes the call fail with an error naming the offending entry, and nothing is deleted or written. A truncated run writes nothing and leaves earlier outputs in place, so check `truncated` before trusting the files"),
   max_messages: z.number().int().min(1).default(2000)
     .describe("Hard cap on listed IDs; above it nothing is downloaded and the result is truncated"),
   cross_check: z.boolean().default(true)
-    .describe("Also list spam, trash and in:anywhere since the watermark to detect silently dropped messages. The result's crossCheck.status is then consistent, inconsistent (crossCheck.unexplainedIds names IDs seen in in:anywhere but in none of window, spam or trash) or failed (a listing did not complete after retries; crossCheck.errors names each query); false gives status skipped. crossCheck.consistent is true only for status consistent"),
+    .describe("Also list spam, trash and in:anywhere since the watermark (up to until when given, dating the mail of the bound seconds against the window's interior) to detect silently dropped messages; false skips only this check, and a non-empty bounded window still lists its interior to date its messages. The result's crossCheck.status is then consistent, inconsistent (crossCheck.unexplainedIds names IDs seen in in:anywhere but in none of window, spam or trash) or failed (a listing of the check did not complete after retries; crossCheck.errors names each query); false gives status skipped. crossCheck.consistent is true only for status consistent"),
+}).superRefine((value, context) => {
+  if (value.until !== undefined && compareInstants(value.until, value.watermark) < 0) {
+    context.addIssue({ code: 'custom', path: ['until'], message: 'until must not be earlier than watermark' });
+  }
 });
 
 // One entry per Gmail call that was given up on after its retries, and per calendar part
@@ -335,7 +355,8 @@ export const BatchFetchWindowSchema = strictInput({
 // name, prefixed `body-part-fetch: ` for a body part and `calendar-part-fetch: ` for a
 // calendar part, or `calendar-part: <reason>` for a calendar part that could not be parsed);
 // `status` is the same value typed: the numeric HTTP status, the network code or error name
-// as a string, or "unparseable".
+// as a string, "unparseable", or "no-internal-date" for a bounded window's date lookup that
+// Gmail answered without the date.
 const BatchFetchFailureSchema = z.object({
   id: NonEmptyString,
   error: z.string(),
@@ -396,6 +417,8 @@ export const BatchFetchWindowOutputSchema = z.object({
   checkedAt: NonEmptyString,
   emailAddress: NonEmptyString,
   watermark: NonEmptyString,
+  // The end instant as given; present only when the call gave one.
+  until: NonEmptyString.optional(),
   boundaryMs: z.number().int(),
   query: NonEmptyString,
   pages: z.number().int().min(0),
@@ -465,7 +488,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "batch_fetch_window",
-    description: "Downloads every message received since a watermark into a local directory with manifest and cross-check; deletes and recreates messages/ under output_dir unless the listing exceeds max_messages, in which case nothing is written and earlier outputs remain. Every Gmail call is retried on 429, 5xx, rate-limit 403 and network errors up to 5 attempts with exponential full-jitter backoff (500 ms base, 30 s cap, Retry-After honoured); other 4xx are not retried. Every Gmail call completes before anything under output_dir is deleted or written, so a window listing page that still fails, an authentication failure on any call, or a guard refusal makes the whole call an error and leaves earlier outputs untouched. A message or body part that still fails is recorded in failures as { id, error, operation, status, attempts } and the rest of the window is written. Each message file carries body, bodySource and htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched), plainBodyError when the text/plain part cannot be fetched or decoded, and a message with a text/calendar part carries calendarMethod and, for a reply, calendarReply { attendee, partstat }. A body is never cut short: no size limit applies, so it holds all the text of the part it comes from (a plain part with the whitespace around it trimmed), with malformed bytes decoded as U+FFFD. A deferred part whose fetch still fails after its retries, or whose charset the decoder does not know, is left out, named in plainBodyError or htmlBodyError and in failures, and the status is incomplete; a sign-in failure fails the whole call instead. crossCheck is always present with status consistent, inconsistent, failed or skipped; consistent is true only for status consistent",
+    description: "Downloads every message received since a watermark, or from the watermark to an optional end instant (until, inclusive to the millisecond; the result and the manifest then carry until as given), into a local directory with manifest and cross-check; deletes and recreates messages/ under output_dir unless the listing exceeds max_messages, in which case nothing is written and earlier outputs remain; truncation takes precedence, so a truncated result can still carry failures (a bounded window's date lookups run before the cap), and truncated is the field to check before reading the files. Every Gmail call is retried on 429, 5xx, rate-limit 403 and network errors up to 5 attempts with exponential full-jitter backoff (500 ms base, 30 s cap, Retry-After honoured); other 4xx are not retried. Every Gmail call completes before anything under output_dir is deleted or written, so a window listing page that still fails, an authentication failure on any call, or a guard refusal makes the whole call an error and leaves earlier outputs untouched. A message or body part that still fails is recorded in failures as { id, error, operation, status, attempts } and the rest of the window is written. Each message file carries body, bodySource and htmlBody, the text/html part as delivered (null when the message has none, and null with htmlBodyError when it cannot be fetched), plainBodyError when the text/plain part cannot be fetched or decoded, and a message with a text/calendar part carries calendarMethod and, for a reply, calendarReply { attendee, partstat }. A body is never cut short: no size limit applies, so it holds all the text of the part it comes from (a plain part with the whitespace around it trimmed), with malformed bytes decoded as U+FFFD. A deferred part whose fetch still fails after its retries, or whose charset the decoder does not know, is left out, named in plainBodyError or htmlBodyError and in failures, and the status is incomplete; a sign-in failure fails the whole call instead. crossCheck is always present with status consistent, inconsistent, failed or skipped; consistent is true only for status consistent",
     schema: BatchFetchWindowSchema,
     outputSchema: BatchFetchWindowOutputSchema,
     scopes: ["gmail.readonly", "gmail.modify"],

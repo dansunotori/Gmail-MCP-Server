@@ -250,7 +250,7 @@ export const downloadAttachmentCommand: Command = async (argv, deps) => {
 const BATCH_FETCH_WINDOW: CommandSpec = {
     name: 'gmail-batch-fetch-window',
     tool: 'batch_fetch_window',
-    synopsis: 'gmail-batch-fetch-window --watermark <ISO 8601 with zone> --output-dir <absolute dir> [--no-cross-check] [--max-messages N] [-o <file>]',
+    synopsis: 'gmail-batch-fetch-window --watermark <ISO 8601 with zone> [--until <ISO 8601 with zone>] --output-dir <absolute dir> [--no-cross-check] [--max-messages N] [-o <file>]',
     description: [
         'Downloads every message received since the watermark like the batch_fetch_window MCP tool',
         "and prints the tool's result unchanged. Deletes and recreates <dir>/messages/ and rewrites",
@@ -268,6 +268,12 @@ const BATCH_FETCH_WINDOW: CommandSpec = {
             description: 'Start of the window: ISO 8601 with Z or an explicit ±HH:MM offset (required).',
             example: 'gmail-batch-fetch-window --watermark 2026-09-01T09:30:00+01:00 --output-dir /tmp/inbox-window',
         },
+        until: {
+            type: 'string',
+            placeholder: '<timestamp>',
+            description: 'End of the window, inclusive to the millisecond: ISO 8601 with Z or an explicit ±HH:MM offset, not before --watermark. The listing, the download, --max-messages, listed, inWindow, the manifest and the cross-check then cover only messages up to it (a listed message outside the interior of the window is dated before it counts, and one whose date cannot be fetched is left out and recorded in failures, status incomplete unless truncated; the cross-check never drops it by date, so it is in unexplainedIds when in:anywhere returns it and neither spam nor trash holds it), and the result and the manifest carry it as until. Left out, the window has no upper bound: a message that arrives while the command runs can be listed and written, so give --until for a fixed cutoff. A zoneless or earlier --until exits 2 before anything is written.',
+            example: 'gmail-batch-fetch-window --watermark 2026-09-01T00:00:00Z --until 2026-09-08T00:00:00Z --output-dir /tmp/inbox-window',
+        },
         'output-dir': {
             type: 'string',
             placeholder: '<dir>',
@@ -276,7 +282,7 @@ const BATCH_FETCH_WINDOW: CommandSpec = {
         },
         'no-cross-check': {
             type: 'boolean',
-            description: 'Skip the spam, trash and in:anywhere listings (cross_check false; crossCheck.status is skipped).',
+            description: 'Skip the cross-check: its spam, trash and in:anywhere listings (cross_check false; crossCheck.status is skipped). With --until, a non-empty window still lists its interior across every label to date its messages, and a failure of that listing fails the command.',
             example: 'gmail-batch-fetch-window --watermark 2026-09-01T00:00:00Z --output-dir /tmp/inbox-window --no-cross-check',
         },
         'max-messages': {
@@ -299,6 +305,7 @@ export const batchFetchWindowCommand: Command = async (argv, deps) => {
     const input = BatchFetchWindowSchema.parse({
         watermark: args.values.watermark,
         output_dir: args.values['output-dir'],
+        ...(args.values.until === undefined ? {} : { until: args.values.until }),
         ...(maxMessages === undefined ? {} : { max_messages: maxMessages }),
         ...(args.values['no-cross-check'] ? { cross_check: false } : {}),
     });

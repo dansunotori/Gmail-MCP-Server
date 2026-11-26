@@ -29,6 +29,11 @@ not modify its environment".
 - `watermark` (string, required): an ISO 8601 UTC timestamp with a `Z` suffix, e.g.
   `2026-09-10T14:03:22Z`. Reject anything `Date.parse` cannot parse; reject values without an
   explicit `Z` or offset so a naive local time can never be interpreted silently.
+- `until` (string, optional): the end of the window, validated as `watermark` is and refused
+  when earlier than `watermark`, so a refused call deletes and writes nothing. The window is
+  inclusive of it to the millisecond. Left out, the window has no upper bound and every output
+  is as it is without the field: a message that arrives while the call runs can be listed and
+  written, so a caller that needs a fixed cutoff gives `until`.
 - `output_dir` (string, required): absolute path of the directory to write into. The tool creates
   it if missing. Inside it the tool owns exactly three things: `messages/` (a directory),
   `manifest.json` and `window-metadata.json`. It must delete and recreate `messages/` on every
@@ -56,6 +61,27 @@ not modify its environment".
    `internalDate >= boundaryMs`. The boundary is inclusive: a message whose `internalDate` equals
    the watermark exactly is in the window. (A client that advances its own watermark decides
    what to do with an equal-candidate message; the tool's job is only to never drop one.)
+   With `until`, `untilMs = Date.parse(until)` and `endSecond = floor(untilMs / 1000)`, and the
+   query is `after:${epoch - 1} before:${endSecond + 1} -in:spam -in:trash`. Since both bounds
+   have one-second resolution, the listing can hold messages of the watermark's second dated
+   before `boundaryMs` and of the end's second dated after `untilMs`. After the listing of step
+   3, unless it is empty, the window's interior is listed across every label,
+   `after:${epoch + 1} before:${endSecond - 1} in:anywhere` (complete or the call fails, as in
+   step 3). `after:a before:b` holds the seconds after `a` and before `b`, and at worst `a` and
+   `b` too, so the interior lies strictly inside the window however Gmail reads the bounds; it is
+   not listed, and holds nothing, when `endSecond - epoch < 4`. Each window ID the interior does
+   not hold, for whatever reason (a message of a bound second, one deleted or moved since), is
+   dated by `users.messages.get` with `format: "metadata"` and `fields: "id,internalDate"`, each
+   message once per call, so absence from the interior is never taken to mean inside. An ID
+   dated before `boundaryMs` or after `untilMs` lies outside the
+   window: it is not in `listed`, not counted against `max_messages` and never downloaded. An
+   ID whose lookup fails after its retries, or whose response has no `internalDate`, is left
+   out the same way, since it is not known to be inside, and the lookup is a `failures` entry
+   with `operation` `"messages.get"` and the calls it made (`status` `"no-internal-date"` for
+   the missing date), so the window is `"incomplete"` unless it is `"truncated"`, and never
+   truncated by that message; the cross-check (step 8) never drops an ID it cannot date, so that
+   message is in `unexplainedIds` when `in:anywhere` returns it and neither spam nor trash holds
+   it. The result and the manifest carry `until` as given.
 3. List with `users.messages.list`, `includeSpamTrash: true`, `maxResults: 500`, following
    `nextPageToken` until exhausted. Deduplicate IDs. Record the page count. A page that still
    fails after its retries (below) fails the whole call: throw an error naming the query, the
@@ -64,8 +90,10 @@ not modify its environment".
    whose listing is incomplete is never written.
 4. If listed count exceeds `max_messages`, return the truncation result (see Output) and stop.
 5. For every listed ID, `users.messages.get` with `format: "full"`. Skip (do not write) any
-   message whose `internalDate < boundaryMs` or whose `labelIds` include `SPAM` or `TRASH`.
-   Record per-message fetch failures as `{ id, error, operation, status, attempts }` (see
+   message whose `internalDate < boundaryMs`, whose `internalDate > untilMs` when `until` is
+   given, or whose `labelIds` include `SPAM` or `TRASH`. With `until`, a message whose full
+   fetch carries no `internalDate` is not written either, and is a `failures` entry with
+   `status` `"no-internal-date"`. Record per-message fetch failures as `{ id, error, operation, status, attempts }` (see
    Tool result); a failure must not abort the run.
 
    Retry policy, applied through one helper to every Gmail call the tool
@@ -109,9 +137,17 @@ not modify its environment".
    `body-part-fetch:`, a body part in an unknown charset with `body-part-charset: <charset>`
    (status `"unknown-charset"`), and the message is still written with whatever was recovered.
 8. Cross-check (when enabled): list `after:${epoch - 1} in:spam`, `after:${epoch - 1} in:trash`
-   and `after:${epoch - 1} in:anywhere` with the same pagination and retries. `unexplainedIds`
-   is every anywhere ID that is in none of window, spam or trash. `complete` is true when all
-   three listings ran to their last page (the window listing is always complete by step 3).
+   and `after:${epoch - 1} in:anywhere` with the same pagination and retries; with `until`, each
+   of the three also carries ` before:${endSecond + 1}` after its `after:` bound, and every ID
+   of the three that the interior of step 2 does not hold is dated as in step 2 (a message dated
+   there is not looked up again). When step 2 listed no interior because the window was empty,
+   the check lists it itself as a listing of the check, recorded like the other three when it
+   fails, and a failed interior listing leaves the check failed with nothing more dated. An ID
+   dated outside the window, now or earlier in the call, is left out of all three before they
+   are counted or compared, while an ID whose date lookup failed stays. `unexplainedIds` is
+   every anywhere ID that is in none of window (the listed IDs), spam or trash. `complete` is
+   true when every listing of the check ran to its last page (the window listing is always
+   complete by step 3).
    `status` is `"failed"` when any listing did not complete (`errors` then holds one
    `{ query, page, status, attempts }` per failed listing, and the same failure is recorded in
    `failures` with `id: "cross-check:<query>"`), `"inconsistent"` when all completed and
@@ -161,13 +197,16 @@ A message with a `text/calendar` part also carries `"calendarMethod": "REQUEST"`
 }
 ```
 
-`failures[]`: `id` is the listed message ID or `cross-check:<query>`; `error` is the failure
+`failures[]`: `id` is the message ID (a listed message, or with `until` a message the
+cross-check's own listings found and dated) or `cross-check:<query>`; `error` is the failure
 string (HTTP status, network code or error name, prefixed `body-part-fetch: ` for a body
 part and `calendar-part-fetch: ` for a calendar part, `body-part-charset: <charset>` or
-`calendar-part-charset: <charset>` for a stored part in a charset the decoder does not know, or
-`calendar-part: <reason>` for a calendar part that could not be parsed); `operation` is `"messages.get"`, `"body-part-fetch"`,
+`calendar-part-charset: <charset>` for a stored part in a charset the decoder does not know,
+`calendar-part: <reason>` for a calendar part that could not be parsed, or `no internalDate`); `operation` is `"messages.get"`, `"body-part-fetch"`,
 `"calendar-part"` or `"cross-check"`; `status` is the numeric HTTP status, the network code /
-error name as a string, or `"unparseable"`; `attempts` is the number of calls made (1 when not
+error name as a string, `"unparseable"`, or `"no-internal-date"` when Gmail answered a date
+lookup or full fetch of a bounded window without the message's `internalDate` (the call
+succeeded; the date is what is missing); `attempts` is the number of calls made (1 when not
 retryable, otherwise up to 5).
 
 `crossCheck` is always present. When the check ran it has the shape above with `status`
@@ -204,6 +243,8 @@ the manifest summary without the `messages` array, plus a `triage` array of one-
 - `"incomplete"`: any failure recorded, or `crossCheck.status` is `"inconsistent"` or
   `"failed"`. Files are still written.
 - `"truncated"`: listing exceeded `max_messages`; no files written; `messages/` left untouched.
+  Truncation takes precedence over `"incomplete"`: with `until`, the date lookups of step 2 run
+  before the cap is checked, so a truncated result can carry their `failures`.
 
 The status must be explicit so the caller can refuse to advance a watermark on anything but
 `"ok"`. Do not throw for `"incomplete"` or `"truncated"`; throw only for input validation
@@ -233,7 +274,8 @@ cover at least:
   status `incomplete`; a cross-check listing that fails after retries gives `status: "failed"`,
   `consistent: false`, an `errors` entry naming the query, and the window is still written;
   `cross_check: false` gives `status: "skipped"`, `consistent: false` and no spam, trash or
-  anywhere listing calls;
+  anywhere listing calls of the check (a non-empty bounded window still lists its interior,
+  step 2);
 - a `messages.get` that returns 429 twice then 200 is written with no failure; one that fails
   on every attempt is recorded with `status` and `attempts: 5` while the rest is written; a
   404 is not retried and is recorded with `attempts: 1`; a `Retry-After: 2` on a 429 delays the

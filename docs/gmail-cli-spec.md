@@ -296,12 +296,15 @@ Exposes `get_filter` and prints `{id, criteria, action}`; an unknown ID exits 5 
 ### gmail-batch-fetch-window
 
 ```
-gmail-batch-fetch-window --watermark <ISO 8601 with zone> --output-dir <absolute dir> [--no-cross-check] [--max-messages N] [-o <file>]
+gmail-batch-fetch-window --watermark <ISO 8601 with zone> [--until <ISO 8601 with zone>] --output-dir <absolute dir> [--no-cross-check] [--max-messages N] [-o <file>]
 ```
 
 Exposes `batch_fetch_window` with the same parameters, defaults (`cross_check` true,
 `max_messages` 2000), validation and guards: the `messages/` marker check before anything is
-deleted, and a truncated run writing nothing. Prints the tool's result JSON unchanged: `status`,
+deleted, and a truncated run writing nothing. `--until` is the tool's `until`: the end of the
+window, inclusive to the millisecond, and the result and the manifest carry it as `until`; an
+`--until` without a zone or earlier than `--watermark` exits 2 with nothing on stdout before
+anything under the output directory is deleted or written. Prints the tool's result JSON unchanged: `status`,
 `listed`, `inWindow`, `belowBoundaryOrExcluded`, `failures` `[{id, error, operation, status,
 attempts}]`, `crossCheck` `{status, consistent, unexplainedIds, errors, …}`, `truncated` and the
 rest of the tool's result, and leaves `manifest.json`, `window-metadata.json` and `messages/` under

@@ -64,6 +64,10 @@ function fakeGmail(config: {
   lists: Record<string, Page[]>;
   messages?: Record<string, Sequenced<FakeMessage>>;
   attachments?: Record<string, Sequenced<string>>;
+  // Messages Gmail serves only their date for: any request that could carry the body fails.
+  datesOnly?: string[];
+  // Outcomes of format metadata requests, for a message whose date lookup and download differ.
+  metadataOutcomes?: Record<string, Sequenced<FakeMessage>>;
 }) {
   const list = vi.fn(async (params: { q: string; pageToken?: string }) => {
     const pages = config.lists[params.q];
@@ -74,12 +78,24 @@ function fakeGmail(config: {
     const next = index + 1 < pages.length ? `page-${index + 1}` : undefined;
     return { data: { messages: page.ids.map(id => ({ id })), ...(next ? { nextPageToken: next } : {}) } };
   });
-  const get = vi.fn(async ({ id }: { id: string }) => {
-    const configured = config.messages?.[id];
+  // A response shaped as Gmail shapes it: what the format returns (for minimal only the id,
+  // thread and labels, for metadata no body but the payload's headers, as the API documents),
+  // then narrowed to the fields asked for.
+  const get = vi.fn(async ({ id, format, fields }: { id: string; format?: string; fields?: string }) => {
+    const configured = (format === 'metadata' ? config.metadataOutcomes?.[id] : undefined) ?? config.messages?.[id];
     if (configured === undefined) throw new Error(`unexpected message ${id}`);
     const found = nextOutcome(configured);
     if (found instanceof Error) throw found;
-    return { data: found };
+    const bodyFree = format === 'metadata' && fields !== undefined
+      && fields.split(',').every(field => ['id', 'threadId', 'labelIds', 'internalDate'].includes(field.trim()));
+    if (config.datesOnly?.includes(id) && !bodyFree) {
+      throw new Error(`message ${id} downloaded`);
+    }
+    const formatted: FakeMessage = format === 'minimal'
+      ? { id: found.id, threadId: found.threadId, labelIds: found.labelIds }
+      : format === 'metadata' ? { ...found, payload: { headers: (found.payload as { headers?: unknown } | undefined)?.headers } } : found;
+    if (fields === undefined) return { data: formatted };
+    return { data: Object.fromEntries(fields.split(',').filter(key => key in formatted).map(key => [key, formatted[key]])) };
   });
   const attachmentsGet = vi.fn(async ({ id }: { id: string }) => {
     const configured = config.attachments?.[id];
@@ -706,6 +722,215 @@ describe('batchFetchWindow: boundary and label filtering', () => {
   }
 });
 
+// The end instant: half a second into its second, so a message one millisecond after it
+// falls in the same second, which Gmail's second-granular search cannot tell apart. The
+// watermark 2026-09-07T12:00:00Z is second 1788782400, the end second 1788868800.
+const UNTIL = '2026-09-08T12:00:00.500Z';
+const UNTIL_MS = 1_788_868_800_500;
+// Ten seconds after the watermark: a second the interior listing holds however Gmail reads it.
+const INSIDE_MS = 1_788_782_410_000;
+const BOUNDED_WINDOW_QUERY = 'after:1788782399 before:1788868801 -in:spam -in:trash';
+
+// The interior of the bounded window: seconds strictly inside it however Gmail reads its
+// bounds, every label included.
+const INTERIOR_QUERY = 'after:1788782401 before:1788868799 in:anywhere';
+
+// The listings of a bounded window: the window; its interior, holding every message named here
+// except those of the bound seconds (edge); and the cross-check, anywhere holding the window
+// unless given.
+function boundedLists(ids: string[], given: { edge?: string[]; spam?: string[]; anywhere?: string[] } = {}): Record<string, Page[]> {
+  const anywhere = given.anywhere ?? ids;
+  const edge = new Set(given.edge ?? []);
+  const named = new Set([...ids, ...anywhere, ...(given.spam ?? [])]);
+  return {
+    [BOUNDED_WINDOW_QUERY]: [{ ids }],
+    [INTERIOR_QUERY]: [{ ids: [...named].filter(id => !edge.has(id)) }],
+    'after:1788782399 before:1788868801 in:spam': [{ ids: given.spam ?? [] }],
+    'after:1788782399 before:1788868801 in:trash': [{ ids: [] }],
+    'after:1788782399 before:1788868801 in:anywhere': [{ ids: anywhere }],
+  };
+}
+
+describe('batchFetchWindow: end bound', () => {
+  it('downloads the messages up to and including the end millisecond, and listed and inWindow count those alone', async () => {
+    const gmail = fakeGmail({
+      lists: boundedLists(['before', 'at', 'after'], { edge: ['before', 'at', 'after'] }),
+      messages: {
+        before: message('before', UNTIL_MS - 1000),
+        at: message('at', UNTIL_MS),
+        after: message('after', UNTIL_MS + 1),
+      },
+      datesOnly: ['after'],
+    });
+    const result = await run(gmail, dir, { until: UNTIL });
+
+    expect(messageContents(dir).map(file => [file.id, file.body])).toEqual([['before', 'body of before'], ['at', 'body of at']]);
+    expect(result).toMatchObject({ status: 'ok', failures: [], listed: 2, inWindow: 2 });
+  });
+
+  it('carries the end instant as given in the result and the manifest', async () => {
+    const until = '2026-09-08T13:00:00.500+01:00';
+    const gmail = fakeGmail({ lists: boundedLists(['a']), messages: { a: message('a', INSIDE_MS) } });
+    const result = await run(gmail, dir, { until });
+
+    expect(result.until).toBe(until);
+    expect(readJson(path.join(dir, 'manifest.json')).until).toBe(until);
+  });
+
+  it('is not truncated when more messages than max_messages lie after the end and fewer inside it', async () => {
+    const gmail = fakeGmail({
+      lists: boundedLists(['inside', 'late1', 'late2', 'late3'], { edge: ['late1', 'late2', 'late3'] }),
+      messages: {
+        inside: message('inside', INSIDE_MS),
+        late1: message('late1', UNTIL_MS + 1),
+        late2: message('late2', UNTIL_MS + 200),
+        late3: message('late3', UNTIL_MS + 499),
+      },
+      datesOnly: ['late1', 'late2', 'late3'],
+    });
+    const result = await run(gmail, dir, { until: UNTIL, max_messages: 2 });
+
+    expect(result.truncated).toBe(false);
+    expect(result.inWindow).toBe(1);
+  });
+
+  it('counts only messages from the watermark on against max_messages, leaving out those of its second before it', async () => {
+    // Half a second into the watermark's second, which Gmail lists whole.
+    const watermark = '2026-09-07T12:00:00.500Z';
+    const gmail = fakeGmail({
+      lists: boundedLists(['early', 'a'], { edge: ['early', 'a'] }),
+      messages: { early: message('early', BOUNDARY + 499), a: message('a', BOUNDARY + 500) },
+      datesOnly: ['early'],
+    });
+    const result = await run(gmail, dir, { watermark, until: UNTIL, max_messages: 1 });
+
+    expect(result.truncated).toBe(false);
+    expect(result.listed).toBe(1);
+    expect(messageContents(dir).map(file => file.id)).toEqual(['a']);
+  });
+
+  it('dates a listed message missing from the interior listing, deleted since, so it never counts against max_messages', async () => {
+    const gmail = fakeGmail({
+      lists: boundedLists(['a', 'deleted'], { edge: ['deleted'] }),
+      messages: { a: message('a', INSIDE_MS), deleted: httpError(404) },
+    });
+    const result = await run(gmail, dir, { until: UNTIL, max_messages: 1, cross_check: false });
+
+    expect(result).toMatchObject({ status: 'incomplete', truncated: false, listed: 1, inWindow: 1 });
+    expect(result.failures).toEqual([{ id: 'deleted', error: '404', operation: 'messages.get', status: 404, attempts: 1 }]);
+  });
+
+  it('succeeds on an empty bounded window with the cross-check off even when its interior cannot be listed', async () => {
+    const gmail = fakeGmail({ lists: { [BOUNDED_WINDOW_QUERY]: [{ ids: [] }], [INTERIOR_QUERY]: [httpError(500)] } });
+    const result = await run(gmail, dir, { until: UNTIL, cross_check: false });
+
+    expect(result).toMatchObject({ status: 'ok', listed: 0, inWindow: 0 });
+  });
+
+  it('dates the cross-check listings by their own results, so mail after the end seen only by them is neither counted nor unexplained', async () => {
+    const gmail = fakeGmail({
+      lists: boundedLists(['a'], { edge: ['spammed', 'arrived'], spam: ['spammed'], anywhere: ['a', 'spammed', 'arrived'] }),
+      messages: {
+        a: message('a', INSIDE_MS),
+        spammed: message('spammed', UNTIL_MS + 1),
+        arrived: message('arrived', UNTIL_MS + 2),
+      },
+      datesOnly: ['spammed', 'arrived'],
+    });
+    const result = await run(gmail, dir, { until: UNTIL });
+
+    expect(result.crossCheck).toMatchObject({ status: 'consistent', unexplainedIds: [], ...withCounts({ window: 1, spam: 0, trash: 0, anywhere: 1 }) });
+  });
+
+  it('leaves out of the window a message of a bound second it cannot date, recording the missing date with the calls made', async () => {
+    const { internalDate: _dropped, ...undated } = message('undated', UNTIL_MS);
+    const gmail = fakeGmail({
+      lists: boundedLists(['a', 'undated'], { edge: ['undated'] }),
+      messages: { a: message('a', INSIDE_MS), undated: [httpError(503), undated] },
+      datesOnly: ['undated'],
+    });
+    const result = await run(gmail, dir, { until: UNTIL });
+
+    expect(messageContents(dir).map(file => file.id)).toEqual(['a']);
+    expect(result).toMatchObject({ status: 'incomplete', listed: 1, inWindow: 1 });
+    expect(result.failures).toEqual([expect.objectContaining({ id: 'undated', operation: 'messages.get', status: 'no-internal-date', attempts: 2 })]);
+  });
+
+  it('never truncates on a message of a bound second whose date lookup fails, and never downloads it', async () => {
+    const gmail = fakeGmail({
+      lists: boundedLists(['a', 'unknown'], { edge: ['unknown'] }),
+      messages: { a: message('a', INSIDE_MS), unknown: message('unknown', UNTIL_MS) },
+      metadataOutcomes: { unknown: httpError(503) },
+      datesOnly: ['unknown'],
+    });
+    const result = await run(gmail, dir, { until: UNTIL, max_messages: 1, cross_check: false });
+
+    expect(messageContents(dir).map(file => file.id)).toEqual(['a']);
+    expect(result).toMatchObject({ status: 'incomplete', truncated: false, listed: 1, inWindow: 1 });
+    expect(result.failures).toEqual([{ id: 'unknown', error: '503', operation: 'messages.get', status: 503, attempts: 5 }]);
+  });
+
+  it('reports a message of a bound second it cannot date as unexplained, looked up once', async () => {
+    const gmail = fakeGmail({
+      lists: boundedLists(['a', 'unknown'], { edge: ['unknown'] }),
+      messages: { a: message('a', INSIDE_MS), unknown: message('unknown', UNTIL_MS + 1) },
+      metadataOutcomes: { unknown: httpError(503) },
+      datesOnly: ['unknown'],
+    });
+    const result = await run(gmail, dir, { until: UNTIL });
+
+    expect(result.crossCheck).toMatchObject({ status: 'inconsistent', unexplainedIds: ['unknown'] });
+    expect(result.failures).toEqual([{ id: 'unknown', error: '503', operation: 'messages.get', status: 503, attempts: 5 }]);
+  });
+
+  it('writes no message whose full fetch carries no date in a bounded window, though its date lookup placed it inside', async () => {
+    const { internalDate: _dropped, ...undated } = message('undated', UNTIL_MS);
+    const gmail = fakeGmail({
+      lists: boundedLists(['undated'], { edge: ['undated'] }),
+      messages: { undated },
+      metadataOutcomes: { undated: message('undated', UNTIL_MS) },
+    });
+    const result = await run(gmail, dir, { until: UNTIL, cross_check: false });
+
+    expect(result).toMatchObject({ listed: 1, inWindow: 0 });
+    expect(messageFiles(dir)).toEqual([]);
+    expect(result.failures).toEqual([expect.objectContaining({ id: 'undated', operation: 'messages.get', status: 'no-internal-date', attempts: 1 })]);
+  });
+
+  it('dates no message of the check when the interior cannot be listed, its status being failed already', async () => {
+    const gmail = fakeGmail({
+      lists: { ...boundedLists([], { anywhere: ['s1', 's2'] }), [INTERIOR_QUERY]: [httpError(500)] },
+    });
+    const result = await run(gmail, dir, { until: UNTIL });
+
+    expect(result.crossCheck.status).toBe('failed');
+    expect(result.failures.map(entry => entry.id)).toEqual([`cross-check:${INTERIOR_QUERY}`]);
+  });
+
+  it('keeps a message already dated after the end out of the cross-check when a listing of the check fails', async () => {
+    const lists = boundedLists(['a', 'late'], { edge: ['late'] });
+    lists['after:1788782399 before:1788868801 in:spam'] = [httpError(500)];
+    const gmail = fakeGmail({ lists, messages: { a: message('a', INSIDE_MS), late: message('late', UNTIL_MS + 1) }, datesOnly: ['late'] });
+    const result = await run(gmail, dir, { until: UNTIL });
+
+    expect(result.crossCheck).toMatchObject({ status: 'failed', unexplainedIds: [], ...withCounts({ window: 1, spam: 0, trash: 0, anywhere: 1 }) });
+  });
+
+  it('keeps a message it cannot date unexplained and records the failed lookup with its status and attempts', async () => {
+    const gmail = fakeGmail({
+      lists: boundedLists(['a'], { edge: ['late'], anywhere: ['a', 'late'] }),
+      messages: { a: message('a', INSIDE_MS), late: message('late', UNTIL_MS + 1) },
+      metadataOutcomes: { late: httpError(503) },
+      datesOnly: ['late'],
+    });
+    const result = await run(gmail, dir, { until: UNTIL });
+
+    expect(result.crossCheck).toMatchObject({ status: 'inconsistent', unexplainedIds: ['late'] });
+    expect(result.failures).toEqual([{ id: 'late', error: '503', operation: 'messages.get', status: 503, attempts: 5 }]);
+    expect(readJson(path.join(dir, 'manifest.json')).failures).toEqual(result.failures);
+  });
+});
+
 describe('batchFetchWindow: body resolution', () => {
   it('fetches a large body delivered through attachmentId', async () => {
     const gmail = fakeGmail({
@@ -1239,6 +1464,17 @@ describe('BatchFetchWindowSchema', () => {
       max_messages: 5,
       cross_check: false,
     }).max_messages).toBe(5);
+  });
+
+  it('refuses an until earlier than the watermark, below the millisecond too, and accepts an until equal to it', () => {
+    const issuePaths = (watermark: string, until: string) => {
+      const parsed = BatchFetchWindowSchema.safeParse({ watermark, until, output_dir: '/tmp/out' });
+      return parsed.success ? [] : parsed.error.issues.map(issue => issue.path);
+    };
+    expect(issuePaths('2026-09-07T12:00:00.0009Z', '2026-09-07T12:00:00.0001Z')).toEqual([['until']]);
+    expect(issuePaths('2026-09-07T13:00:00.5+01:00', '2026-09-07T12:00:00.499Z')).toEqual([['until']]);
+    expect(issuePaths('2026-09-07T12:00:00.0009Z', '2026-09-07T12:00:00.00090Z')).toEqual([]);
+    expect(issuePaths('2026-09-07T12:00:00.0001Z', '2026-09-07T12:00:00.0009Z')).toEqual([]);
   });
 
   it('rejects a watermark without an explicit zone', () => {
