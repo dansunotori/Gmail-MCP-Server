@@ -15,12 +15,14 @@ import {
   checkMagicBytes,
   decodeTextBytes,
   detectFormat,
-  truncateAtLine,
+  pageOfText,
   type AttachmentFormat,
   type SheetSummary,
+  type TextPaging,
 } from './formats.js';
 
-export interface AttachmentText {
+// The paging fields are present only when the text is cut or the call gave an offset.
+export interface AttachmentText extends Partial<TextPaging> {
   name: string;
   format: AttachmentFormat;
   text: string;
@@ -30,8 +32,9 @@ export interface AttachmentText {
 
 export async function getAttachmentText(
   gmail: gmail_v1.Gmail,
-  args: { messageId: string; attachmentId: string },
+  args: { messageId: string; attachmentId: string; offset?: number },
 ): Promise<AttachmentText> {
+  const { offset } = args;
   const attachment = await gmail.users.messages.attachments.get({
     userId: 'me',
     messageId: args.messageId,
@@ -48,9 +51,11 @@ export async function getAttachmentText(
     throw new AttachmentFileError('unsupported', `${name} (${part.mimeType || 'no type'}); supported: ${SUPPORTED_FORMATS_TEXT}`);
   }
   if (PLAIN_TEXT_FORMATS.has(format)) {
-    return { name, format, ...truncateAtLine(decodeTextBytes(bytes)), sheets: null };
+    const { text, truncated, ...paging } = pageOfText(decodeTextBytes(bytes), offset);
+    return { name, format, text, truncated, sheets: null, ...paging };
   }
   checkMagicBytes(bytes, format);
   const extracted = await extractInWorker(format, name, bytes);
-  return { name, format, ...truncateAtLine(extracted.text), sheets: extracted.sheets ?? null };
+  const { text, truncated, ...paging } = pageOfText(extracted.text, offset);
+  return { name, format, text, truncated, sheets: extracted.sheets ?? null, ...paging };
 }

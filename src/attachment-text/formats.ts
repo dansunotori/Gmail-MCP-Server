@@ -83,17 +83,80 @@ export function decodeTextBytes(buffer: Buffer): string {
   }
 }
 
-// The ceiling on returned text, in characters.
-export const MAX_TEXT_LENGTH = 500 * 1024;
+// The ceiling on the text one call returns, in UTF-8 bytes.
+export const MAX_TEXT_BYTES = 500 * 1024;
 
-// Cuts at the last line break at or before the ceiling, so a spreadsheet row or a line of
-// text is never split; text with no line break before the ceiling is cut at the ceiling.
-export function truncateAtLine(text: string, limit = MAX_TEXT_LENGTH): { text: string; truncated: boolean } {
-  if (text.length <= limit) {
+// An offset the text has no page at: not a whole number of bytes, past its end or inside a
+// character. A caller's mistake, not a fault of the file or of Gmail.
+export class OffsetError extends RangeError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OffsetError';
+  }
+}
+
+// Where a page lies in the whole text, in UTF-8 bytes: where it starts, how many bytes it
+// keeps, how many the text has in all, and where the next page starts (null after the last).
+export interface TextPaging {
+  offset: number;
+  keptBytes: number;
+  totalBytes: number;
+  nextOffset: number | null;
+}
+
+// The index in text of the character that starts byte UTF-8 bytes in, byte being on a character
+// boundary. Each code unit of an unpaired surrogate counts the 3 bytes of the U+FFFD that
+// Buffer.from writes for it, so the count matches the encoded text.
+function indexAtByte(text: string, byte: number): number {
+  let index = 0;
+  let count = 0;
+  while (count < byte) {
+    const codePoint = text.codePointAt(index) as number;
+    count += codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
+    index += codePoint < 0x10000 ? 1 : 2;
+  }
+  return index;
+}
+
+// The page of text that starts offset UTF-8 bytes in and holds at most MAX_TEXT_BYTES, ending
+// after the last line break that fits, so a spreadsheet row or a line of text is never split;
+// a page with no line break that fits ends on the last whole character. Bytes measure the page,
+// but the page is a slice of text itself, so the pages joined give the text back exactly, an
+// unpaired surrogate included. A whole text that fits, asked for with no offset, is returned
+// with no paging; an offset given, 0 included, always gets it. An offset that is not a whole
+// number of bytes, past the end of the text, or inside a character, is an OffsetError.
+export function pageOfText(text: string, given?: number): { text: string; truncated: boolean } & Partial<TextPaging> {
+  const limit = MAX_TEXT_BYTES;
+  const offset = given ?? 0;
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new OffsetError(`offset ${offset} is not a whole number of bytes`);
+  }
+  const bytes = Buffer.from(text, 'utf8');
+  if (offset > bytes.length) {
+    throw new OffsetError(`offset ${offset} is past the end of the text, which has ${bytes.length} bytes`);
+  }
+  if ((bytes[offset] & 0xc0) === 0x80) {
+    throw new OffsetError(`offset ${offset} falls inside a character; give an offset a previous call returned as nextOffset`);
+  }
+  const rest = bytes.subarray(offset);
+  if (given === undefined && rest.length <= limit) {
     return { text, truncated: false };
   }
-  const lastNewline = text.lastIndexOf('\n', limit);
-  return { text: text.slice(0, lastNewline > 0 ? lastNewline : limit), truncated: true };
+  let end = rest.length;
+  if (rest.length > limit) {
+    const newline = rest.lastIndexOf(0x0a, limit - 1);
+    end = newline >= 0 ? newline + 1 : limit;
+    while (newline < 0 && (rest[end] & 0xc0) === 0x80) end -= 1;
+  }
+  const nextOffset = offset + end < bytes.length ? offset + end : null;
+  return {
+    text: text.slice(indexAtByte(text, offset), indexAtByte(text, offset + end)),
+    truncated: nextOffset !== null,
+    offset,
+    keptBytes: end,
+    totalBytes: bytes.length,
+    nextOffset,
+  };
 }
 
 const ZIP_HEADER = [0x50, 0x4b, 0x03, 0x04];

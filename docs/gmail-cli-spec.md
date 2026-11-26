@@ -156,12 +156,16 @@ server reports it as an error result or as text.
 ### gmail-get-attachment-text
 
 ```
-gmail-get-attachment-text <message_id> <attachment_id> [-o <file>]
+gmail-get-attachment-text <message_id> <attachment_id> [--offset <bytes>] [-o <file>]
 ```
 
-Exposes `get_attachment_text`. Prints `{name, format, text, truncated, sheets}`; an attachment
-that is protected, encrypted, corrupt or unsupported exits 6. `README.md` gives the formats and
-the spreadsheet layout.
+Exposes `get_attachment_text`. Prints `{name, format, text, truncated, sheets}`, plus `offset`,
+`keptBytes`, `totalBytes` and `nextOffset` (UTF-8 bytes) when the text is cut at the 512000-byte
+ceiling or `--offset` is given; `--offset` is the tool's `offset`, and passing a cut text's
+`nextOffset` returns the next page. An `--offset` that is not a whole number, is past the end of
+the text or falls inside a character exits 2. An
+attachment that is protected, encrypted, corrupt or unsupported exits 6. `README.md` gives the
+formats, the spreadsheet layout and the paging rules.
 
 ### gmail-create-draft
 

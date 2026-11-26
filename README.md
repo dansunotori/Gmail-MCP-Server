@@ -342,7 +342,7 @@ Seventeen commands expose seventeen MCP tools with the same semantics and nothin
 | `gmail-search '<gmail query>' [--max-results N]` | `search_emails` | `{query, count, messages: [{id, subject, from, date}]}` |
 | `gmail-get-message <message_id> [--format text\|markdown]` | `read_email` | `{id, threadId, subject, from, to, cc, date, messageIdHeader, labels, body, bodySource, htmlBody, attachments: [{id, filename, mimeType, size}]}`, plus `htmlBodyError` when the HTML part cannot be fetched, `plainBodyError` when the plain part cannot be fetched, and `calendarMethod`, `calendarReply` and `calendarFailures` for a message with a calendar part |
 | `gmail-download-attachment <message_id> <attachment_id> --save-path <dir> [--filename <name>]` | `download_attachment` | `{path, size, mimeType}` |
-| `gmail-get-attachment-text <message_id> <attachment_id>` | `get_attachment_text` | `{name, format, text, truncated, sheets}` (see [Get attachment text](#get-attachment-text-get_attachment_text)); exits 6 when the file is protected, encrypted, corrupt or unsupported |
+| `gmail-get-attachment-text <message_id> <attachment_id> [--offset <bytes>]` | `get_attachment_text` | `{name, format, text, truncated, sheets}`, plus `offset`, `keptBytes`, `totalBytes` and `nextOffset` when the text is cut or `--offset` is given (see [Get attachment text](#get-attachment-text-get_attachment_text)); exits 6 when the file is protected, encrypted, corrupt or unsupported |
 | `gmail-batch-fetch-window --watermark <ISO 8601 with zone> [--until <ISO 8601 with zone>] --output-dir <absolute dir> [--no-cross-check] [--max-messages N]` | `batch_fetch_window` | the tool's result, unchanged (see the [result contract](#batch_fetch_window-result-contract)), with `until` as given when `--until` bounds the window; each message file carries `htmlBody`, `htmlBodyError` when the HTML part cannot be fetched, `plainBodyError` when the plain part cannot be fetched, and `calendarMethod` and `calendarReply` for a message with a calendar part |
 | `gmail-create-draft --to <addresses> --subject <text> (--body <text> \| --body-file <file>) [options]` | `draft_email` | `{draft_id, message_id, thread_id, to, cc, bcc, subject, attachments: [{name, size}]}`, read back from the saved draft |
 | `gmail-get-thread <thread_id> [--format full\|metadata\|minimal]` | `get_thread` | `{threadId, messageCount, messages}`, each message with its `body` and `bodySource` (and `plainBodyError` when the plain part cannot be fetched), in `full` format its `htmlBody` (and `htmlBodyError` when the HTML part cannot be fetched), and `calendarMethod`, `calendarReply` and `calendarFailures` for a message with a calendar part |
@@ -622,15 +622,19 @@ Returns an attachment's text, so a caller does not convert files itself.
 ```json
 {
   "messageId": "182ab45cd67ef",
-  "attachmentId": "ANGjdJ9fkTs-i3GCQo5o97f_itG..."
+  "attachmentId": "ANGjdJ9fkTs-i3GCQo5o97f_itG...",
+  "offset": 0
 }
 ```
 
-The result (the MCP tool's structured content, or `gmail-get-attachment-text`'s JSON) is `{ "name", "format", "text", "truncated", "sheets" }`:
+`offset` (optional, `--offset` in the command) is where the page returned starts in the whole text, in UTF-8 bytes; left out, the page starts at byte 0.
+
+The result (the MCP tool's structured content, or `gmail-get-attachment-text`'s JSON) is `{ "name", "format", "text", "truncated", "sheets" }`, and also `offset`, `keptBytes`, `totalBytes` and `nextOffset` when the text is cut or an offset is given:
 
 - Formats: PDF, DOCX, XLSX, XLSM, XLS and CSV are parsed; TXT, MD and any other `text/*` part are returned as they are, decoded as UTF-8 or, when not valid UTF-8, Windows-1252. `format` is `pdf`, `docx`, `xlsx`, `xlsm`, `xls`, `csv`, `txt`, `md` or `text`.
 - A spreadsheet's `text` is one `## Sheet: <name>` heading per sheet followed by tab-separated rows of display values: formulas as their cached results, merged cells once at their top-left, leading and trailing empty rows and columns trimmed. `sheets` gives each sheet's populated span as `{ name, rows, columns }`; it is `null` for other formats.
-- Text over 500 KB is cut on a line boundary and `truncated` is `true`.
+- Only the text counts: pictures are left out of it in every format, however many and however large (a Word document of 2 KB of text and twenty 500 KB pictures returns all its text).
+- One call returns at most 500 KB (512000 bytes) of UTF-8 text, ending after the last whole line that fits, or the last whole character when no line break fits. A cut text has `truncated` `true` and `offset` (where the page starts), `keptBytes`, `totalBytes` (the whole text) and `nextOffset` (where the next page starts, `null` after the last page), all in UTF-8 bytes. Passing `nextOffset` as `offset` returns the next page, and the pages joined give the text exactly. An offset past the end of the text, or inside a character, is refused (the command exits 2). A text that fits whole, asked for with no offset, is returned with no paging fields; any offset given, 0 included, gets them.
 - A file that cannot be read fails with a message that names the cause in these words: `protected file` (a password is needed), `encrypted file`, `corrupt file` (damaged, or not the format its name or type claims, checked by its first bytes) or `unsupported file` (a format not listed above). The command exits 6 for these; a sign-in, network or Gmail failure exits with its own code.
 - Files are parsed in a separate process with a 30-second limit, a 256 MB memory cap and an environment that carries no credential path or token; macros and formulas are never run.
 - Gmail issues a new attachment id each time a message is read, so the tool finds the attachment's part by its exact id, else by the bytes' exact size, else as the message's only attachment, and fails rather than guess when attachments cannot be told apart.

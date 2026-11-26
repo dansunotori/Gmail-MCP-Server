@@ -7,7 +7,7 @@ import type { gmail_v1 } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EXTRACTION_TIMEOUT_MS } from './attachment-text/extract.js';
-import { committedFixture } from './attachment-text/test-fixtures.js';
+import { committedFixture, numberedLines } from './attachment-text/test-fixtures.js';
 import { createGmailServer } from './server.js';
 import { toolDefinitions } from './tools.js';
 
@@ -272,6 +272,24 @@ describe('get_attachment_text', { timeout: EXTRACTION_TIMEOUT_MS }, () => {
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toMatchObject({ name: 'report.pdf', format: 'pdf', truncated: false, sheets: null });
     expect((result.structuredContent as { text: string }).text).toContain('Quarterly report 2026');
+  });
+
+  it('returns the page of a long text from the offset given, with where it lies in the whole text', async () => {
+    // 5200 numbered lines of 99 bytes: 514800 bytes, of which lines 5171 to 5199 start at byte 511929.
+    const bytes = Buffer.from(numberedLines(0, 5199));
+    const client = await connect({ users: { messages: {
+      attachments: { get: async () => ({ data: { data: bytes.toString('base64url') } }) },
+      get: async () => ({ data: { payload: { mimeType: 'multipart/mixed', parts: [
+        { mimeType: 'text/plain', filename: 'log.txt', body: { attachmentId: 'refetched', size: bytes.length } },
+      ] } } }),
+    } } });
+    const result = await client.callTool({ name: 'get_attachment_text', arguments: { messageId: 'm1', attachmentId: 'a1', offset: 511929 } });
+    await client.close();
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({
+      name: 'log.txt', format: 'txt', text: numberedLines(5171, 5199), truncated: false, sheets: null,
+      offset: 511929, keptBytes: 2871, totalBytes: 514800, nextOffset: null,
+    });
   });
 
   it('reports a protected file as an error result naming the cause', async () => {

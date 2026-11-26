@@ -5,7 +5,7 @@ import type { gmail_v1 } from 'googleapis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { EXTRACTION_TIMEOUT_MS } from '../attachment-text/extract.js';
-import { committedFixture as fixtureFile } from '../attachment-text/test-fixtures.js';
+import { committedFixture as fixtureFile, numberedLines } from '../attachment-text/test-fixtures.js';
 import { CredentialsError } from '../auth.js';
 import { GmailRequestError } from '../gmail-sync.js';
 import { headerList, httpError } from '../gmail-test-fakes.js';
@@ -857,6 +857,30 @@ describe('gmail-get-attachment-text', { timeout: EXTRACTION_TIMEOUT_MS }, () => 
     const result = json();
     expect(Object.keys(result)).toEqual(['name', 'format', 'text', 'truncated', 'sheets']);
     expect(result).toMatchObject({ name: 'sales.xlsx', format: 'xlsx', truncated: false, sheets: [{ name: 'Sales', rows: 4, columns: 4 }, { name: 'Notes', rows: 2, columns: 3 }] });
+  });
+
+  it('passes --offset through, printing the page from it with where it lies in the whole text', async () => {
+    // 5200 numbered lines of 99 bytes: 514800 bytes, of which lines 5171 to 5199 start at byte 511929.
+    const { deps, json } = harness(attachmentGmail('log.txt', 'text/plain', Buffer.from(numberedLines(0, 5199))));
+    await getAttachmentTextCommand(['m1', 'a1', '--offset', '511929'], deps);
+    expect(json()).toEqual({
+      name: 'log.txt', format: 'txt', text: numberedLines(5171, 5199), truncated: false, sheets: null,
+      offset: 511929, keptBytes: 2871, totalBytes: 514800, nextOffset: null,
+    });
+  });
+
+  it('refuses with exit 2 and nothing on stdout an --offset that is not a whole number, past the end of the text or inside a character', async () => {
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      // "éé\n" is 5 bytes: byte 1 is inside the first é.
+      for (const offset of ['-1', '1.5', 'end', '6', '1']) {
+        const { deps, out } = harness(attachmentGmail('short.txt', 'text/plain', Buffer.from('éé\n')));
+        expect(await runCli('gmail-get-attachment-text', getAttachmentTextCommand, ['m1', 'a1', '--offset', offset], deps), offset).toBe(2);
+        expect(out, offset).toEqual([]);
+      }
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('exits 6 with one line naming the cause for a file it cannot read, and nothing on stdout', async () => {

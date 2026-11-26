@@ -177,14 +177,24 @@ export const DownloadAttachmentSchema = strictInput({
 export const GetAttachmentTextSchema = strictInput({
   messageId: z.string().min(1).describe("ID of the email message containing the attachment"),
   attachmentId: z.string().min(1).describe("ID of the attachment, as read_email lists it"),
+  offset: z.number().int().min(0).optional()
+    .describe("Where in the whole text, in UTF-8 bytes, the page returned starts; left out, the page starts at byte 0. Give a cut text's nextOffset to read on. Any offset given, 0 included, puts offset, keptBytes, totalBytes and nextOffset in the result. An offset past the end of the text, or inside a character, is refused"),
 });
 
+const ByteCount = z.number().int().min(0);
+
+// offset, keptBytes, totalBytes and nextOffset are present only when the text is cut or the call
+// gave an offset.
 export const AttachmentTextOutputSchema = z.object({
   name: z.string(),
   format: z.enum(['pdf', 'docx', 'xlsx', 'xlsm', 'xls', 'csv', 'txt', 'md', 'text']),
   text: z.string(),
   truncated: z.boolean(),
   sheets: z.array(z.object({ name: z.string(), rows: z.number().int().min(0), columns: z.number().int().min(0) }).strict()).nullable(),
+  offset: ByteCount.optional(),
+  keptBytes: ByteCount.optional(),
+  totalBytes: ByteCount.optional(),
+  nextOffset: ByteCount.nullable().optional(),
 }).strict();
 
 export const DownloadEmailSchema = strictInput({
@@ -517,7 +527,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "get_attachment_text",
-    description: "Returns an attachment's text as { name, format, text, truncated, sheets }. Reads PDF, DOCX, XLSX, XLSM, XLS and CSV, and returns TXT, MD and any other text/* part as it is (decoded as UTF-8, or Windows-1252 when it is not valid UTF-8). A spreadsheet's text is one '## Sheet: <name>' heading per sheet followed by tab-separated rows of display values (formula results, merged cells once at their top-left, leading and trailing empty rows and columns trimmed), and sheets gives each sheet's populated span; sheets is null for other formats. Text over 500 KB is cut on a line boundary with truncated true. A protected, encrypted, corrupt or unsupported file is an error result whose message starts with that word ('protected file: …'). Files are parsed in a separate process with a 30-second limit; macros and formulas are never run.",
+    description: "Returns an attachment's text as { name, format, text, truncated, sheets }. Reads PDF, DOCX, XLSX, XLSM, XLS and CSV, and returns TXT, MD and any other text/* part as it is (decoded as UTF-8, or Windows-1252 when it is not valid UTF-8). A spreadsheet's text is one '## Sheet: <name>' heading per sheet followed by tab-separated rows of display values (formula results, merged cells once at their top-left, leading and trailing empty rows and columns trimmed), and sheets gives each sheet's populated span; sheets is null for other formats. Only the text counts: pictures are left out of it in every format, however many and however large. One call returns at most 500 KB (512000 bytes) of UTF-8 text, ending after the last whole line that fits (or the last whole character when no line break fits); a cut text has truncated true and offset (where the page starts), keptBytes, totalBytes (the whole text) and nextOffset (where the next page starts, null after the last), all in UTF-8 bytes, and passing nextOffset as offset returns the next page, the pages joined giving the text exactly. These four fields appear only when the text is cut or offset is given. A protected, encrypted, corrupt or unsupported file is an error result whose message starts with that word ('protected file: …'). Files are parsed in a separate process with a 30-second limit; macros and formulas are never run.",
     schema: GetAttachmentTextSchema,
     outputSchema: AttachmentTextOutputSchema,
     scopes: ["gmail.readonly", "gmail.modify"],

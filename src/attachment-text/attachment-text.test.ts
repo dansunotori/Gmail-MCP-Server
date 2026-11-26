@@ -1,10 +1,11 @@
 import type { gmail_v1 } from 'googleapis';
+import mammoth from 'mammoth';
 import { describe, expect, it, vi } from 'vitest';
 import * as XLSX from 'xlsx';
 import { getAttachmentText } from './attachment-text.js';
 import { EXTRACTION_TIMEOUT_MS } from './extract.js';
-import { AttachmentFileError, MAX_TEXT_LENGTH } from './formats.js';
-import { committedFixture as fixture } from './test-fixtures.js';
+import { AttachmentFileError, OffsetError } from './formats.js';
+import { committedFixture as fixture, numberedLines, randomPng, wordDocumentWithPictures } from './test-fixtures.js';
 
 type Part = { filename: string; mimeType: string; attachmentId: string; bytes: Buffer };
 
@@ -59,6 +60,20 @@ describe('getAttachmentText', { timeout: EXTRACTION_TIMEOUT_MS }, () => {
     expect((await getAttachmentText(gmail, { messageId: 'm1', attachmentId: 'a3' })).text).toContain('30 November 2026');
   });
 
+  it('returns all the text of a Word document of 2 KB of text and twenty 500 KB pictures, the pictures counting for nothing', async () => {
+    const paragraphs = Array.from({ length: 20 }, (_, index) => `Paragraph ${String(index + 1).padStart(2, '0')}: ${'words '.repeat(15).trim()}`);
+    // 410 × 416 random RGB pixels: about 500 KB of PNG each, since random pixels do not compress.
+    const pictures = Array.from({ length: 20 }, () => randomPng(410, 416));
+    const docx = wordDocumentWithPictures(paragraphs, pictures);
+    const { gmail } = gmailWith([{ filename: 'album.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', attachmentId: 'p1', bytes: docx }], docx);
+
+    expect(docx.length).toBeGreaterThan(10 * 1000 * 1000);
+    // The document really draws its pictures: a Word reader renders each one as an image.
+    expect((await mammoth.convertToHtml({ buffer: docx })).value.match(/<img /g)).toHaveLength(20);
+    expect(await getAttachmentText(gmail, { messageId: 'm1', attachmentId: 'p1' }))
+      .toEqual({ name: 'album.docx', format: 'docx', text: paragraphs.join('\n\n'), truncated: false, sheets: null });
+  });
+
   it('returns a text part verbatim, decoding Windows-1252 when it is not UTF-8', async () => {
     const bytes = Buffer.concat([Buffer.from('Price: ', 'latin1'), Buffer.from([0x80]), Buffer.from('10\n', 'latin1')]);
     const { gmail } = gmailWith([{ filename: 'notes', mimeType: 'text/x-log', attachmentId: 'a4', bytes }], bytes);
@@ -77,15 +92,58 @@ describe('getAttachmentText', { timeout: EXTRACTION_TIMEOUT_MS }, () => {
     expect(await getAttachmentText(gmail, { messageId: 'm1', attachmentId: 'c1' })).toMatchObject({ name: 'figures.csv', format: 'csv' });
   });
 
-  it('cuts text beyond the ceiling on a line boundary and says so', async () => {
-    const line = 'x'.repeat(99) + '\n';
-    const bytes = Buffer.from(line.repeat(Math.ceil(MAX_TEXT_LENGTH / line.length) + 10));
-    const { gmail } = gmailWith([{ filename: 'big.txt', mimeType: 'text/plain', attachmentId: 'a5', bytes }], bytes);
-    const result = await getAttachmentText(gmail, { messageId: 'm1', attachmentId: 'a5' });
-    expect(result.truncated).toBe(true);
-    expect(result.text.length).toBeLessThanOrEqual(MAX_TEXT_LENGTH);
-    expect(result.text.endsWith('x')).toBe(true);
-    expect(result.text.split('\n').every(row => row.length === 99)).toBe(true);
+  // 5200 numbered lines of 99 UTF-8 bytes, 514800 in all. Lines 0000 to 5170, 511929 bytes, fit
+  // the 512000-byte ceiling.
+  const overCeiling = () => {
+    const bytes = Buffer.from(numberedLines(0, 5199));
+    return gmailWith([{ filename: 'big.txt', mimeType: 'text/plain', attachmentId: 'a5', bytes }], bytes).gmail;
+  };
+
+  it('cuts text over 500 KB of UTF-8 after a whole line, stating the bytes kept, the bytes in all and where the rest starts', async () => {
+    expect(await getAttachmentText(overCeiling(), { messageId: 'm1', attachmentId: 'a5' })).toEqual({
+      name: 'big.txt', format: 'txt', text: numberedLines(0, 5170), truncated: true, sheets: null,
+      offset: 0, keptBytes: 511929, totalBytes: 514800, nextOffset: 511929,
+    });
+  });
+
+  it('returns the rest of a cut text from the offset given, the last page saying there is no more', async () => {
+    expect(await getAttachmentText(overCeiling(), { messageId: 'm1', attachmentId: 'a5', offset: 511929 })).toEqual({
+      name: 'big.txt', format: 'txt', text: numberedLines(5171, 5199), truncated: false, sheets: null,
+      offset: 511929, keptBytes: 2871, totalBytes: 514800, nextOffset: null,
+    });
+  });
+
+  it('gives where the page lies for an offset of 0 given on a text that fits whole', async () => {
+    const bytes = Buffer.from('one\ntwo\n');
+    const { gmail } = gmailWith([{ filename: 'short.txt', mimeType: 'text/plain', attachmentId: 's1', bytes }], bytes);
+    expect(await getAttachmentText(gmail, { messageId: 'm1', attachmentId: 's1', offset: 0 })).toEqual({
+      name: 'short.txt', format: 'txt', text: 'one\ntwo\n', truncated: false, sheets: null,
+      offset: 0, keptBytes: 8, totalBytes: 8, nextOffset: null,
+    });
+  });
+
+  it('ends a page with no line break that fits on the last whole character', async () => {
+    // 200000 three-byte characters on one line: 600000 bytes, of which 170666 whole characters,
+    // 511998 bytes, fit the 512000-byte ceiling.
+    const bytes = Buffer.from('€'.repeat(200000));
+    const { gmail } = gmailWith([{ filename: 'line.txt', mimeType: 'text/plain', attachmentId: 'l1', bytes }], bytes);
+    expect(await getAttachmentText(gmail, { messageId: 'm1', attachmentId: 'l1' })).toEqual({
+      name: 'line.txt', format: 'txt', text: '€'.repeat(170666), truncated: true, sheets: null,
+      offset: 0, keptBytes: 511998, totalBytes: 600000, nextOffset: 511998,
+    });
+  });
+
+  it('refuses an offset past the end of the text or inside a character', async () => {
+    // Bytes 4 and 5 are the first line's first é, so byte 5 is inside it.
+    for (const offset of [514801, 5]) {
+      await expect(getAttachmentText(overCeiling(), { messageId: 'm1', attachmentId: 'a5', offset }), String(offset)).rejects.toThrow(RangeError);
+    }
+  });
+
+  it('refuses an offset that is not a whole number of bytes', async () => {
+    for (const offset of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(getAttachmentText(overCeiling(), { messageId: 'm1', attachmentId: 'a5', offset }), String(offset)).rejects.toThrow(OffsetError);
+    }
   });
 
   it('reports an unsupported file by name and type, and a mislabelled one as corrupt', async () => {
@@ -99,6 +157,14 @@ describe('getAttachmentText', { timeout: EXTRACTION_TIMEOUT_MS }, () => {
     const fake = Buffer.from('not a pdf at all');
     const mislabelled = gmailWith([{ filename: 'invoice.pdf', mimeType: 'application/pdf', attachmentId: 'a7', bytes: fake }], fake);
     await expect(getAttachmentText(mislabelled.gmail, { messageId: 'm1', attachmentId: 'a7' })).rejects.toMatchObject({ cause: 'corrupt' });
+  });
+
+  it('returns a page as the very characters of the text, an unpaired UTF-16 code unit from an .xls cell included', async () => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['a\uD800b']]), 'Sheet1');
+    const bytes = XLSX.write(wb, { type: 'buffer', bookType: 'biff8' }) as Buffer;
+    const { gmail } = gmailWith([{ filename: 'lone.xls', mimeType: 'application/vnd.ms-excel', attachmentId: 'u1', bytes }], bytes);
+    expect((await getAttachmentText(gmail, { messageId: 'm1', attachmentId: 'u1', offset: 0 })).text).toContain('a\uD800b');
   });
 
   it('reads a standalone BIFF2, BIFF3 or BIFF4 .xls, which has no compound-document wrapper', async () => {

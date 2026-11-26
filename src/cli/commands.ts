@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import TurndownService from 'turndown';
 import { getAttachmentText } from '../attachment-text/attachment-text.js';
+import { OffsetError } from '../attachment-text/formats.js';
 import { batchFetchWindow } from '../batch-fetch-window.js';
 import { contentTypeFor, createDraft, readDraft, type ComposeArgs } from '../compose.js';
 import { getFilter, listFilters } from '../filter-manager.js';
@@ -323,19 +324,27 @@ export const batchFetchWindowCommand: Command = async (argv, deps) => {
 const GET_ATTACHMENT_TEXT: CommandSpec = {
     name: 'gmail-get-attachment-text',
     tool: 'get_attachment_text',
-    synopsis: 'gmail-get-attachment-text <message_id> <attachment_id> [-o <file>]',
+    synopsis: 'gmail-get-attachment-text <message_id> <attachment_id> [--offset <bytes>] [-o <file>]',
     description: [
         "Prints an attachment's text like the get_attachment_text MCP tool, as",
-        '{name, format, text, truncated, sheets}.',
+        '{name, format, text, truncated, sheets}, with offset, keptBytes, totalBytes and nextOffset',
+        'too when the text is cut or --offset is given.',
         '',
         'Formats: PDF, DOCX, XLSX, XLSM, XLS and CSV are parsed; TXT, MD and any other text/* part',
         'are returned as they are, decoded as UTF-8 or, when not valid UTF-8, Windows-1252.',
         "A spreadsheet's text is one '## Sheet: <name>' heading per sheet followed by tab-separated",
         'rows of display values (formula results, merged cells once at their top-left, leading and',
         "trailing empty rows and columns trimmed); sheets gives each sheet's populated span as",
-        '{name, rows, columns}, and is null for other formats. Text over 500 KB is cut on a line',
-        'boundary and truncated is true. Files are parsed in a separate process with a 30-second',
-        'limit; macros and formulas are never run.',
+        '{name, rows, columns}, and is null for other formats. Only the text counts: pictures are',
+        'left out of it in every format, however many and however large.',
+        '',
+        'One call returns at most 500 KB (512000 bytes) of UTF-8 text, ending after the last whole',
+        'line that fits (or the last whole character when no line break fits). A cut text has',
+        'truncated true, offset (where this page starts), keptBytes, totalBytes (the whole text)',
+        'and nextOffset (where the next page starts, null after the last), all in UTF-8 bytes;',
+        'pass nextOffset as --offset to read on, and the pages joined give the text exactly.',
+        'Files are parsed in a separate process with a 30-second limit; macros and formulas are',
+        'never run.',
     ].join('\n'),
     arguments: [
         ['<message_id>', 'The Gmail message ID.'],
@@ -343,6 +352,12 @@ const GET_ATTACHMENT_TEXT: CommandSpec = {
     ],
     example: 'gmail-get-attachment-text 18f2a9c4e1b7d3a0 ANGjdJ8x',
     flags: {
+        offset: {
+            type: 'string',
+            placeholder: '<bytes>',
+            description: 'Start the page this many UTF-8 bytes into the whole text, as a cut text\'s nextOffset gives it; left out, the page starts at byte 0. Any --offset, 0 included, puts offset, keptBytes, totalBytes and nextOffset in the output. Past the end of the text, or inside a character, exits 2.',
+            example: 'gmail-get-attachment-text 18f2a9c4e1b7d3a0 ANGjdJ8x --offset 511929',
+        },
         ...commonFlags('gmail-get-attachment-text', 'gmail-get-attachment-text 18f2a9c4e1b7d3a0 ANGjdJ8x --output text.json'),
     },
     notes: [
@@ -359,7 +374,18 @@ export const getAttachmentTextCommand: Command = async (argv, deps) => {
     if (!args) return;
     expectPositionals(args.positionals, ['<message_id>', '<attachment_id>']);
     const [messageId, attachmentId] = args.positionals;
-    const result = await getAttachmentText(deps.gmail('get_attachment_text'), { messageId, attachmentId });
+    const offset = args.values.offset as string | undefined;
+    if (offset !== undefined && !/^\d+$/.test(offset)) {
+        throw new UsageError(`--offset must be a whole number of bytes, got "${offset}"`);
+    }
+    const result = await getAttachmentText(deps.gmail('get_attachment_text'), {
+        messageId,
+        attachmentId,
+        ...(offset === undefined ? {} : { offset: Number(offset) }),
+    }).catch(error => {
+        // An offset the text has no page at is the caller's mistake, so it exits as one.
+        throw error instanceof OffsetError ? new UsageError(`--${error.message}`) : error;
+    });
     await emitJson(result, args.output, deps);
 };
 
