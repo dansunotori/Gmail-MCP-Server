@@ -120,7 +120,11 @@ Exposes `read_email` (`messages.get` with `format: 'full'`). Prints:
 there is no plain part (`bodySource` `html`); or the HTML part converted to text when the plain
 part is only a stub (`bodySource` `html-over-stub`), each part fetched when Gmail defers it, as
 `gmail-batch-fetch-window` fetches it; when the plain part's fetch fails, the body is chosen
-without it and `plainBodyError` gives the reason, which no other message carries. `htmlBody` is
+without it and `plainBodyError` gives the reason, which no other message carries. `body` is never
+cut short: no size limit applies, so it holds all the text of the part it comes from, with
+malformed bytes decoded as U+FFFD; a deferred part whose fetch still fails after its retries, or
+whose charset the decoder does not know, is left out and named in `plainBodyError` or
+`htmlBodyError`, and a sign-in failure fails the whole command instead. `htmlBody` is
 the `text/html` part as
 delivered, markup included, whatever `body` is, fetched when Gmail defers it, and `null` when the
 message has no HTML part; when that fetch fails, `htmlBody` is `null` and `htmlBodyError` gives the
