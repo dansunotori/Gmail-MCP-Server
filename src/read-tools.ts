@@ -13,7 +13,7 @@ import { EmailAttachment, emailToHtml, emailToTxt, gmailMessageToJson } from './
 import { attachmentParts, findAttachmentPart } from './attachment-part.js';
 import { resolveCalendarPart } from './calendar-part.js';
 import { withContext } from './error-text.js';
-import { isPlainTextStub, optionalHeader, resolveMessageBody, selectBody, type BodySource, type HtmlBodyFields, type MessagePart } from './message-body.js';
+import { isPlainTextStub, optionalHeader, resolveMessageBody, selectBody, type Alternative, type BodySource, type HtmlBodyFields, type MessagePart } from './message-body.js';
 
 // Type definitions for Gmail API responses
 export interface GmailMessagePart {
@@ -144,6 +144,9 @@ export interface ReadEmailResult {
     // the part could not be fetched.
     htmlBody: string | null;
     htmlBodyError?: string;
+    // Each multipart/alternative node in MIME order with the text of its plain and HTML
+    // children, read by the window fetch's own reader; empty when the message has none.
+    alternatives: Alternative[];
     // Only a message whose text/plain part could not be fetched carries this: the reason, so
     // the body, chosen without that part, never reads as complete.
     plainBodyError?: string;
@@ -183,7 +186,7 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
     const attachments = extractAttachments(response.data.payload as GmailMessagePart);
     // The window fetch's own reader, so a part Gmail defers is fetched once and serves both
     // body and htmlBody.
-    const { text, html, htmlBody, htmlBodyError, plainBodyError } = await resolveMessageBody(gmail, response.data.id || args.messageId, response.data.payload as MessagePart);
+    const { text, html, htmlBody, htmlBodyError, plainBodyError, alternatives } = await resolveMessageBody(gmail, response.data.id || args.messageId, response.data.payload as MessagePart);
     const { body, bodySource } = selectBody(text, html, 'keep-html');
     const calendar = await calendarFields(gmail, response.data.id || args.messageId, response.data.payload);
 
@@ -204,10 +207,24 @@ export async function readEmail(gmail: gmail_v1.Gmail, args: { messageId: string
         bodySource,
         htmlBody,
         ...(htmlBodyError === undefined ? {} : { htmlBodyError }),
+        alternatives,
         ...(plainBodyError === undefined ? {} : { plainBodyError }),
         attachments,
         ...calendar,
     };
+}
+
+// One section per multipart/alternative node, after the HTML part: its partId quoted (the root
+// node's is ""), the reason a child was not read, and the plain and HTML text, each 'none' when
+// the node has no such child or it could not be read. A message with no node prints none.
+function formatAlternatives(alternatives: Alternative[]): string {
+    const field = (label: string, value: string | null) => value === null ? `${label}: none` : `${label}:\n${value}`;
+    return alternatives.map(item => [
+        `\n\nAlternative part ${JSON.stringify(item.partId)}:`,
+        ...(item.error === undefined ? [] : [`Not read: ${item.error}`]),
+        field('Plain', item.plain),
+        field('HTML', item.html),
+    ].join('\n')).join('');
 }
 
 export function formatReadEmailText(email: ReadEmailResult): string {
@@ -236,7 +253,7 @@ export function formatReadEmailText(email: ReadEmailResult): string {
         ? `\n\nHTML part not read: ${email.htmlBodyError}`
         : email.htmlBody === null ? '\n\nHTML part: none' : `\n\nHTML part:\n${email.htmlBody}`;
 
-    return `Thread ID: ${threadId}\nMessage-ID: ${messageIdHeader ?? '(none)'}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}${cc ? `\nCC: ${cc}` : ''}${bcc ? `\nBCC: ${bcc}` : ''}\nDate: ${date}${calendarLines}\n\n${plainPartNote}${contentTypeNote}${body}${attachmentInfo}${htmlPart}`;
+    return `Thread ID: ${threadId}\nMessage-ID: ${messageIdHeader ?? '(none)'}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}${cc ? `\nCC: ${cc}` : ''}${bcc ? `\nBCC: ${bcc}` : ''}\nDate: ${date}${calendarLines}\n\n${plainPartNote}${contentTypeNote}${body}${attachmentInfo}${htmlPart}${formatAlternatives(email.alternatives)}`;
 }
 
 export interface DownloadAttachmentResult {

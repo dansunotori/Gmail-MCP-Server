@@ -318,6 +318,37 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
     expect(result.status).toBe('incomplete');
   });
 
+  it('writes each multipart/alternative node in the message file, a child it cannot fetch as its error, and the window incomplete', async () => {
+    const gmail = fakeGmail({
+      lists: windowOnly(['paired']),
+      messages: {
+        paired: message('paired', BOUNDARY + 2000, { payload: {
+          partId: '',
+          mimeType: 'multipart/mixed',
+          headers: [{ name: 'From', value: 'paired@example.com' }],
+          parts: [
+            {
+              partId: '0',
+              mimeType: 'multipart/alternative',
+              parts: [
+                { partId: '0.0', mimeType: 'text/plain', body: { data: b64('Stale reminder') } },
+                { partId: '0.1', mimeType: 'text/html', body: { attachmentId: 'part-h' } },
+              ],
+            },
+            { partId: '1', mimeType: 'text/html', body: { data: b64('<p>Forwarded</p>') } },
+          ],
+        } }),
+      },
+      attachments: { 'part-h': httpError(404) },
+    });
+    const result = await run(gmail, dir);
+    expect(messageContents(dir).map(file => [file.id, file.alternatives])).toEqual([
+      ['paired',[{ partId: '0', plain: 'Stale reminder', html: null, error: 'body-part-fetch: 404' }]],
+    ]);
+    expect(result.failures).toEqual([{ id: 'paired', error: 'body-part-fetch: 404', operation: 'body-part-fetch', status: 404, attempts: 1 }]);
+    expect(result.status).toBe('incomplete');
+  });
+
   it('writes the calendar method and reply fields of meeting messages, and neither field for ordinary mail', async () => {
     const ics = (...lines: string[]) => ['BEGIN:VCALENDAR', ...lines, 'BEGIN:VEVENT', 'UID:u1', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
     const withCalendar = (id: string, at: number, calendar: string) => message(id, at, { payload: {
@@ -418,6 +449,7 @@ describe('batchFetchWindow: listing, fetching and output files', () => {
       body: 'body of a',
       bodySource: 'text',
       htmlBody: null,
+      alternatives: [],
     });
 
     expect(readJson(path.join(dir, 'window-metadata.json'))).toEqual({

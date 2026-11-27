@@ -110,6 +110,9 @@ Exposes `read_email` (`messages.get` with `format: 'full'`). Prints:
   "body": "Please find attached…",
   "bodySource": "text",
   "htmlBody": "<p>Please find attached…</p>",
+  "alternatives": [
+    { "partId": "0", "plain": "Please find attached…", "html": "<p>Please find attached…</p>" }
+  ],
   "attachments": [
     { "id": "ANGjdJ...", "filename": "invoice.pdf", "mimeType": "application/pdf", "size": 123456 }
   ]
@@ -129,7 +132,18 @@ the `text/html` part as
 delivered, markup included, whatever `body` is, fetched when Gmail defers it, and `null` when the
 message has no HTML part; when that fetch fails, `htmlBody` is `null` and `htmlBodyError` gives the
 reason. It is the `htmlBody` that `gmail-batch-fetch-window` writes for the same message, and it
-does not change with `--format`. `messageIdHeader` is the RFC 822 `Message-ID` header, or `null`. A message with a
+does not change with `--format`. `alternatives` holds one item `{partId, plain, html}` per
+`multipart/alternative` node, in MIME order, a nested node being an item of its own: `partId` is
+the node's MIME part identifier (`""` for the root node), `plain` the text of its unnamed
+`text/plain` child and `html` the markup of its unnamed `text/html` child as delivered, each `null`
+when it has none; a container child (`multipart/related` holding the HTML) gives the unnamed text
+parts it holds directly, several of one type joined in MIME order. A deferred child that cannot be
+fetched or decoded leaves its `plain` or `html` `null` and gives the item `error`
+(`body-part-fetch: <status>` or `body-part-charset: <charset>`); an unnamed HTML part outside the
+node is in no item (`htmlBody` joins it with the other HTML parts, or is `null` when one of them
+cannot be read), and `alternatives` is `[]` for a message with no such node.
+It is the `alternatives` that `gmail-batch-fetch-window` writes for the same message, and it does
+not change with `--format`. `messageIdHeader` is the RFC 822 `Message-ID` header, or `null`. A message with a
 `text/calendar` part also carries `calendarMethod` and, for a reply, `calendarReply` `{attendee,
 partstat}`, read as `batch_fetch_window` reads them, and `calendarFailures` when the part cannot be
 read; other mail carries none of them. With
@@ -313,6 +327,8 @@ anything under the output directory is deleted or written. Prints the tool's res
 attempts}]`, `crossCheck` `{status, consistent, unexplainedIds, errors, …}`, `truncated` and the
 rest of the tool's result, and leaves `manifest.json`, `window-metadata.json` and `messages/` under
 the output directory exactly as the tool writes them. Each message file carries `htmlBody`,
+`alternatives` as `gmail-get-message` prints it (a deferred child it cannot fetch giving its item
+`error` and one `failures` entry, so the status is `incomplete`),
 `htmlBodyError` when the HTML part cannot be fetched, `plainBodyError` when the plain part cannot
 be fetched or decoded, and `calendarMethod` and `calendarReply` for
 a message with a `text/calendar` part. See `README.md` for the full result contract.
@@ -373,9 +389,10 @@ Never print tokens or full request headers to stderr.
   `gmail-get-message` for each message file a `gmail-batch-fetch-window` run wrote under
   `<output-dir>` (or the first N), and prints one JSON report: counts per `bodySource`, of messages
   with and without `htmlBody` and with `htmlBodyError`, every message whose `bodySource`,
-  `htmlBody`, `htmlBodyError`, `plainBodyError`, `messageIdHeader`, `calendarMethod`, `calendarReply` or `body`
+  `htmlBody`, `htmlBodyError`, `plainBodyError`, `alternatives`, `messageIdHeader`, `calendarMethod`, `calendarReply` or `body`
   differs (`body` with surrounding whitespace ignored, and not for an HTML-only message, which the
-  two tools deliver differently), and every read that failed. It exits 0 when every compared
+  two tools deliver differently; `alternatives` only when the message file holds it, so a window
+  written without the field is compared on the others), and every read that failed. It exits 0 when every compared
   message agrees, 1 when one differs, and 2 on a usage error or a failed read.
   `scripts/window-compare.test.ts` tests it against fixture windows.
 - Live: `npm run live:charset-check` (`scripts/live-charset-check.mjs`) builds, then checks that

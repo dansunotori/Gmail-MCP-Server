@@ -455,8 +455,34 @@ describe('gmail-get-message', () => {
       body: 'Plain body',
       bodySource: 'text',
       htmlBody: '<style>p{}</style><p>See <a href="https://x.test">this</a></p>',
+      alternatives: [],
       attachments: [{ id: 'att-1', filename: 'invoice.pdf', mimeType: 'application/pdf', size: 14 }],
     });
+  });
+
+  it('prints each multipart/alternative node with its plain and HTML text, whatever the format', async () => {
+    const paired = { ...message, payload: {
+      partId: '',
+      mimeType: 'multipart/mixed',
+      headers: message.payload.headers,
+      parts: [
+        {
+          partId: '0',
+          mimeType: 'multipart/alternative',
+          parts: [
+            { partId: '0.0', mimeType: 'text/plain', body: { data: b64('Stale reminder') } },
+            { partId: '0.1', mimeType: 'text/html', body: { data: b64('<p>Real content</p>') } },
+          ],
+        },
+        { partId: '1', mimeType: 'text/html', body: { data: b64('<p>Forwarded</p>') } },
+      ],
+    } };
+    const gmail = gmailReturning(paired);
+    for (const format of ['text', 'markdown']) {
+      const { deps, json } = harness(gmail);
+      await getMessageCommand(['m1', '--format', format], deps);
+      expect(json().alternatives, format).toEqual([{ partId: '0', plain: 'Stale reminder', html: '<p>Real content</p>' }]);
+    }
   });
 
   it('prints htmlBody null for a text-only message, whatever the format', async () => {

@@ -16,6 +16,8 @@ export interface MessageHeader {
 }
 
 export interface MessagePart {
+  // Gmail's identifier of the part in the MIME tree: '' for the root, '0', '1', '1.0' below it.
+  partId?: string | null;
   mimeType?: string | null;
   filename?: string | null;
   headers?: MessageHeader[] | null;
@@ -70,9 +72,22 @@ export interface HtmlBodyFields {
   htmlBodyError?: string;
 }
 
+// One multipart/alternative node of the MIME tree: the text of its text/plain child and the
+// markup of its text/html child, each null when it has none, and null with the reason in error
+// when that child is deferred and could not be fetched or decoded.
+export interface Alternative {
+  partId: string;
+  plain: string | null;
+  html: string | null;
+  error?: string;
+}
+
 export interface ResolvedBody extends ExtractedParts, HtmlBodyFields {
   body: string;
   bodySource: BodySource;
+  // Each multipart/alternative node in MIME order, so the two renderings of one content can be
+  // told from an HTML part outside it.
+  alternatives: Alternative[];
   failures: BodyFailure[];
   // The reason a text/plain part could not be fetched, present only then, so a body chosen
   // without that part never reads as complete.
@@ -230,6 +245,45 @@ function hasHtmlPart(payload: MessagePart | null | undefined): boolean {
   return (payload.parts ?? []).some(hasHtmlPart);
 }
 
+// What became of each deferred body part, by its attachmentId: its decoded text, or the code of
+// the failure that left it out. Read from the one fetch resolveMessageBody makes of each part.
+interface DeferredOutcomes {
+  fetched: Map<string, string>;
+  failed: Map<string, string>;
+}
+
+function alternativesOf(payload: MessagePart | null | undefined, outcomes: DeferredOutcomes): Alternative[] {
+  if (!payload) return [];
+  const own: Alternative[] = [];
+  if (payload.mimeType === 'multipart/alternative') {
+    // A container child (multipart/related holding the HTML) offers the parts it holds directly;
+    // a child with no subparts (Gmail may give a text part an empty parts list) is itself one.
+    const candidates = (payload.parts ?? []).flatMap(child => child.parts?.length ? child.parts : [child]);
+    const errors: string[] = [];
+    // The unnamed parts of the type joined in MIME order, as the body is; a named one is an
+    // attached file. Null when there is none, or when one of them could not be fetched.
+    const textOf = (mimeType: string): string | null => {
+      const children = candidates.filter(part => part.mimeType === mimeType && !part.filename);
+      if (children.length === 0) return null;
+      const texts = children.map(child => {
+        const attachmentId = child.body?.attachmentId;
+        if (!attachmentId) return decodeBase64Url(child.body?.data);
+        const failure = outcomes.failed.get(attachmentId);
+        if (failure !== undefined) {
+          errors.push(failure);
+          return null;
+        }
+        return outcomes.fetched.get(attachmentId) ?? '';
+      });
+      return texts.includes(null) ? null : texts.join('');
+    };
+    const plain = textOf('text/plain');
+    const html = textOf('text/html');
+    own.push({ partId: payload.partId ?? '', plain, html, ...(errors.length === 0 ? {} : { error: errors.join('; ') }) });
+  }
+  return [...own, ...(payload.parts ?? []).flatMap(part => alternativesOf(part, outcomes))];
+}
+
 function htmlBodyFields(payload: MessagePart | null | undefined, html: string, failures: BodyFailure[]): HtmlBodyFields {
   const htmlFailures = failures.filter(failure => failure.mimeType === 'text/html');
   if (htmlFailures.length > 0) {
@@ -272,6 +326,7 @@ export async function resolveMessageBody(
   const { parts, segments } = extractWithSegments(payload);
   const failures: BodyFailure[] = [];
   const fetched = new Map<DeferredBody, string>();
+  const outcomes: DeferredOutcomes = { fetched: new Map(), failed: new Map() };
 
   for (const deferred of parts.deferredBodies) {
     let data: string | null | undefined;
@@ -286,27 +341,32 @@ export async function resolveMessageBody(
       if (isAuthError(error)) {
         throw error;
       }
+      const code = `body-part-fetch: ${failureCode(error)}`;
       failures.push({
-        code: `body-part-fetch: ${failureCode(error)}`,
+        code,
         error: toGmailRequestError(error),
         attempts: retryAttempts(error),
         mimeType: deferred.mimeType,
       });
+      outcomes.failed.set(deferred.attachmentId, code);
       continue;
     }
     let decoded: string;
     try {
       decoded = decodeStoredPart(data, deferred.charset);
     } catch (error) {
+      const code = `body-part-charset: ${deferred.charset}`;
       failures.push({
-        code: `body-part-charset: ${deferred.charset}`,
+        code,
         error: toGmailRequestError(error),
         attempts: 1,
         mimeType: deferred.mimeType,
       });
+      outcomes.failed.set(deferred.attachmentId, code);
       continue;
     }
     fetched.set(deferred, decoded);
+    outcomes.fetched.set(deferred.attachmentId, decoded);
   }
   parts.text = joinInOrder(segments, 'text/plain', fetched);
   parts.html = joinInOrder(segments, 'text/html', fetched);
@@ -319,6 +379,7 @@ export async function resolveMessageBody(
     body,
     bodySource,
     failures,
+    alternatives: alternativesOf(payload, outcomes),
     ...htmlBodyFields(payload, parts.html, failures),
     ...(plainFailures.length === 0 ? {} : { plainBodyError: plainFailures.map(failure => failure.code).join('; ') }),
   };

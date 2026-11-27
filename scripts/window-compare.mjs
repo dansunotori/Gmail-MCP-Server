@@ -15,7 +15,11 @@ import { runDirectly } from './script-support.mjs';
 const USAGE = 'usage: npm run window:compare -- <output-dir> [--limit N]';
 
 // The fields both tools give each message by the same rule.
-const FIELDS = ['bodySource', 'htmlBody', 'htmlBodyError', 'plainBodyError', 'messageIdHeader', 'calendarMethod', 'calendarReply'];
+const FIELDS = ['bodySource', 'htmlBody', 'htmlBodyError', 'plainBodyError', 'alternatives', 'messageIdHeader', 'calendarMethod', 'calendarReply'];
+
+// Fields every message carries that a window file written before the field existed lacks: such a
+// file says nothing about the field, so it is compared only when the file holds it.
+const COMPARED_WHEN_WRITTEN = new Set(['alternatives']);
 
 // The numbered files batch_fetch_window writes; its marker and publish temporaries are not messages.
 const MESSAGE_FILE = /^\d{3,}\.json$/;
@@ -51,7 +55,9 @@ export function windowFiles(outputDir) {
 // window trims the plain part, and not at all for an HTML-only message, which read_email keeps as
 // HTML and the window converts to text.
 export function compareMessage(read, file) {
-  const fields = FIELDS.filter(field => !isDeepStrictEqual(read[field], file[field]));
+  const fields = FIELDS
+    .filter(field => !COMPARED_WHEN_WRITTEN.has(field) || field in file)
+    .filter(field => !isDeepStrictEqual(read[field], file[field]));
   if (!('htmlBody' in read) || !('htmlBody' in file)) fields.push('htmlBody missing');
   if (file.bodySource !== 'html' && String(read.body ?? '').trim() !== String(file.body ?? '').trim()) fields.push('body');
   return fields;

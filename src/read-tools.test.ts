@@ -170,8 +170,51 @@ describe('readEmail', () => {
       body: 'Plain body',
       bodySource: 'text',
       htmlBody: '<p>HTML body</p>',
+      alternatives: [],
       attachments: [{ id: 'att-1', filename: 'invoice.pdf', mimeType: 'application/pdf', size: 2048 }],
     });
+  });
+
+  it('gives each multipart/alternative node as an item, and prints the items after the HTML part', async () => {
+    const message = { id: 'a', threadId: 't', payload: {
+      partId: '',
+      mimeType: 'multipart/mixed',
+      parts: [
+        {
+          partId: '0',
+          mimeType: 'multipart/alternative',
+          parts: [
+            { partId: '0.0', mimeType: 'text/plain', body: { data: b64('Stale reminder') } },
+            { partId: '0.1', mimeType: 'text/html', body: { attachmentId: 'html-1' } },
+          ],
+        },
+        {
+          partId: '1',
+          mimeType: 'multipart/alternative',
+          parts: [{ partId: '1.0', mimeType: 'text/plain', body: { data: b64('Second') } }],
+        },
+      ],
+    } };
+    const fake = fakeGmail({ messages: { a: message }, attachments: { 'html-1': Object.assign(new Error('gone'), { response: { status: 404 } }) } });
+    const result = await readEmail(fake.gmail, { messageId: 'a' });
+    expect(result.alternatives).toEqual([
+      { partId: '0', plain: 'Stale reminder', html: null, error: 'body-part-fetch: 404' },
+      { partId: '1', plain: 'Second', html: null },
+    ]);
+    expect(formatReadEmailText(result).endsWith([
+      'HTML part not read: body-part-fetch: 404',
+      '',
+      'Alternative part "0":',
+      'Not read: body-part-fetch: 404',
+      'Plain:',
+      'Stale reminder',
+      'HTML: none',
+      '',
+      'Alternative part "1":',
+      'Plain:',
+      'Second',
+      'HTML: none',
+    ].join('\n'))).toBe(true);
   });
 
   it('uses the HTML as the body when there is no plain text, and delivers it as htmlBody too', async () => {
@@ -203,7 +246,10 @@ describe('readEmail', () => {
     const missing = fakeGmail({ messages: { d: deferred }, attachments: { 'html-1': Object.assign(new Error('gone'), { response: { status: 404 } }) } });
     const failed = await readEmail(missing.gmail, { messageId: 'd' });
     expect(failed).toMatchObject({ body: 'Stale reminder', bodySource: 'text', htmlBody: null, htmlBodyError: 'body-part-fetch: 404' });
-    expect(formatReadEmailText(failed).endsWith('\n\nHTML part not read: body-part-fetch: 404')).toBe(true);
+    expect(formatReadEmailText(failed).endsWith(
+      '\n\nHTML part not read: body-part-fetch: 404'
+      + '\n\nAlternative part "":\nNot read: body-part-fetch: 404\nPlain:\nStale reminder\nHTML: none',
+    )).toBe(true);
   });
 
   it('fetches a deferred plain part once and delivers it as the body, as the window fetch does', async () => {
@@ -311,7 +357,7 @@ describe('readEmail', () => {
   it('prints CC and BCC only when present, notes an HTML-only body, and says when there is no Message-ID', () => {
     const base = {
       id: 'x', threadId: 't', messageIdHeader: null, subject: 's', from: 'f', to: 'to', cc: '', bcc: '', date: 'd',
-      labels: [], text: '', html: '<p>h</p>', body: '<p>h</p>', bodySource: 'html' as const, htmlBody: '<p>h</p>', attachments: [],
+      labels: [], text: '', html: '<p>h</p>', body: '<p>h</p>', bodySource: 'html' as const, htmlBody: '<p>h</p>', alternatives: [], attachments: [],
     };
     expect(formatReadEmailText(base)).toBe(
       'Thread ID: t\nMessage-ID: (none)\nSubject: s\nFrom: f\nTo: to\nDate: d\n\n'

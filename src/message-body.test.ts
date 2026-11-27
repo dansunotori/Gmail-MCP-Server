@@ -9,6 +9,7 @@ import {
   isPlainTextStub,
   resolveMessageBody,
   selectBody,
+  type MessagePart,
 } from './message-body.js';
 import { httpError } from './gmail-test-fakes.js';
 
@@ -215,11 +216,11 @@ describe('bodySourceOf', () => {
   });
 });
 
-describe('resolveMessageBody', () => {
-  function gmailWithAttachments(handler: (id: string) => Promise<{ data: { data?: string } }>) {
-    return { users: { messages: { attachments: { get: vi.fn(({ id }: { id: string }) => handler(id)) } } } };
-  }
+function gmailWithAttachments(handler: (id: string) => Promise<{ data: { data?: string } }>) {
+  return { users: { messages: { attachments: { get: vi.fn(({ id }: { id: string }) => handler(id)) } } } };
+}
 
+describe('resolveMessageBody', () => {
   it('fetches deferred bodies and prefers plain text', async () => {
     const gmail = gmailWithAttachments(async id => ({ data: { data: b64(id === 'p' ? ' plain ' : '<p>html</p>') } }));
     const result = await resolveMessageBody(gmail as never, 'm1', {
@@ -426,5 +427,127 @@ describe('resolveMessageBody', () => {
     await expect(resolveMessageBody(gmail as never, 'm1', {
       parts: [{ mimeType: 'text/plain', body: { attachmentId: 'x' } }],
     })).rejects.toBe(unauthorised);
+  });
+});
+
+describe('resolveMessageBody alternatives', () => {
+  const noFetch = gmailWithAttachments(async () => { throw new Error('no part is deferred'); });
+
+  it('gives a multipart/alternative holding a plain and an HTML child as one item carrying both', async () => {
+    const result = await resolveMessageBody(noFetch as never, 'm1', {
+      partId: '',
+      mimeType: 'multipart/alternative',
+      parts: [
+        { partId: '0', mimeType: 'text/plain', body: { data: b64('Hello there') } },
+        { partId: '1', mimeType: 'text/html', body: { data: b64('<p>Hello there</p>') } },
+      ],
+    });
+    expect(result.alternatives).toEqual([{ partId: '', plain: 'Hello there', html: '<p>Hello there</p>' }]);
+  });
+
+  it("takes an item's html from the text/html part a multipart/related child holds", async () => {
+    const result = await resolveMessageBody(noFetch as never, 'm1', {
+      partId: '',
+      mimeType: 'multipart/alternative',
+      parts: [
+        { partId: '0', mimeType: 'text/plain', body: { data: b64('See the logo') } },
+        {
+          partId: '1',
+          mimeType: 'multipart/related',
+          parts: [
+            { partId: '1.0', mimeType: 'text/html', body: { data: b64('<p>See the <img src="cid:logo"></p>') } },
+            { partId: '1.1', mimeType: 'image/png', filename: 'logo.png', body: { data: 'iVBORw0KGgo' } },
+          ],
+        },
+      ],
+    });
+    expect(result.alternatives).toEqual([{ partId: '', plain: 'See the logo', html: '<p>See the <img src="cid:logo"></p>' }]);
+  });
+
+  it('fills an item from a deferred child, and gives a child whose fetch fails as null with its error', async () => {
+    const gmail = gmailWithAttachments(async id => {
+      if (id === 'gone') throw httpError(404);
+      return { data: { data: b64('<p>Fetched</p>') } };
+    });
+    const resolve = (attachmentId: string) => resolveMessageBody(gmail as never, 'm1', {
+      partId: '',
+      mimeType: 'multipart/alternative',
+      parts: [
+        { partId: '0', mimeType: 'text/plain', body: { data: b64('Plain') } },
+        { partId: '1', mimeType: 'text/html', body: { attachmentId } },
+      ],
+    }, { sleep: async () => {} });
+
+    expect((await resolve('h')).alternatives).toEqual([{ partId: '', plain: 'Plain', html: '<p>Fetched</p>' }]);
+
+    const failed = await resolve('gone');
+    expect(failed.alternatives).toEqual([{ partId: '', plain: 'Plain', html: null, error: 'body-part-fetch: 404' }]);
+    expect(failed.failures.map(failure => failure.code)).toEqual(['body-part-fetch: 404']);
+  });
+
+  it('joins the unnamed HTML parts a child holds in MIME order and leaves a named one out, as an attachment', async () => {
+    const result = await resolveMessageBody(noFetch as never, 'm1', {
+      partId: '',
+      mimeType: 'multipart/alternative',
+      parts: [
+        { partId: '0', mimeType: 'text/plain', body: { data: b64('Part one Part two') } },
+        {
+          partId: '1',
+          mimeType: 'multipart/mixed',
+          parts: [
+            { partId: '1.0', mimeType: 'text/html', body: { data: b64('<p>Part one</p>') } },
+            { partId: '1.1', mimeType: 'image/jpeg', filename: 'photo.jpg', body: { data: '/9j/4AAQ' } },
+            { partId: '1.2', mimeType: 'text/html', body: { data: b64('<p>Part two</p>') } },
+            { partId: '1.3', mimeType: 'text/html', filename: 'note.html', body: { data: b64('<p>Attached</p>') } },
+          ],
+        },
+      ],
+    });
+    expect(result.alternatives).toEqual([{ partId: '', plain: 'Part one Part two', html: '<p>Part one</p><p>Part two</p>' }]);
+    expect(result.attachments.map(attachment => attachment.filename)).toEqual(['photo.jpg', 'note.html']);
+  });
+
+  // A MIME tree node holding parts, and an inline text part.
+  const container = (partId: string, mimeType: string, parts: MessagePart[]): MessagePart => ({ partId, mimeType, parts });
+  const textPart = (partId: string, mimeType: string, text: string): MessagePart => ({ partId, mimeType, body: { data: b64(text) } });
+
+  it('leaves an unnamed HTML part outside the multipart/alternative out of its item, though htmlBody joins it', async () => {
+    const result = await resolveMessageBody(noFetch as never, 'm1', container('', 'multipart/mixed', [
+      container('0', 'multipart/alternative', [
+        textPart('0.0', 'text/plain', 'Last year'),
+        textPart('0.1', 'text/html', '<p>Last year</p>'),
+      ]),
+      textPart('1', 'text/html', '<p>Forwarded</p>'),
+    ]));
+    expect(result.alternatives).toEqual([{ partId: '0', plain: 'Last year', html: '<p>Last year</p>' }]);
+    expect(result.htmlBody).toBe('<p>Last year</p><p>Forwarded</p>');
+  });
+
+  it('lists nested and sibling multipart/alternative nodes one item each, in MIME order', async () => {
+    const result = await resolveMessageBody(noFetch as never, 'm1', container('', 'multipart/mixed', [
+      container('0', 'multipart/alternative', [
+        textPart('0.0', 'text/plain', 'Outer'),
+        container('0.1', 'multipart/alternative', [textPart('0.1.0', 'text/html', '<p>Inner</p>')]),
+      ]),
+      container('1', 'multipart/alternative', [textPart('1.0', 'text/plain', 'Sibling')]),
+    ]));
+    expect(result.alternatives).toEqual([
+      { partId: '0', plain: 'Outer', html: '<p>Inner</p>' },
+      { partId: '0.1', plain: null, html: '<p>Inner</p>' },
+      { partId: '1', plain: 'Sibling', html: null },
+    ]);
+  });
+
+  it('reads a text child that Gmail gives an empty parts list as the text part it is', async () => {
+    const result = await resolveMessageBody(noFetch as never, 'm1', container('', 'multipart/alternative', [
+      { ...textPart('0', 'text/plain', 'Hello'), parts: [] },
+      { ...textPart('1', 'text/html', '<p>Hello</p>'), parts: [] },
+    ]));
+    expect(result.alternatives).toEqual([{ partId: '', plain: 'Hello', html: '<p>Hello</p>' }]);
+  });
+
+  it('gives a message with no multipart/alternative node an empty list', async () => {
+    const result = await resolveMessageBody(noFetch as never, 'm1', { partId: '', mimeType: 'text/plain', body: { data: b64('Just text') } });
+    expect(result.alternatives).toEqual([]);
   });
 });

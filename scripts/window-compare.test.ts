@@ -35,6 +35,18 @@ describe('compareMessage', () => {
     expect(compareMessage(readFor('a', reply), fileFor('a', { ...reply, calendarReply: { attendee: 'x@example.com', partstat: 'DECLINED' } }))).toEqual(['calendarReply']);
   });
 
+  it('compares alternatives by value', () => {
+    const paired = { alternatives: [{ partId: '0', plain: 'Plain', html: '<p>a</p>' }] };
+    expect(compareMessage(readFor('a', paired), fileFor('a', structuredClone(paired)))).toEqual([]);
+    expect(compareMessage(readFor('a', paired), fileFor('a', { alternatives: [{ partId: '0', plain: 'Plain', html: null, error: 'body-part-fetch: 404' }] }))).toEqual(['alternatives']);
+  });
+
+  it('leaves alternatives out for a window file written without the field, and compares it once the file holds it', () => {
+    const paired = { alternatives: [{ partId: '0', plain: 'Plain', html: '<p>a</p>' }] };
+    expect(compareMessage(readFor('a', paired), fileFor('a', {}))).toEqual([]);
+    expect(compareMessage(readFor('a', {}), fileFor('a', paired))).toEqual(['alternatives']);
+  });
+
   it('skips body for an HTML-only message, which read_email keeps as HTML and the window converts to text', () => {
     expect(compareMessage(
       readFor('h', { bodySource: 'html', body: '<p>h</p>' }),
